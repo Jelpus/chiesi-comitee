@@ -1,0 +1,150 @@
+'use client';
+
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import type { ComponentType } from 'react';
+import {
+  BarChart3,
+  Calendar,
+  FolderUp,
+  Gauge,
+  Home,
+  Layers,
+  Settings,
+  Tag,
+} from 'lucide-react';
+import { appNavigation } from '@/lib/navigation/app-navigation';
+
+function isItemActive(pathname: string, href: string) {
+  if (href === '/') return pathname === '/';
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+type SidebarNavProps = {
+  collapsed?: boolean;
+  onNavigate?: () => void;
+};
+
+export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const iconByHref: Record<string, ComponentType<{ className?: string }>> = {
+    '/': Gauge,
+    '/admin': Settings,
+    '/admin/periods': Calendar,
+    '/admin/versions': Layers,
+    '/admin/uploads': FolderUp,
+    '/admin/products': Tag,
+    '/executive': Home,
+    '/executive/sales-internal': BarChart3,
+  };
+  const currentSection = pathname.startsWith('/admin')
+    ? 'admin'
+    : pathname.startsWith('/executive')
+      ? 'executive'
+      : 'home';
+  const sectionItems = appNavigation.filter((item) => {
+    if (currentSection === 'admin') return item.href.startsWith('/admin/') && item.href !== '/admin';
+    if (currentSection === 'executive') return item.href.startsWith('/executive');
+    return false;
+  });
+
+  function handleSectionChange(nextSection: string) {
+    if (nextSection === 'admin') {
+      router.push('/admin');
+      onNavigate?.();
+      return;
+    }
+    if (nextSection === 'executive') {
+      router.push('/executive');
+      onNavigate?.();
+    }
+  }
+
+  return (
+    <nav className={`flex h-full flex-col ${collapsed ? 'p-2' : 'p-4'}`}>
+      <div className="mb-2">
+        {!collapsed ? (
+          <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            {currentSection === 'admin'
+              ? 'Admin Section'
+              : currentSection === 'executive'
+                ? 'Executive Section'
+                : 'Select Section'}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex-1 space-y-1">
+        {sectionItems.length === 0 ? (
+          !collapsed ? (
+            <p className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-400">
+              Choose `Admin` or `Executive` from the switcher below.
+            </p>
+          ) : null
+        ) : (
+          sectionItems.map((item) => {
+            const active = isItemActive(pathname, item.href);
+            const itemLabel = item.label;
+            const Icon = iconByHref[item.href] ?? Gauge;
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                title={itemLabel}
+                onClick={onNavigate}
+                className={[
+                  'relative rounded-xl transition',
+                  collapsed
+                    ? 'flex items-center justify-center px-2 py-2.5 text-xs font-semibold'
+                    : 'border-l border-slate-800 pl-4 pr-3 py-2.5 text-[13px]',
+                  active
+                    ? 'bg-slate-900/80 text-white'
+                    : 'text-slate-400 hover:bg-slate-900/70 hover:text-slate-100',
+                ].join(' ')}
+              >
+                {collapsed ? (
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 bg-slate-900/70 text-[11px] font-semibold">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-1 w-1 rounded-full bg-[#C73283]" />
+                    {itemLabel}
+                  </span>
+                )}
+              </Link>
+            );
+          })
+        )}
+      </div>
+
+      <div className="mt-3 border-t border-slate-800 pt-3">
+        {!collapsed ? (
+          <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+            Section
+          </p>
+        ) : null}
+        <div className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2">
+          <div className="mb-1 flex items-center gap-1.5 text-slate-300">
+            <Settings className="h-3.5 w-3.5" />
+            {!collapsed ? <Gauge className="h-3.5 w-3.5" /> : null}
+          </div>
+          <select
+            value={currentSection === 'admin' || currentSection === 'executive' ? currentSection : ''}
+            onChange={(e) => handleSectionChange(e.target.value)}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-semibold text-slate-100 outline-none focus:border-slate-500"
+            aria-label="Select section"
+          >
+            <option value="" disabled>
+              {collapsed ? 'Go' : 'Select...'}
+            </option>
+            <option value="admin">Admin</option>
+            <option value="executive">Executive</option>
+          </select>
+        </div>
+      </div>
+    </nav>
+  );
+}

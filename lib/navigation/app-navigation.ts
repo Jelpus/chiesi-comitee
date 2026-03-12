@@ -1,0 +1,15 @@
+export type AppNavItem = {
+  href: string;
+  label: string;
+};
+
+export const appNavigation: AppNavItem[] = [
+  { href: '/', label: 'Home' },
+  { href: '/admin', label: 'Admin' },
+  { href: '/admin/periods', label: 'Periods' },
+  { href: '/admin/versions', label: 'Versions' },
+  { href: '/admin/uploads', label: 'Uploads' },
+  { href: '/admin/products', label: 'Products' },
+  { href: '/executive', label: 'Executive' },
+  { href: '/executive/sales-internal', label: 'Sales Internal' },
+];
