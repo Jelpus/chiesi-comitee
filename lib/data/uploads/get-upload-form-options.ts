@@ -7,7 +7,9 @@ export type UploadFormOptions = {
 };
 
 const businessExcellenceSourceModules = [
-  { value: 'business_excellence_pmm', label: 'Business Excellence - PMM' },
+  { value: 'business_excellence_ddd', label: 'Business Excellence - DDD' },
+  { value: 'business_excellence_budget_sell_out', label: 'Business Excellence - Budget Sell Out' },
+  { value: 'business_excellence_brick_assignment', label: 'Business Excellence - Brick Assignment' },
   { value: 'business_excellence_iqvia_weekly', label: 'Business Excellence - IQVIA Weekly' },
   { value: 'business_excellence_closeup', label: 'Business Excellence - Closeup' },
   { value: 'business_excellence_cuotas', label: 'Business Excellence - Cuotas' },

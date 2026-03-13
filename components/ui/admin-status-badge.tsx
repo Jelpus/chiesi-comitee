@@ -5,6 +5,10 @@ type AdminStatus =
   | 'open'
   | 'closed'
   | 'processing'
+  | 'uploading'
+  | 'uploaded'
+  | 'parsing'
+  | 'loading_raw'
   | 'raw_loaded'
   | 'normalizing'
   | 'normalized'
@@ -20,6 +24,10 @@ const statusClasses: Record<AdminStatus, string> = {
   open: 'border border-emerald-200/80 bg-emerald-50 text-emerald-700',
   closed: 'border border-slate-200 bg-slate-100 text-slate-700',
   processing: 'border border-sky-200/80 bg-sky-50 text-sky-700',
+  uploading: 'border border-sky-200/80 bg-sky-50 text-sky-700',
+  uploaded: 'border border-indigo-200/80 bg-indigo-50 text-indigo-700',
+  parsing: 'border border-amber-200/80 bg-amber-50 text-amber-700',
+  loading_raw: 'border border-indigo-200/80 bg-indigo-50 text-indigo-700',
   raw_loaded: 'border border-indigo-200/80 bg-indigo-50 text-indigo-700',
   normalizing: 'border border-amber-200/80 bg-amber-50 text-amber-700',
   normalized: 'border border-emerald-200/80 bg-emerald-50 text-emerald-700',

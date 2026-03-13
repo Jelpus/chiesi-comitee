@@ -4,7 +4,9 @@ import { getBigQueryClient } from '@/lib/bigquery/client';
 export type UploadDetailHeader = {
   uploadId: string;
   moduleCode: string;
+  dddSource: string | null;
   periodMonth: string;
+  sourceAsOfMonth: string;
   sourceFileName: string;
   status: string;
   rowsTotal: number;
@@ -13,6 +15,7 @@ export type UploadDetailHeader = {
   selectedSheetName: string;
   selectedHeaderRow: number;
   uploadedAt: string;
+  lastErrorMessage: string | null;
 };
 
 export type UploadErrorRow = {
@@ -26,15 +29,72 @@ export type UploadDetailData = {
   errors: UploadErrorRow[];
 };
 
+let ensureUploadsAsOfColumnPromise: Promise<void> | null = null;
+let ensureUploadsErrorColumnPromise: Promise<void> | null = null;
+let ensureUploadsDddSourceColumnPromise: Promise<void> | null = null;
+
+async function ensureUploadsAsOfColumn() {
+  if (!ensureUploadsAsOfColumnPromise) {
+    ensureUploadsAsOfColumnPromise = (async () => {
+      const client = getBigQueryClient();
+      await client.query({
+        query: `
+          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+          ADD COLUMN IF NOT EXISTS source_as_of_month DATE
+        `,
+      });
+    })();
+  }
+
+  await ensureUploadsAsOfColumnPromise;
+}
+
+async function ensureUploadsErrorColumn() {
+  if (!ensureUploadsErrorColumnPromise) {
+    ensureUploadsErrorColumnPromise = (async () => {
+      const client = getBigQueryClient();
+      await client.query({
+        query: `
+          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+          ADD COLUMN IF NOT EXISTS last_error_message STRING
+        `,
+      });
+    })();
+  }
+
+  await ensureUploadsErrorColumnPromise;
+}
+
+async function ensureUploadsDddSourceColumn() {
+  if (!ensureUploadsDddSourceColumnPromise) {
+    ensureUploadsDddSourceColumnPromise = (async () => {
+      const client = getBigQueryClient();
+      await client.query({
+        query: `
+          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+          ADD COLUMN IF NOT EXISTS ddd_source STRING
+        `,
+      });
+    })();
+  }
+
+  await ensureUploadsDddSourceColumnPromise;
+}
+
 export async function getUploadDetailData(uploadId: string): Promise<UploadDetailData> {
   const client = getBigQueryClient();
+  await ensureUploadsAsOfColumn();
+  await ensureUploadsErrorColumn();
+  await ensureUploadsDddSourceColumn();
 
   const [uploadRows] = await client.query({
     query: `
       SELECT
         upload_id,
         module_code,
+        ddd_source,
         CAST(period_month AS STRING) AS period_month,
+        CAST(source_as_of_month AS STRING) AS source_as_of_month,
         source_file_name,
         status,
         rows_total,
@@ -42,6 +102,7 @@ export async function getUploadDetailData(uploadId: string): Promise<UploadDetai
         rows_error,
         selected_sheet_name,
         selected_header_row,
+        last_error_message,
         CAST(uploaded_at AS STRING) AS uploaded_at
       FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
       WHERE upload_id = @uploadId
@@ -83,7 +144,9 @@ export async function getUploadDetailData(uploadId: string): Promise<UploadDetai
     header: {
       uploadId: String(row.upload_id ?? ''),
       moduleCode: String(row.module_code ?? ''),
+      dddSource: row.ddd_source ? String(row.ddd_source) : null,
       periodMonth: String(row.period_month ?? ''),
+      sourceAsOfMonth: String(row.source_as_of_month ?? row.period_month ?? ''),
       sourceFileName: String(row.source_file_name ?? ''),
       status: String(row.status ?? 'unknown'),
       rowsTotal: Number(row.rows_total ?? 0),
@@ -92,6 +155,7 @@ export async function getUploadDetailData(uploadId: string): Promise<UploadDetai
       selectedSheetName: String(row.selected_sheet_name ?? ''),
       selectedHeaderRow: Number(row.selected_header_row ?? 1),
       uploadedAt: String(row.uploaded_at ?? ''),
+      lastErrorMessage: row.last_error_message ? String(row.last_error_message) : null,
     },
     errors,
   };

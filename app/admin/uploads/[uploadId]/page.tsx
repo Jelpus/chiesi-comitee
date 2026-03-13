@@ -15,6 +15,15 @@ function formatDate(value: string) {
   }).format(date);
 }
 
+function formatMonth(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+}
+
 export default async function UploadDetailPage({ params }: UploadDetailPageProps) {
   const { uploadId } = await params;
   const data = await getUploadDetailData(uploadId);
@@ -38,7 +47,11 @@ export default async function UploadDetailPage({ params }: UploadDetailPageProps
       <div className="rounded-[28px] border border-slate-200/80 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)]">
         <div className="grid gap-3 text-sm text-slate-700 md:grid-cols-2">
           <p><span className="font-semibold">Module:</span> {data.header.moduleCode}</p>
-          <p><span className="font-semibold">Period:</span> {data.header.periodMonth}</p>
+          {data.header.dddSource ? (
+            <p><span className="font-semibold">DDD source:</span> {data.header.dddSource}</p>
+          ) : null}
+          <p><span className="font-semibold">Period:</span> {formatMonth(data.header.periodMonth)}</p>
+          <p><span className="font-semibold">Data As Of:</span> {formatMonth(data.header.sourceAsOfMonth)}</p>
           <p><span className="font-semibold">File:</span> {data.header.sourceFileName}</p>
           <p><span className="font-semibold">Uploaded:</span> {formatDate(data.header.uploadedAt)}</p>
           <p><span className="font-semibold">Sheet:</span> {data.header.selectedSheetName || 'N/A'}</p>
@@ -52,6 +65,11 @@ export default async function UploadDetailPage({ params }: UploadDetailPageProps
             {data.header.rowsValid}/{data.header.rowsTotal} valid, {data.header.rowsError} with errors
           </p>
         </div>
+        {data.header.lastErrorMessage ? (
+          <div className="mt-4 rounded-[14px] border border-rose-200/80 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <span className="font-semibold">Last error:</span> {data.header.lastErrorMessage}
+          </div>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.05)]">

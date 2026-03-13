@@ -34,6 +34,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     '/admin/periods': Calendar,
     '/admin/versions': Layers,
     '/admin/uploads': FolderUp,
+    '/admin/uploads/logs': FolderUp,
     '/admin/products': Tag,
     '/executive': Home,
     '/executive/sales-internal': BarChart3,

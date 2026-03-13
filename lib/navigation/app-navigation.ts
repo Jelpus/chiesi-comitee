@@ -9,6 +9,7 @@ export const appNavigation: AppNavItem[] = [
   { href: '/admin/periods', label: 'Periods' },
   { href: '/admin/versions', label: 'Versions' },
   { href: '/admin/uploads', label: 'Uploads' },
+  { href: '/admin/uploads/logs', label: 'Upload Logs' },
   { href: '/admin/products', label: 'Products' },
   { href: '/executive', label: 'Executive' },
   { href: '/executive/sales-internal', label: 'Sales Internal' },
