@@ -157,6 +157,23 @@ function formatPeriod(value: string) {
   return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
 }
 
+function formatPeriodTag(value: string | null | undefined) {
+  if (!value) return 'N/A';
+  const raw = String(value).trim();
+  if (!raw) return 'N/A';
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00Z`) : new Date(raw);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
+}
+
+function resolveHeaderAuditContext(rows: BusinessExcellenceAuditSource[]) {
+  const reportPeriodMonth =
+    rows.map((row) => row.reportPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+  const sourceAsOfMonth =
+    rows.map((row) => row.sourceAsOfMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+  return { reportPeriodMonth, sourceAsOfMonth };
+}
+
 function formatShortPeriod(value: string | null | undefined) {
   if (!value) return 'N/A';
   const date = new Date(`${value}T00:00:00`);
@@ -2125,6 +2142,16 @@ export async function BusinessExcellenceView({
           description="No hay datos disponibles todavia para las vistas enriquecidas."
           actions={<ModeTabs active={viewMode} params={searchParams} />}
         />
+        <div className="flex flex-wrap gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+            <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Report Period</span>
+            <span className="font-semibold text-slate-900">N/A</span>
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+            <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Source As Of</span>
+            <span className="font-semibold text-slate-900">N/A</span>
+          </span>
+        </div>
         <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
           <p className="text-sm text-slate-600">
             Primero asegurate de que existan filas en `vw_business_excellence_pmm_enriched` o
@@ -2157,6 +2184,11 @@ export async function BusinessExcellenceView({
     getCachedPublicMarketData(selectedReportingVersionId),
     getCachedBusinessUnitChannelRows(selectedReportingVersionId),
   ]);
+  const auditHeader = resolveHeaderAuditContext(auditSources);
+  const headerReportPeriod =
+    privateSellOutData.overview?.reportPeriodMonth ?? auditHeader.reportPeriodMonth ?? latestPeriod;
+  const headerSourceAsOf =
+    privateSellOutData.overview?.sourceAsOfMonth ?? auditHeader.sourceAsOfMonth ?? latestPeriod;
 
   return (
     <section className="space-y-4 pb-8">
@@ -2166,6 +2198,16 @@ export async function BusinessExcellenceView({
         description={`Private Sell Out control tower sobre ${formatPeriod(latestPeriod)} con vistas para dashboard, insights y scorecard.`}
         actions={<ModeTabs active={viewMode} params={searchParams} />}
       />
+      <div className="flex flex-wrap gap-2">
+        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+          <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Report Period</span>
+          <span className="font-semibold text-slate-900">{formatPeriodTag(headerReportPeriod)}</span>
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+          <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Source As Of</span>
+          <span className="font-semibold text-slate-900">{formatPeriodTag(headerSourceAsOf)}</span>
+        </span>
+      </div>
 
       {privateSellOutData.overview ? (
         <DashboardTopCards

@@ -13,8 +13,10 @@ import {
   Layers,
   Settings,
   Tag,
+  Target,
 } from 'lucide-react';
 import { appNavigation } from '@/lib/navigation/app-navigation';
+import { ModuleIcon } from '@/components/executive/module-icon';
 
 function isItemActive(pathname: string, href: string) {
   if (href === '/') return pathname === '/';
@@ -38,6 +40,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     '/admin/uploads/logs': FolderUp,
     '/admin/tables': Database,
     '/admin/products': Tag,
+    '/admin/targets': Target,
     '/executive': Home,
     '/executive/sales-internal': BarChart3,
     '/executive/business-excellence': Layers,
@@ -47,6 +50,16 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     : pathname.startsWith('/executive')
       ? 'executive'
       : 'home';
+  const executiveInitialsByHref: Record<string, string> = {
+    '/executive/sales-internal': 'SI',
+    '/executive/commercial-operations': 'CO',
+    '/executive/business-excellence': 'BE',
+    '/executive/medical': 'MD',
+    '/executive/opex': 'OP',
+    '/executive/human-resources': 'HR',
+    '/executive/ra-quality-fv': 'RA',
+    '/executive/legal-compliance': 'LC',
+  };
   const sectionItems = appNavigation.filter((item) => {
     if (currentSection === 'admin') return item.href.startsWith('/admin/') && item.href !== '/admin';
     if (currentSection === 'executive') return item.href.startsWith('/executive');
@@ -79,7 +92,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
         ) : null}
       </div>
 
-      <div className="flex-1 space-y-1">
+      <div className="flex-1 space-y-2">
         {sectionItems.length === 0 ? (
           !collapsed ? (
             <p className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-400">
@@ -99,22 +112,35 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
                 title={itemLabel}
                 onClick={onNavigate}
                 className={[
-                  'relative rounded-xl transition',
+                  'relative w-full rounded-xl transition',
                   collapsed
                     ? 'flex items-center justify-center px-2 py-2.5 text-xs font-semibold'
-                    : 'border-l border-slate-800 pl-4 pr-3 py-2.5 text-[13px]',
+                    : 'flex items-center border-l border-slate-800 pl-4 pr-3 py-4 text-sm min-h-[52px]',
                   active
                     ? 'bg-slate-900/80 text-white'
                     : 'text-slate-400 hover:bg-slate-900/70 hover:text-slate-100',
                 ].join(' ')}
               >
                 {collapsed ? (
-                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 bg-slate-900/70 text-[11px] font-semibold">
-                    <Icon className="h-4 w-4" />
+                  <span className="inline-flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-md border border-slate-700 bg-slate-900/70 text-[10px] font-semibold">
+                    {item.href.startsWith('/executive') && item.href !== '/executive' ? (
+                      <>
+                        <ModuleIcon module={item.label} className="h-3.5 w-3.5" />
+                        <span className="tracking-[0.08em] text-slate-200">
+                          {executiveInitialsByHref[item.href] ?? item.label.slice(0, 2).toUpperCase()}
+                        </span>
+                      </>
+                    ) : (
+                      <Icon className="h-4 w-4" />
+                    )}
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="h-1 w-1 rounded-full bg-[#C73283]" />
+                  <span className="inline-flex items-center gap-3.5">
+                    {item.href.startsWith('/executive') && item.href !== '/executive' ? (
+                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-700/80 bg-slate-900/70 text-slate-300">
+                        <ModuleIcon module={item.label} className="h-4.5 w-4.5" />
+                      </span>
+                    ) : null}
                     {itemLabel}
                   </span>
                 )}
@@ -133,7 +159,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
         <div className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-slate-300">
             <Settings className="h-3.5 w-3.5" />
-            {!collapsed ? <Gauge className="h-3.5 w-3.5" /> : null}
+            {!collapsed ? <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Navigation</span> : null}
           </div>
           <select
             value={currentSection === 'admin' || currentSection === 'executive' ? currentSection : ''}

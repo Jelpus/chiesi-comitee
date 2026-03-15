@@ -15,6 +15,7 @@ type SellOutProductMappingProps = {
   mappedRows: SellOutProductMappingRow[];
   productOptions: DimProductOption[];
   marketGroupOptions: string[];
+  label?: string;
 };
 
 export function SellOutProductMapping({
@@ -22,6 +23,7 @@ export function SellOutProductMapping({
   mappedRows,
   productOptions,
   marketGroupOptions,
+  label = 'Sell Out',
 }: SellOutProductMappingProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -45,7 +47,7 @@ export function SellOutProductMapping({
   if (unmappedRows.length === 0 && mappedRows.length === 0) {
     return (
       <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-        <p className="text-sm text-slate-600">No Sell Out products detected yet.</p>
+        <p className="text-sm text-slate-600">No {label} products detected yet.</p>
       </div>
     );
   }
@@ -53,7 +55,7 @@ export function SellOutProductMapping({
   return (
     <div className="space-y-4">
       <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Sell Out Mapping Process</p>
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{label} Mapping Process</p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div className="rounded-[18px] border border-emerald-200 bg-emerald-50/80 p-4">
             <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-700">Mapped</p>
@@ -80,7 +82,7 @@ export function SellOutProductMapping({
         >
           <div>
             <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Mapped</p>
-            <p className="mt-1 text-sm font-medium text-slate-900">Mapped Sell Out Products ({mappedRows.length})</p>
+            <p className="mt-1 text-sm font-medium text-slate-900">Mapped {label} Products ({mappedRows.length})</p>
           </div>
           <span className="text-slate-600">{showMapped ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
         </button>
@@ -108,7 +110,7 @@ export function SellOutProductMapping({
             <table className="min-w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/70">
-                <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Sell Out product</th>
+                <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">{label} product</th>
                 <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">product_id</th>
                 <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Canonical name</th>
                 <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Market group</th>
@@ -199,11 +201,11 @@ export function SellOutProductMapping({
                                   payload.set('createdBy', 'system');
                                   payload.set('updatedBy', 'system');
                                   await saveSellOutProductMapping(payload);
-                                  setFeedback(`Mapping updated: "${row.sourceProductName}".`);
+                                  setFeedback(`Mapping updated: "${row.sourceProductName}" (${label}).`);
                                   setEditMappedBySource((prev) => ({ ...prev, [key]: false }));
                                   router.refresh();
                                 } catch (error) {
-                                  setFeedback(error instanceof Error ? error.message : 'Unable to update Sell Out mapping.');
+                                  setFeedback(error instanceof Error ? error.message : `Unable to update ${label} mapping.`);
                                 }
                               });
                             }}
@@ -234,7 +236,7 @@ export function SellOutProductMapping({
                   <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">
                     {mappedRows.length === 0
                       ? 'No mappings registered yet.'
-                      : 'No mapped Sell Out products match the selected market group.'}
+                      : `No mapped ${label} products match the selected market group.`}
                   </td>
                 </tr>
               ) : null}
@@ -252,8 +254,8 @@ export function SellOutProductMapping({
           className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-slate-200 bg-slate-50/70 px-3 py-2 text-left"
         >
           <div>
-            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Sell Out Mapping</p>
-            <p className="mt-1 text-sm font-medium text-slate-900">Unmapped Sell Out Products ({unmappedRows.length})</p>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{label} Mapping</p>
+            <p className="mt-1 text-sm font-medium text-slate-900">Unmapped {label} Products ({unmappedRows.length})</p>
           </div>
           <span className="text-slate-600">{showUnmapped ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
         </button>
@@ -263,7 +265,7 @@ export function SellOutProductMapping({
             <table className="min-w-full border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70">
-                  <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Sell Out product</th>
+                  <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">{label} product</th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Occurrences</th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Map to product_id</th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Market group</th>
@@ -353,10 +355,10 @@ export function SellOutProductMapping({
                                 payload.set('createdBy', 'system');
                                 payload.set('updatedBy', 'system');
                                 await saveSellOutProductMapping(payload);
-                                setFeedback(`Mapping saved: "${row.sourceProductName}" -> ${selected || 'no product_id'} (${selectedMarket || 'no market group'}).`);
+                                setFeedback(`Mapping saved (${label}): "${row.sourceProductName}" -> ${selected || 'no product_id'} (${selectedMarket || 'no market group'}).`);
                                 router.refresh();
                               } catch (error) {
-                                setFeedback(error instanceof Error ? error.message : 'Unable to save Sell Out mapping.');
+                                setFeedback(error instanceof Error ? error.message : `Unable to save ${label} mapping.`);
                               }
                             });
                           }}
@@ -370,7 +372,7 @@ export function SellOutProductMapping({
                 })}
                 {unmappedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">All detected Sell Out products are already mapped.</td>
+                    <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">All detected {label} products are already mapped.</td>
                   </tr>
                 ) : null}
               </tbody>

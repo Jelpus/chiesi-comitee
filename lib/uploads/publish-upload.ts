@@ -848,6 +848,152 @@ async function publishHumanResourcesTrainingUpload(context: UploadPublishContext
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
+async function publishCommercialOperationsDsoUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+  const summaryModuleCode = 'commercial_operations_dso';
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      WITH latest_period AS (
+        SELECT MAX(period_month) AS period_month
+        FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\`
+        WHERE upload_id = @uploadId
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        CONCAT('dso_', LOWER(REPLACE(COALESCE(NULLIF(group_name, ''), 'unassigned'), ' ', '_'))),
+        CONCAT('DSO - ', COALESCE(NULLIF(group_name, ''), 'Unassigned')),
+        CAST(AVG(dso_value) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\` dso
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE dso.upload_id = @uploadId
+        AND dso.period_month = (SELECT period_month FROM latest_period)
+      GROUP BY dm.module_name, group_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
+async function publishCommercialOperationsStocksUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+  const summaryModuleCode = 'commercial_operations_stocks';
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      WITH latest_period AS (
+        SELECT MAX(period_month) AS period_month
+        FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\`
+        WHERE upload_id = @uploadId
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        'stocks_total_rows',
+        'Stocks - Loaded Rows',
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+        AND s.period_month = (SELECT period_month FROM latest_period)
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
 export async function publishUploadToMart(uploadId: string) {
   const context = await getPublishContext(uploadId);
 
@@ -893,6 +1039,16 @@ export async function publishUploadToMart(uploadId: string) {
     context.moduleCode === 'human_resources_entrenamiento'
   ) {
     return publishHumanResourcesTrainingUpload(context);
+  }
+  if (
+    context.moduleCode === 'commercial_operations_dso' ||
+    context.moduleCode === 'commercial_operations_days_sales_outstanding' ||
+    context.moduleCode === 'dso'
+  ) {
+    return publishCommercialOperationsDsoUpload(context);
+  }
+  if (context.moduleCode === 'commercial_operations_stocks' || context.moduleCode === 'stocks') {
+    return publishCommercialOperationsStocksUpload(context);
   }
 
   throw new Error(`No publisher configured for module "${context.moduleCode}".`);

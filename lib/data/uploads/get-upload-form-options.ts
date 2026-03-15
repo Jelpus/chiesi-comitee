@@ -15,6 +15,14 @@ const businessExcellenceSourceModules = [
   { value: 'business_excellence_cuotas', label: 'Business Excellence - Cuotas' },
   { value: 'human_resources_turnover', label: 'Human Resources - Turnover' },
   { value: 'human_resources_training', label: 'Human Resources - Training' },
+  { value: 'commercial_operations_dso', label: 'Commercial Operations - DSO' },
+  { value: 'commercial_operations_government_orders', label: 'Commercial Operations - Government Orders' },
+  {
+    value: 'commercial_operations_government_contract_progress',
+    label: 'Commercial Operations - Government Contract Progress',
+  },
+  { value: 'commercial_operations_stocks', label: 'Commercial Operations - Stocks' },
+  { value: 'commercial_operations_sanctions', label: 'Commercial Operations - Sanctions' },
 ];
 
 export async function getUploadFormOptions(): Promise<UploadFormOptions> {

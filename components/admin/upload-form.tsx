@@ -10,6 +10,57 @@ type UploadFormProps = {
   options: UploadFormOptions;
 };
 
+type ModuleAreaCode =
+  | 'sales_internal'
+  | 'business_excellence'
+  | 'commercial_operations'
+  | 'human_resources'
+  | 'other';
+
+function detectModuleArea(moduleCode: string, moduleLabel?: string): ModuleAreaCode {
+  const code = moduleCode.trim().toLowerCase();
+  const label = (moduleLabel ?? '').trim().toLowerCase();
+  const joined = `${code} ${label}`;
+
+  if (code === 'sales_internal' || joined.includes('sales internal')) return 'sales_internal';
+  if (code.startsWith('business_excellence') || joined.includes('business excellence'))
+    return 'business_excellence';
+  if (code.startsWith('commercial_operations') || joined.includes('commercial operations'))
+    return 'commercial_operations';
+  if (code.startsWith('human_resources') || joined.includes('human resources')) return 'human_resources';
+  return 'other';
+}
+
+function moduleAreaLabel(area: ModuleAreaCode) {
+  switch (area) {
+    case 'sales_internal':
+      return 'Sales Internal';
+    case 'business_excellence':
+      return 'Business Excellence';
+    case 'commercial_operations':
+      return 'Commercial Operations';
+    case 'human_resources':
+      return 'Human Resources';
+    default:
+      return 'Other';
+  }
+}
+
+function moduleAreaOrder(area: ModuleAreaCode) {
+  switch (area) {
+    case 'sales_internal':
+      return 1;
+    case 'business_excellence':
+      return 2;
+    case 'commercial_operations':
+      return 3;
+    case 'human_resources':
+      return 4;
+    default:
+      return 99;
+  }
+}
+
 function formatPeriodOptionLabel(periodMonth: string) {
   const date = new Date(`${periodMonth}T00:00:00`);
   if (Number.isNaN(date.getTime())) return periodMonth;
@@ -86,6 +137,20 @@ function stageLabel(stage: UploadUiStage) {
 
 export function UploadForm({ options }: UploadFormProps) {
   const router = useRouter();
+  const modulesWithArea = useMemo(
+    () =>
+      options.modules.map((item) => ({
+        ...item,
+        area: detectModuleArea(item.value, item.label),
+      })),
+    [options.modules],
+  );
+  const areaOptions = useMemo(() => {
+    const uniqueAreas = [...new Set(modulesWithArea.map((item) => item.area))];
+    return uniqueAreas
+      .sort((a, b) => moduleAreaOrder(a) - moduleAreaOrder(b) || moduleAreaLabel(a).localeCompare(moduleAreaLabel(b)))
+      .map((area) => ({ value: area, label: moduleAreaLabel(area) }));
+  }, [modulesWithArea]);
   const versionPeriodById = useMemo(
     () => new Map(options.versions.map((version) => [version.value, version.periodMonth])),
     [options.versions],
@@ -101,7 +166,13 @@ export function UploadForm({ options }: UploadFormProps) {
     }));
   }, [options.versions]);
 
-  const [moduleCode, setModuleCode] = useState(options.modules[0]?.value ?? '');
+  const initialArea = areaOptions[0]?.value ?? 'other';
+  const [selectedArea, setSelectedArea] = useState<ModuleAreaCode>(initialArea);
+  const filteredModules = useMemo(
+    () => modulesWithArea.filter((item) => item.area === selectedArea),
+    [modulesWithArea, selectedArea],
+  );
+  const [moduleCode, setModuleCode] = useState(filteredModules[0]?.value ?? options.modules[0]?.value ?? '');
   const [dddSource, setDddSource] = useState('innovair');
   const [reportingVersionId, setReportingVersionId] = useState(initialVersionId);
   const [periodMonth, setPeriodMonth] = useState(initialPeriodMonth);
@@ -140,6 +211,7 @@ export function UploadForm({ options }: UploadFormProps) {
       const savedDraft = window.sessionStorage.getItem('admin-upload-form-draft');
       if (!savedDraft) return;
       const draft = JSON.parse(savedDraft) as Partial<{
+        selectedArea: ModuleAreaCode;
         moduleCode: string;
         dddSource: string;
         reportingVersionId: string;
@@ -149,6 +221,7 @@ export function UploadForm({ options }: UploadFormProps) {
         headerRow: string;
       }>;
 
+      if (draft.selectedArea) setSelectedArea(draft.selectedArea);
       if (draft.moduleCode) setModuleCode(draft.moduleCode);
       if (draft.dddSource !== undefined) setDddSource(draft.dddSource);
       if (draft.reportingVersionId) setReportingVersionId(draft.reportingVersionId);
@@ -167,6 +240,7 @@ export function UploadForm({ options }: UploadFormProps) {
         'admin-upload-form-draft',
         JSON.stringify({
           moduleCode,
+          selectedArea,
           dddSource,
           reportingVersionId,
           periodMonth,
@@ -182,6 +256,7 @@ export function UploadForm({ options }: UploadFormProps) {
     dddSource,
     headerRow,
     moduleCode,
+    selectedArea,
     periodMonth,
     reportingVersionId,
     selectedSheetName,
@@ -210,6 +285,17 @@ export function UploadForm({ options }: UploadFormProps) {
       }
     });
   }
+
+  useEffect(() => {
+    if (!moduleCode) {
+      if (filteredModules[0]?.value) setModuleCode(filteredModules[0].value);
+      return;
+    }
+    const moduleInsideArea = filteredModules.some((item) => item.value === moduleCode);
+    if (!moduleInsideArea) {
+      setModuleCode(filteredModules[0]?.value ?? '');
+    }
+  }, [filteredModules, moduleCode]);
 
   function handleFileChange(file: File | null) {
     setSelectedFile(file);
@@ -330,6 +416,22 @@ export function UploadForm({ options }: UploadFormProps) {
         </div>
 
         <label className="flex flex-col gap-2">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Area</span>
+          <select
+            value={selectedArea}
+            onChange={(e) => setSelectedArea(e.target.value as ModuleAreaCode)}
+            disabled={isBusy}
+            className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950"
+          >
+            {areaOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Module</span>
           <select
             name="moduleCode"
@@ -357,7 +459,7 @@ export function UploadForm({ options }: UploadFormProps) {
             disabled={isBusy}
             className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950"
           >
-            {options.modules.map((item) => (
+            {filteredModules.map((item) => (
               <option key={item.value} value={item.value}>
                 {item.label}
               </option>

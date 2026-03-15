@@ -1568,3 +1568,31 @@ export async function getSalesInternalTopProducts(
     }));
   }
 }
+
+export async function getSalesInternalAuditContext(
+  periodMonth?: string,
+): Promise<{ reportPeriodMonth: string | null; sourceAsOfMonth: string | null }> {
+  const client = getBigQueryClient();
+  const params: Record<string, string> = {};
+  const periodFilter = periodMonth ? 'AND period_month = DATE(@periodMonth)' : '';
+  if (periodMonth) params.periodMonth = periodMonth;
+
+  const [rows] = await client.query({
+    query: `
+      SELECT
+        CAST(MAX(period_month) AS STRING) AS report_period_month,
+        CAST(MAX(COALESCE(source_as_of_month, period_month)) AS STRING) AS source_as_of_month
+      FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+      WHERE LOWER(TRIM(module_code)) = 'sales_internal'
+        AND status IN ('normalized', 'published')
+        ${periodFilter}
+    `,
+    params,
+  });
+
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  return {
+    reportPeriodMonth: row?.report_period_month ? String(row.report_period_month) : null,
+    sourceAsOfMonth: row?.source_as_of_month ? String(row.source_as_of_month) : null,
+  };
+}

@@ -13,6 +13,8 @@ import {
   getPmmUnmappedProducts,
   getSellOutProductMappings,
   getSellOutUnmappedProducts,
+  getStocksProductMappings,
+  getStocksUnmappedProducts,
   getProductMetadataCoverageRows,
 } from '@/lib/data/products/product-metadata';
 import { unstable_noStore as noStore } from 'next/cache';
@@ -58,6 +60,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     pmmMappings,
     sellOutUnmappedRows,
     sellOutMappings,
+    stocksUnmappedRows,
+    stocksMappings,
     gob360UnmappedClaves,
     gob360Mappings,
   ] = await Promise.all([
@@ -70,6 +74,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     getPmmProductMappings(500),
     getSellOutUnmappedProducts(300),
     getSellOutProductMappings(700),
+    getStocksUnmappedProducts(300),
+    getStocksProductMappings(700),
     getGob360UnmappedClaves(300),
     getGob360ProductMappings(700),
   ]);
@@ -86,6 +92,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   const sellOutMappedKeys = new Set(
     sellOutMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
   );
+  const stocksMappedKeys = new Set(
+    stocksMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
+  );
   const gob360MappedKeys = new Set(gob360Mappings.map((row) => row.sourceClaveNormalized));
 
   const filteredCloseupUnmappedRows = unmappedCloseupRows.filter(
@@ -96,6 +105,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   );
   const filteredSellOutUnmappedRows = sellOutUnmappedRows.filter(
     (row) => !sellOutMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
+  );
+  const filteredStocksUnmappedRows = stocksUnmappedRows.filter(
+    (row) => !stocksMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
   );
   const filteredGob360UnmappedRows = gob360UnmappedClaves.filter(
     (row) => !gob360MappedKeys.has(row.sourceClaveNormalized),
@@ -162,6 +174,10 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         sellOut={{
           unmappedRows: filteredSellOutUnmappedRows,
           mappedRows: sellOutMappings,
+        }}
+        stocks={{
+          unmappedRows: filteredStocksUnmappedRows,
+          mappedRows: stocksMappings,
         }}
       />
       <Gob360ConnectionTest />

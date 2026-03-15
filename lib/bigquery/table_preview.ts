@@ -12,6 +12,10 @@ export const previewTables = {
     training: 'chiesi-committee.chiesi_committee_stg.vw_human_resources_training_enriched',
     turnover: 'chiesi-committee.chiesi_committee_stg.vw_human_resources_turnover_enriched'
   },
+  commercial_operations: {
+    dso: 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_dso_enriched',
+    stocks: 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_stocks_enriched',
+  },
   sales_internal: {
     sales: 'chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_active',
     budget: 'chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_vs_budget',
@@ -23,6 +27,7 @@ export const previewTables = {
     close_up: 'chiesi-committee.chiesi_committee_admin.closeup_product_mapping',
     gob360: 'chiesi-committee.chiesi_committee_admin.gob360_product_mapping',
     budget_sell_out: 'chiesi-committee.chiesi_committee_admin.sell_out_product_mapping',
+    targets: 'chiesi-committee.chiesi_committee_admin.kpi_targets',
   },
   public_market: {
     gob360_pc_sales: '',

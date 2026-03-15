@@ -5,6 +5,7 @@ import { getBigQueryClient } from '@/lib/bigquery/client';
 import type { SemanticStatus } from '@/lib/status/status-styles';
 import { getSalesInternalBudgetDualKpis, getSalesInternalDualKpisYoY } from '@/lib/data/sales-internal';
 import { getBusinessExcellenceBusinessUnitChannelRows } from '@/lib/data/business-excellence';
+import { getHumanResourcesTrainingThemeData, getHumanResourcesTurnoverThemeData } from '@/lib/data/human-resources';
 
 type ExecutiveModuleKey =
   | 'internal_sales'
@@ -49,7 +50,7 @@ const executiveCardOrder: Array<{
     key: 'commercial_operations',
     module: 'Commercial Operations',
     defaultKpi: 'Pending Integration',
-    detailHref: null,
+    detailHref: '/executive/commercial-operations/insights',
   },
   {
     key: 'business_excellence',
@@ -190,6 +191,49 @@ async function getBusinessExcellenceExecutiveSnapshot(
   };
 }
 
+function toSignedPp(value: number) {
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}${Math.abs(value).toFixed(1)}pp`;
+}
+
+async function getHumanResourcesExecutiveSnapshot(
+  reportingVersionId: string,
+  fallback?: Pick<ExecutiveCardItem, 'module'>,
+): Promise<ExecutiveCardItem> {
+  const [turnover, training] = await Promise.all([
+    getHumanResourcesTurnoverThemeData(reportingVersionId, 'total'),
+    getHumanResourcesTrainingThemeData(reportingVersionId, 'total'),
+  ]);
+
+  const turnoverActual = turnover?.summary.currentYtdExits ?? 0;
+  const turnoverTarget = turnover?.summary.targetYtdExits ?? 0;
+  const turnoverVariance = turnoverActual - turnoverTarget;
+
+  const trainingActualCoverage = training?.summary.coverageRateYtd ?? 0;
+  const trainingTargetCoverage = 0.85;
+  const trainingCoverageVariancePp = (trainingActualCoverage - trainingTargetCoverage) * 100;
+
+  const turnoverStatus = turnoverVariance <= 0 ? 'green' : turnoverVariance <= 2 ? 'yellow' : 'red';
+  const trainingStatus =
+    trainingActualCoverage >= 0.85 ? 'green' : trainingActualCoverage >= 0.75 ? 'yellow' : 'red';
+  const status: SemanticStatus =
+    turnoverStatus === 'red' || trainingStatus === 'red'
+      ? 'red'
+      : turnoverStatus === 'yellow' || trainingStatus === 'yellow'
+        ? 'yellow'
+        : 'green';
+
+  return {
+    module: fallback?.module ?? 'Human Resources',
+    kpi: 'TurnOver & Training',
+    actual: `TOV ${toUnits(turnoverActual)} | TRN ${(trainingActualCoverage * 100).toFixed(1)}%`,
+    target: `TOV ${toUnits(turnoverTarget)} | TRN ${(trainingTargetCoverage * 100).toFixed(0)}%`,
+    variance: `TOV ${toSignedUnits(turnoverVariance)} | TRN ${toSignedPp(trainingCoverageVariancePp)}`,
+    status,
+    detailHref: '/executive/human-resources/insights',
+  };
+}
+
 export async function getExecutiveCardsFromBigQuery(
   reportingVersionId: string
 ): Promise<ExecutiveCardItem[]> {
@@ -250,6 +294,17 @@ export async function getExecutiveCardsFromBigQuery(
     if (spec.key === 'business_excellence') {
       const fallback = cardsByModuleKey.get(spec.key);
       const snapshot = await getBusinessExcellenceExecutiveSnapshot(reportingVersionId, {
+        module: spec.module,
+      });
+      finalCards.push({
+        ...snapshot,
+        detailHref: detailHrefWithVersion(spec.detailHref),
+      });
+      continue;
+    }
+
+    if (spec.key === 'human_resources') {
+      const snapshot = await getHumanResourcesExecutiveSnapshot(reportingVersionId, {
         module: spec.module,
       });
       finalCards.push({

@@ -7,6 +7,7 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { formatSalesMetric, resolveSalesMetricMode } from '@/lib/format/sales-metric';
 import { getSalesInternalInsightsModel, getSalesInternalScorecardPriorities } from '@/lib/insights/sales-internal';
 import {
+  getSalesInternalAuditContext,
   getSalesInternalBuBreakdown,
   getSalesInternalBudgetDualKpis,
   getSalesInternalBudgetBuBreakdown,
@@ -58,6 +59,15 @@ function parsePeriodMonth(value: string) {
   const month = Number(monthRaw);
   if (!year || !month) return null;
   return { year, month };
+}
+
+function formatPeriodTag(value: string | null | undefined) {
+  if (!value) return 'N/A';
+  const raw = String(value).trim();
+  if (!raw) return 'N/A';
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00Z`) : new Date(raw);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
 }
 
 function compactLabel(value: string | null | undefined) {
@@ -281,6 +291,12 @@ const getCachedSalesInternalDataset = unstable_cache(
   { revalidate: 45 },
 );
 
+const getCachedSalesInternalAuditContext = unstable_cache(
+  async (periodMonth: string) => getSalesInternalAuditContext(periodMonth || undefined),
+  ['sales-internal-audit-context-v1'],
+  { revalidate: 60 },
+);
+
 export async function SalesInternalView({ searchParams: params, viewMode }: SalesInternalViewProps) {
   const contextFilters: SalesInternalFilters = {
     periodMonth: sanitizeFilter(params.periodMonth),
@@ -297,6 +313,17 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
     ...contextFilters,
     salesGroup: effectiveSalesGroup,
   };
+  const auditContext = await getCachedSalesInternalAuditContext(contextFilters.periodMonth ?? '');
+  const reportPeriodTag =
+    auditContext.reportPeriodMonth ??
+    contextFilters.periodMonth ??
+    filterOptions.periods[0] ??
+    null;
+  const sourceAsOfTag =
+    auditContext.sourceAsOfMonth ??
+    contextFilters.periodMonth ??
+    filterOptions.periods[0] ??
+    null;
   const metricMode = resolveSalesMetricMode(metricFilters.salesGroup);
 
   const {
@@ -346,6 +373,16 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
           title="Sales Internal"
           description="Executive insights for normalized sales from STG and consolidated in MART."
         />
+        <div className="flex flex-wrap gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+            <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Report Period</span>
+            <span className="font-semibold text-slate-900">{formatPeriodTag(reportPeriodTag)}</span>
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+            <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Source As Of</span>
+            <span className="font-semibold text-slate-900">{formatPeriodTag(sourceAsOfTag)}</span>
+          </span>
+        </div>
 
         <div className="space-y-4 pr-1">
           <SalesInternalKpiCards dualKpisYoY={dualKpisYoY} budgetDualKpis={budgetDualKpis} metricMode={metricMode} />
@@ -1215,6 +1252,16 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
         title="Sales Internal"
         description="Executive insights for normalized sales from STG and consolidated in MART."
       />
+      <div className="flex flex-wrap gap-2">
+        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+          <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Report Period</span>
+          <span className="font-semibold text-slate-900">{formatPeriodTag(reportPeriodTag)}</span>
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
+          <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Source As Of</span>
+          <span className="font-semibold text-slate-900">{formatPeriodTag(sourceAsOfTag)}</span>
+        </span>
+      </div>
 
       <div className="space-y-4 pr-1">
         <SalesInternalKpiCards dualKpisYoY={dualKpisYoY} budgetDualKpis={budgetDualKpis} metricMode={metricMode} />

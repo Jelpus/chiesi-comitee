@@ -187,6 +187,28 @@ type HumanResourcesTrainingNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type CommercialOperationsDsoNormalizedRow = {
+  rowNumber: number;
+  groupName: string;
+  periodMonth: string;
+  dsoValue: number;
+  payload: Record<string, unknown>;
+};
+
+type CommercialOperationsStocksNormalizedRow = {
+  rowNumber: number;
+  businessType: string | null;
+  market: string | null;
+  businessUnit: string | null;
+  clientInstitution: string | null;
+  stockType: string | null;
+  sourceProductRaw: string;
+  sourceProductNormalized: string;
+  periodMonth: string;
+  stockValue: number;
+  payload: Record<string, unknown>;
+};
+
 let ensureCloseupStagingSchemaPromise: Promise<void> | null = null;
 
 function chunkItems<T>(items: T[], size: number) {
@@ -373,6 +395,7 @@ function buildNormalizeUploadResult(
 const MONTHS: Record<string, string> = {
   january: '01',
   jan: '01',
+  ene: '01',
   enero: '01',
   february: '02',
   feb: '02',
@@ -382,6 +405,7 @@ const MONTHS: Record<string, string> = {
   marzo: '03',
   april: '04',
   apr: '04',
+  abr: '04',
   abril: '04',
   may: '05',
   mayo: '05',
@@ -393,6 +417,7 @@ const MONTHS: Record<string, string> = {
   julio: '07',
   august: '08',
   aug: '08',
+  ago: '08',
   agosto: '08',
   september: '09',
   sep: '09',
@@ -407,6 +432,7 @@ const MONTHS: Record<string, string> = {
   noviembre: '11',
   december: '12',
   dec: '12',
+  dic: '12',
   diciembre: '12',
 };
 
@@ -452,12 +478,9 @@ function asNullableNumber(value: unknown) {
         ? compact.replace(/,/g, '.')
         : compact.replace(/,/g, '');
   } else if (dotCount > 0) {
-    const lastChunk = compact.slice(lastDot + 1);
-    // Single dot with 1-2 decimals => decimal separator; otherwise thousands separator.
-    normalized =
-      dotCount === 1 && lastChunk.length <= 2
-        ? compact
-        : compact.replace(/\./g, '');
+    // Dot-only numbers are treated as decimal representation to preserve precision
+    // from sources like DSO (e.g. 107.410206...).
+    normalized = compact;
   }
 
   const numberValue = Number(normalized);
@@ -552,6 +575,24 @@ function parseMonthHeader(header: string): string | null {
   const month = MONTHS[monthToken];
   if (!month) return null;
 
+  return `${year}-${month}-01`;
+}
+
+function parseMonthHeaderFlexible(header: string): string | null {
+  const cleanHeader = header
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\-\/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const match = cleanHeader.match(/^([A-Za-z]{3,})\s+(\d{2,4})$/);
+  if (!match) return null;
+
+  const month = parseMonthToken(match[1]);
+  const year = parseYearToken(match[2]);
+  if (!month || !year) return null;
   return `${year}-${month}-01`;
 }
 
@@ -2192,6 +2233,551 @@ async function loadWeeklyTrackingStaging(uploadId: string, rows: WeeklyTrackingN
   );
 }
 
+function getIndexedCellsFromPayload(payload: Record<string, unknown>) {
+  const indexedCells: Array<{ index: number; value: unknown }> = [];
+  for (const [key, value] of Object.entries(payload)) {
+    const match = key.match(/^column_(\d+)$/i);
+    if (!match) continue;
+    const index = Number(match[1]);
+    if (!Number.isInteger(index) || index < 1) continue;
+    indexedCells.push({ index, value });
+  }
+  indexedCells.sort((a, b) => a.index - b.index);
+  return indexedCells;
+}
+
+function getFirstNonEmptyIndexedCell(indexedCells: Array<{ index: number; value: unknown }>) {
+  for (const cell of indexedCells) {
+    const text = asNullableString(cell.value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function parseDsoMonthHeaderRow(indexedCells: Array<{ index: number; value: unknown }>) {
+  const firstCell = getFirstNonEmptyIndexedCell(indexedCells);
+  if (!firstCell || normalizeText(firstCell) !== 'year') return null;
+
+  let hasYear = false;
+  let monthCount = 0;
+  const monthByColumnIndex = new Map<number, string>();
+
+  for (const cell of indexedCells) {
+    const { index, value } = cell;
+    const text = asNullableString(value);
+    if (!text) continue;
+    const normalized = normalizeText(text);
+    if (normalized === 'year') {
+      hasYear = true;
+      continue;
+    }
+    const parsedMonth = parseMonthToken(text);
+    if (!parsedMonth) continue;
+    monthByColumnIndex.set(index, parsedMonth);
+    monthCount += 1;
+  }
+
+  if (!hasYear || monthCount < 2) return null;
+  return monthByColumnIndex;
+}
+
+function parseDsoMonthHeaderKeyMap(payload: Record<string, unknown>) {
+  const hasYear = Object.values(payload).some((value) => normalizeText(String(value ?? '')) === 'year');
+  if (!hasYear) return null;
+
+  const monthPriorityMap = new Map<string, { key: string; priority: number; index: number }>();
+
+  for (const [key, value] of Object.entries(payload)) {
+    const text = asNullableString(value);
+    if (!text) continue;
+    const month = parseMonthToken(text);
+    if (!month) continue;
+
+    const columnMatch = key.match(/^column_(\d+)$/i);
+    const index = columnMatch ? Number(columnMatch[1]) : Number.MAX_SAFE_INTEGER;
+    const priority = columnMatch ? 0 : 1;
+    const current = monthPriorityMap.get(month);
+    if (!current || priority < current.priority || (priority === current.priority && index < current.index)) {
+      monthPriorityMap.set(month, { key, priority, index });
+    }
+  }
+
+  if (monthPriorityMap.size < 2) return null;
+  return monthPriorityMap;
+}
+
+function parseDsoYear(indexedCells: Array<{ index: number; value: unknown }>) {
+  const firstCell = getFirstNonEmptyIndexedCell(indexedCells);
+  if (!firstCell) return null;
+  if (!/^\d{4}$/.test(firstCell)) return null;
+  const parsed = parseYearToken(firstCell);
+  if (parsed && parsed >= 2000 && parsed <= 2200) return parsed;
+  return null;
+}
+
+function detectDsoGroupName(indexedCells: Array<{ index: number; value: unknown }>) {
+  const candidates = new Map<string, string>([
+    ['anual general', 'Anual / General'],
+    ['b2b privado', 'B2B Privado'],
+    ['b2c privado', 'B2C Privado'],
+    ['b2c gobierno', 'B2C Gobierno'],
+    ['b2b gobierno', 'B2B Gobierno'],
+  ]);
+
+  const firstCell = getFirstNonEmptyIndexedCell(indexedCells);
+  if (!firstCell) return null;
+  const normalized = normalizeText(firstCell.replace(/:$/, ''));
+  const matched = candidates.get(normalized);
+  if (matched) return matched;
+
+  return null;
+}
+
+function normalizeCommercialOperationsDso(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsDsoNormalizedRow[] = [];
+  const dedupByGroupPeriod = new Map<string, CommercialOperationsDsoNormalizedRow>();
+
+  let currentGroup: string | null = null;
+  let monthByColumnIndex = new Map<number, string>();
+  let monthHeaderByMonth = new Map<string, { key: string; priority: number; index: number }>();
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const indexedCells = getIndexedCellsFromPayload(payload);
+
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const monthHeader = parseDsoMonthHeaderRow(indexedCells);
+    const monthHeaderKeyMap = parseDsoMonthHeaderKeyMap(payload);
+    if (monthHeader && monthHeaderKeyMap) {
+      monthByColumnIndex = monthHeader;
+      monthHeaderByMonth = monthHeaderKeyMap;
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'valid',
+        errors: [],
+      });
+      continue;
+    }
+
+    const detectedGroup = detectDsoGroupName(indexedCells);
+    if (detectedGroup) {
+      currentGroup = detectedGroup;
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'valid',
+        errors: [],
+      });
+      continue;
+    }
+
+    const year = parseDsoYear(indexedCells);
+    if (!year) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: row is not a DSO year row.'],
+      });
+      continue;
+    }
+
+    if (!currentGroup) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'error',
+        errors: ['Missing DSO group context before year row.'],
+      });
+      continue;
+    }
+
+    if (monthByColumnIndex.size === 0 || monthHeaderByMonth.size === 0) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'error',
+        errors: ['Missing DSO month header context before year row.'],
+      });
+      continue;
+    }
+
+    const valueByColumnIndex = new Map<number, unknown>();
+    for (const cell of indexedCells) {
+      valueByColumnIndex.set(cell.index, cell.value);
+    }
+
+    const monthOrder = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+    let hasAtLeastOneValue = false;
+    const rowValuesByPeriod = new Map<string, number>();
+    for (const month of monthOrder) {
+      const header = monthHeaderByMonth.get(month);
+      if (!header) continue;
+
+      const primaryValue = asNullableNumber(payload[header.key]);
+      const fallbackByIndex = header.index !== Number.MAX_SAFE_INTEGER
+        ? asNullableNumber(valueByColumnIndex.get(header.index))
+        : null;
+      const dsoValue = primaryValue ?? fallbackByIndex;
+      if (dsoValue == null) continue;
+      hasAtLeastOneValue = true;
+      rowValuesByPeriod.set(`${year}-${month}-01`, dsoValue);
+    }
+
+    for (const [periodMonth, dsoValue] of rowValuesByPeriod.entries()) {
+      const normalizedRow: CommercialOperationsDsoNormalizedRow = {
+        rowNumber: row.row_number,
+        groupName: currentGroup,
+        periodMonth,
+        dsoValue,
+        payload,
+      };
+      const dedupKey = `${normalizeText(currentGroup)}|${periodMonth}`;
+      if (!dedupByGroupPeriod.has(dedupKey)) {
+        dedupByGroupPeriod.set(dedupKey, normalizedRow);
+      }
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: hasAtLeastOneValue ? 'valid' : 'skipped',
+      errors: hasAtLeastOneValue ? [] : ['Skipped: year row without numeric DSO month values.'],
+    });
+  }
+
+  normalizedRows.push(...dedupByGroupPeriod.values());
+  return { validations, normalizedRows };
+}
+
+async function loadCommercialOperationsDsoStaging(
+  uploadId: string,
+  rows: CommercialOperationsDsoNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\` (
+        upload_id STRING,
+        row_number INT64,
+        group_name STRING,
+        period_month DATE,
+        dso_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) IN ('commercial_operations_dso', 'commercial_operations_days_sales_outstanding', 'dso')
+          AND u.upload_id != @uploadId
+      )
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_dso\`
+    (
+      upload_id,
+      row_number,
+      group_name,
+      period_month,
+      dso_value,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      NULLIF(row.group_name, ''),
+      DATE(row.period_month),
+      SAFE_CAST(row.dso_value AS NUMERIC),
+      PARSE_JSON(row.source_payload_json),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1800);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              group_name: row.groupName,
+              period_month: row.periodMonth,
+              dso_value: String(row.dsoValue),
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
+  );
+}
+
+function normalizeCommercialOperationsStocks(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsStocksNormalizedRow[] = [];
+  const dedup = new Map<string, CommercialOperationsStocksNormalizedRow>();
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+    const sourceProductRaw = asNullableString(
+      pickValue(index, ['Producto', 'product', 'producto']),
+    );
+    if (!sourceProductRaw) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: missing product name in "Producto" column.'],
+      });
+      continue;
+    }
+
+    const normalizedProduct = normalizeText(sourceProductRaw);
+    if (['total', 'subtotal', 'totales'].includes(normalizedProduct)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: total/subtotal row.'],
+      });
+      continue;
+    }
+
+    const businessType = asNullableString(pickValue(index, ['Tipo Neg', 'Tipo Negocio', 'tipo_neg']));
+    const market = asNullableString(pickValue(index, ['Mercado', 'market']));
+    const businessUnit = asNullableString(pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio']));
+    const clientInstitution = asNullableString(
+      pickValue(index, ['Cliente / Institucion', 'Cliente / Institución', 'Cliente', 'Institucion']),
+    );
+    const stockType = asNullableString(pickValue(index, ['Tipo', 'Type']));
+
+    let valueCount = 0;
+    for (const [key, rawValue] of Object.entries(payload)) {
+      if (key.toLowerCase().startsWith('column_')) continue;
+      const periodMonth = parseMonthHeaderFlexible(key);
+      if (!periodMonth) continue;
+      const stockValue = asNullableNumber(rawValue);
+      if (stockValue == null) continue;
+
+      valueCount += 1;
+      const normalizedRow: CommercialOperationsStocksNormalizedRow = {
+        rowNumber: row.row_number,
+        businessType,
+        market,
+        businessUnit,
+        clientInstitution,
+        stockType,
+        sourceProductRaw,
+        sourceProductNormalized: normalizedProduct,
+        periodMonth,
+        stockValue,
+        payload,
+      };
+      const dedupKey = [
+        periodMonth,
+        normalizeText(businessType ?? ''),
+        normalizeText(market ?? ''),
+        normalizeText(businessUnit ?? ''),
+        normalizeText(clientInstitution ?? ''),
+        normalizeText(stockType ?? ''),
+        normalizedProduct,
+      ].join('|');
+      if (!dedup.has(dedupKey)) dedup.set(dedupKey, normalizedRow);
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: valueCount > 0 ? 'valid' : 'skipped',
+      errors: valueCount > 0 ? [] : ['Skipped: no monthly stock values found in month columns.'],
+    });
+  }
+
+  normalizedRows.push(...dedup.values());
+  return { validations, normalizedRows };
+}
+
+async function loadCommercialOperationsStocksStaging(
+  uploadId: string,
+  rows: CommercialOperationsStocksNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\` (
+        upload_id STRING,
+        row_number INT64,
+        business_type STRING,
+        market STRING,
+        business_unit STRING,
+        client_institution STRING,
+        stock_type STRING,
+        source_product_raw STRING,
+        source_product_normalized STRING,
+        period_month DATE,
+        stock_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) IN ('commercial_operations_stocks', 'stocks')
+          AND u.upload_id != @uploadId
+      )
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_stocks\`
+    (
+      upload_id,
+      row_number,
+      business_type,
+      market,
+      business_unit,
+      client_institution,
+      stock_type,
+      source_product_raw,
+      source_product_normalized,
+      period_month,
+      stock_value,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      NULLIF(row.business_type, ''),
+      NULLIF(row.market, ''),
+      NULLIF(row.business_unit, ''),
+      NULLIF(row.client_institution, ''),
+      NULLIF(row.stock_type, ''),
+      row.source_product_raw,
+      row.source_product_normalized,
+      DATE(row.period_month),
+      SAFE_CAST(row.stock_value AS NUMERIC),
+      PARSE_JSON(row.source_payload_json),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1800);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              business_type: row.businessType ?? '',
+              market: row.market ?? '',
+              business_unit: row.businessUnit ?? '',
+              client_institution: row.clientInstitution ?? '',
+              stock_type: row.stockType ?? '',
+              source_product_raw: row.sourceProductRaw,
+              source_product_normalized: row.sourceProductNormalized,
+              period_month: row.periodMonth,
+              stock_value: String(row.stockValue),
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
+  );
+}
+
 function detectHumanResourcesArea(payload: Record<string, unknown>) {
   const index = buildPayloadIndex(payload);
   const area = asNullableString(
@@ -2940,6 +3526,24 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = normalizeHumanResourcesTraining(rows, asOfMonth);
     await updateRawValidationStatus(uploadId, validations);
     await loadHumanResourcesTrainingStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (
+    moduleCode === 'commercial_operations_dso' ||
+    moduleCode === 'commercial_operations_days_sales_outstanding' ||
+    moduleCode === 'dso'
+  ) {
+    const { validations, normalizedRows } = normalizeCommercialOperationsDso(rows);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsDsoStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'commercial_operations_stocks' || moduleCode === 'stocks') {
+    const { validations, normalizedRows } = normalizeCommercialOperationsStocks(rows);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsStocksStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 

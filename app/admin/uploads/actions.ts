@@ -77,6 +77,32 @@ function chunkUploadRowsByApproxBytes(
     return chunks;
 }
 
+function isConcurrentUpdateOrQuotaError(error: unknown) {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+        message.includes('could not serialize access to table') ||
+        message.includes('concurrent update') ||
+        message.includes('exceeded quota for table update operations') ||
+        message.includes('rate limits')
+    );
+}
+
+async function runWithTableUpdateRetry<T>(fn: () => Promise<T>, retries = 4) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            if (!isConcurrentUpdateOrQuotaError(error) || attempt === retries) break;
+            const waitMs = 300 * Math.pow(2, attempt);
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+    }
+    throw lastError;
+}
+
 function normalizeCloseupSourceKey(value: string) {
     return value
         .normalize('NFD')
@@ -328,6 +354,59 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         }
 
         return { ok: true, checked: sampleRows.length };
+    }
+
+    if (
+        moduleCode === 'commercial_operations_dso' ||
+        moduleCode === 'commercial_operations_days_sales_outstanding' ||
+        moduleCode === 'dso'
+    ) {
+        const monthTokens = new Set([
+            'jan',
+            'feb',
+            'mar',
+            'apr',
+            'may',
+            'jun',
+            'jul',
+            'ago',
+            'aug',
+            'sep',
+            'oct',
+            'nov',
+            'dec',
+        ]);
+
+        const rowsToCheck = rows.slice(0, Math.min(rows.length, 60));
+        const hasYearMonthHeader = rowsToCheck.some((row) => {
+            const values = Object.values(row.payload).map((value) => String(value ?? '').trim().toLowerCase());
+            const hasYear = values.includes('year');
+            const monthsFound = values.filter((value) => monthTokens.has(value)).length;
+            return hasYear && monthsFound >= 2;
+        });
+
+        const hasYearDataRow = rowsToCheck.some((row) => {
+            const values = Object.values(row.payload).map((value) => String(value ?? '').trim());
+            const hasYear = values.some((value) => /^\d{4}$/.test(value));
+            const hasNumeric = values.some((value) => asNumber(value) != null);
+            return hasYear && hasNumeric;
+        });
+
+        const hasGroupLabel = rowsToCheck.some((row) => {
+            const values = Object.values(row.payload).map((value) => String(value ?? '').trim());
+            return values.some((value) => /b2b|b2c|gobierno|privado|general/i.test(value));
+        });
+
+        if (!hasYearMonthHeader || !hasYearDataRow || !hasGroupLabel) {
+            return {
+                ok: false,
+                checked: rowsToCheck.length,
+                message:
+                    'Sample check failed for Commercial Operations DSO: expected group sections, Year+months headers, and numeric year rows.',
+            };
+        }
+
+        return { ok: true, checked: rowsToCheck.length };
     }
 
     return { ok: true, checked: sampleRows.length };
@@ -813,56 +892,63 @@ async function updateUploadCounters(uploadId: string, rowCount: number) {
     WHERE upload_id = @uploadId
   `;
 
-    await client.query({
-        query,
-        params: {
-            uploadId,
-            rowsTotal: rowCount,
-        },
-    });
+    await runWithTableUpdateRetry(() =>
+        client.query({
+            query,
+            params: {
+                uploadId,
+                rowsTotal: rowCount,
+            },
+        }),
+    );
 }
 
 async function markUploadAsError(uploadId: string) {
     await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
 
-    await client.query({
-        query: `
+    await runWithTableUpdateRetry(() =>
+        client.query({
+            query: `
       UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
       SET
         status = 'error',
         last_error_message = COALESCE(last_error_message, 'Unknown upload error')
       WHERE upload_id = @uploadId
     `,
-        params: { uploadId },
-    });
+            params: { uploadId },
+        }),
+    );
 }
 
 async function setUploadError(uploadId: string, message: string, fallbackStatus: 'error' | 'raw_loaded' = 'error') {
     await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
-    await client.query({
-        query: `
+    await runWithTableUpdateRetry(() =>
+        client.query({
+            query: `
       UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
       SET
         status = @status,
         last_error_message = @message
       WHERE upload_id = @uploadId
     `,
-        params: {
-            uploadId,
-            status: fallbackStatus,
-            message: message.slice(0, 4000),
-        },
-    });
+            params: {
+                uploadId,
+                status: fallbackStatus,
+                message: message.slice(0, 4000),
+            },
+        }),
+    );
 }
 
 async function setUploadStatus(uploadId: string, status: string) {
     await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
 
-    await client.query({
-        query: `
+    await runWithTableUpdateRetry(() =>
+        client.query({
+            query: `
       UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
       SET
         status = @status,
@@ -872,8 +958,9 @@ async function setUploadStatus(uploadId: string, status: string) {
         END
       WHERE upload_id = @uploadId
     `,
-        params: { uploadId, status },
-    });
+            params: { uploadId, status },
+        }),
+    );
 }
 
 async function updateUploadNormalizationResult(params: {
@@ -883,8 +970,9 @@ async function updateUploadNormalizationResult(params: {
 }) {
     const client = getBigQueryClient();
 
-    await client.query({
-        query: `
+    await runWithTableUpdateRetry(() =>
+        client.query({
+            query: `
       UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
       SET
         status = 'normalized',
@@ -892,8 +980,9 @@ async function updateUploadNormalizationResult(params: {
         rows_error = @rowsError
       WHERE upload_id = @uploadId
     `,
-        params: params,
-    });
+            params: params,
+        }),
+    );
 }
 
 function formatNormalizationSummary(result: {
