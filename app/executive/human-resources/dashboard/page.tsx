@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 type HumanResourcesDashboardPageProps = {
   searchParams: Promise<{
     version?: string;
+    hrTab?: string;
   }>;
 };
 

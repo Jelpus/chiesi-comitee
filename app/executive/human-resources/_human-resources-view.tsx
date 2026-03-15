@@ -11,9 +11,11 @@ import {
 import type { HumanResourcesTrainingUserRow } from '@/types/human-resources';
 
 export type HumanResourcesViewMode = 'insights' | 'scorecard' | 'dashboard';
+type HumanResourcesDashboardTab = 'turnover' | 'training';
 
 type SearchParams = {
   version?: string;
+  hrTab?: string;
 };
 
 function modeHref(mode: HumanResourcesViewMode, params: SearchParams) {
@@ -25,7 +27,13 @@ function modeHref(mode: HumanResourcesViewMode, params: SearchParams) {
 
 function formatPeriod(value: string | null | undefined) {
   if (!value) return 'N/A';
-  const date = new Date(`${value}T00:00:00`);
+  const raw = String(value).trim();
+  if (!raw || raw.toLowerCase() === 'null' || raw.toLowerCase() === 'undefined') return 'N/A';
+
+  const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = dateOnlyMatch ? new Date(`${raw}T00:00:00Z`) : new Date(raw);
+
+  if (Number.isNaN(date.getTime())) return 'N/A';
   return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
 }
 
@@ -102,67 +110,103 @@ function TopCards({
 function DashboardPanel({
   turnoverRows,
   trainingRows,
+  activeTab,
+  params,
 }: {
   turnoverRows: Awaited<ReturnType<typeof getHumanResourcesTurnoverDepartments>>;
   trainingRows: HumanResourcesTrainingUserRow[];
+  activeTab: HumanResourcesDashboardTab;
+  params: SearchParams;
 }) {
+  const buildTabHref = (tab: HumanResourcesDashboardTab) => {
+    const query = new URLSearchParams();
+    if (params.version) query.set('version', params.version);
+    query.set('hrTab', tab);
+    const queryText = query.toString();
+    return `/executive/human-resources/dashboard${queryText ? `?${queryText}` : ''}`;
+  };
+
   return (
     <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
       <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Human Resources Dashboard</p>
       <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Turnover & Training</h2>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          href={buildTabHref('turnover')}
+          className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+            activeTab === 'turnover'
+              ? 'bg-slate-900 text-white shadow-[0_8px_22px_rgba(15,23,42,0.35)]'
+              : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+          }`}
+        >
+          Turnover
+        </Link>
+        <Link
+          href={buildTabHref('training')}
+          className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+            activeTab === 'training'
+              ? 'bg-slate-900 text-white shadow-[0_8px_22px_rgba(15,23,42,0.35)]'
+              : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+          }`}
+        >
+          Training
+        </Link>
+      </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <div className="rounded-[16px] border border-slate-200 bg-slate-50/50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Turnover by Department</p>
-          <div className="mt-3 overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
-                  <th className="py-2">Department</th>
-                  <th className="py-2 text-right">Exits</th>
-                  <th className="py-2 text-right">Voluntary</th>
-                  <th className="py-2 text-right">Involuntary</th>
-                </tr>
-              </thead>
-              <tbody>
-                {turnoverRows.map((row) => (
-                  <tr key={row.department} className="border-b border-slate-100 last:border-b-0">
-                    <td className="py-2.5 text-slate-900">{row.department}</td>
-                    <td className="py-2.5 text-right font-semibold text-slate-900">{row.exits}</td>
-                    <td className="py-2.5 text-right text-slate-700">{row.voluntaryExits}</td>
-                    <td className="py-2.5 text-right text-slate-700">{row.involuntaryExits}</td>
+      <div className="mt-4">
+        {activeTab === 'turnover' ? (
+          <div className="rounded-[16px] border border-slate-200 bg-slate-50/50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Turnover by Department</p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
+                    <th className="py-2">Department</th>
+                    <th className="py-2 text-right">Exits</th>
+                    <th className="py-2 text-right">Voluntary</th>
+                    <th className="py-2 text-right">Involuntary</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {turnoverRows.map((row) => (
+                    <tr key={row.department} className="border-b border-slate-100 last:border-b-0">
+                      <td className="py-2.5 text-slate-900">{row.department}</td>
+                      <td className="py-2.5 text-right font-semibold text-slate-900">{row.exits}</td>
+                      <td className="py-2.5 text-right text-slate-700">{row.voluntaryExits}</td>
+                      <td className="py-2.5 text-right text-slate-700">{row.involuntaryExits}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-
-        <div className="rounded-[16px] border border-slate-200 bg-slate-50/50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Training by User</p>
-          <div className="mt-3 overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
-                  <th className="py-2">User</th>
-                  <th className="py-2">People ID</th>
-                  <th className="py-2 text-right">Hours</th>
-                  <th className="py-2 text-right">Completion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trainingRows.map((row) => (
-                  <tr key={`${row.userName}-${row.peopleId ?? 'na'}`} className="border-b border-slate-100 last:border-b-0">
-                    <td className="py-2.5 text-slate-900">{row.userName}</td>
-                    <td className="py-2.5 text-slate-700">{row.peopleId ?? 'N/A'}</td>
-                    <td className="py-2.5 text-right font-semibold text-slate-900">{row.totalHours.toFixed(1)}</td>
-                    <td className="py-2.5 text-right text-slate-700">{formatPercent(row.completionRate)}</td>
+        ) : (
+          <div className="rounded-[16px] border border-slate-200 bg-slate-50/50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Training by User</p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
+                    <th className="py-2">User</th>
+                    <th className="py-2">People ID</th>
+                    <th className="py-2 text-right">Hours</th>
+                    <th className="py-2 text-right">Completion</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {trainingRows.map((row) => (
+                    <tr key={`${row.userName}-${row.peopleId ?? 'na'}`} className="border-b border-slate-100 last:border-b-0">
+                      <td className="py-2.5 text-slate-900">{row.userName}</td>
+                      <td className="py-2.5 text-slate-700">{row.peopleId ?? 'N/A'}</td>
+                      <td className="py-2.5 text-right font-semibold text-slate-900">{row.totalHours.toFixed(1)}</td>
+                      <td className="py-2.5 text-right text-slate-700">{formatPercent(row.completionRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </article>
   );
@@ -234,6 +278,8 @@ export async function HumanResourcesView({
   searchParams?: SearchParams;
 }) {
   const selectedReportingVersionId = searchParams.version ?? '';
+  const activeDashboardTab: HumanResourcesDashboardTab =
+    searchParams.hrTab === 'training' ? 'training' : 'turnover';
   const data = await getCachedData(selectedReportingVersionId);
 
   const turnoverOverview = data.turnoverOverview;
@@ -257,7 +303,12 @@ export async function HumanResourcesView({
       />
 
       {viewMode === 'dashboard' ? (
-        <DashboardPanel turnoverRows={data.turnoverRows} trainingRows={data.trainingRows} />
+        <DashboardPanel
+          turnoverRows={data.turnoverRows}
+          trainingRows={data.trainingRows}
+          activeTab={activeDashboardTab}
+          params={searchParams}
+        />
       ) : null}
 
       {viewMode === 'insights' ? (
@@ -284,4 +335,3 @@ export async function HumanResourcesView({
     </section>
   );
 }
-
