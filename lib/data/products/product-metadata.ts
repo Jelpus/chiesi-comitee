@@ -692,21 +692,7 @@ export async function getCloseupUnmappedProducts(
           JSON_VALUE(r.row_payload_json, '$.producto_closeup'),
           JSON_VALUE(r.row_payload_json, '$.PRODUCTO_NAME'),
           JSON_VALUE(r.row_payload_json, '$."Producto Name"'),
-          JSON_VALUE(r.row_payload_json, '$."Product Name"'),
-          (
-            SELECT AS VALUE JSON_VALUE(
-              r.row_payload_json,
-              CONCAT('$."', REPLACE(k, '"', '\\"'), '"')
-            )
-            FROM UNNEST(JSON_KEYS(r.row_payload_json)) AS k
-            WHERE REGEXP_REPLACE(LOWER(k), r'[^a-z0-9]', '') IN (
-              'producto',
-              'product',
-              'productocloseup',
-              'productoname'
-            )
-            LIMIT 1
-          )
+          JSON_VALUE(r.row_payload_json, '$."Product Name"')
         ) AS source_product_name,
         CAST(u.uploaded_at AS STRING) AS uploaded_at
       FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\` r
@@ -718,7 +704,15 @@ export async function getCloseupUnmappedProducts(
     normalized AS (
       SELECT
         source_product_name,
-        LOWER(REGEXP_REPLACE(TRIM(source_product_name), r'[^a-zA-Z0-9]+', ' ')) AS source_product_name_normalized,
+        LOWER(
+          TRIM(
+            REGEXP_REPLACE(
+              REGEXP_REPLACE(NORMALIZE(source_product_name, NFD), r'\pM', ''),
+              r'[^a-zA-Z0-9]+',
+              ' '
+            )
+          )
+        ) AS source_product_name_normalized,
         uploaded_at
       FROM source_products
       WHERE source_product_name IS NOT NULL
@@ -971,9 +965,12 @@ export async function getPmmProductMappings(limit = 1000): Promise<PmmProductMap
 
 export async function getPmmUnmappedProducts(
   limit = 200,
+  uploadIds?: string[],
 ): Promise<PmmUnmappedProductRow[]> {
   await ensurePmmProductMappingTable();
   const client = getBigQueryClient();
+  const scopedUploadIds = (uploadIds ?? []).map((item) => item.trim()).filter(Boolean);
+  const hasScopedUploadIds = scopedUploadIds.length > 0;
   const query = `
     WITH source_products AS (
       SELECT
@@ -989,26 +986,62 @@ export async function getPmmUnmappedProducts(
       FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\` r
       JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
         ON u.upload_id = r.upload_id
-      WHERE LOWER(TRIM(u.module_code)) LIKE '%pmm%'
-         OR LOWER(TRIM(u.module_code)) LIKE '%ddd%'
+      WHERE (
+        LOWER(TRIM(u.module_code)) LIKE '%pmm%'
+        OR LOWER(TRIM(u.module_code)) LIKE '%ddd%'
+        OR LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_iqvia_weekly',
+          'business_excellence_weekly_tracking',
+          'iqvia_weekly',
+          'weekly_tracking'
+        )
+      )
+        AND u.status IN ('raw_loaded', 'normalizing', 'normalized', 'published', 'error')
+        ${hasScopedUploadIds ? 'AND u.upload_id IN UNNEST(@uploadIds)' : ''}
     ),
     normalized AS (
       SELECT
         source_product_name,
-        LOWER(REGEXP_REPLACE(TRIM(source_product_name), r'[^a-zA-Z0-9]+', ' ')) AS source_product_name_normalized,
+        LOWER(
+          TRIM(
+            REGEXP_REPLACE(
+              REGEXP_REPLACE(NORMALIZE(source_product_name, NFD), r'\pM', ''),
+              r'[^a-zA-Z0-9]+',
+              ' '
+            )
+          )
+        ) AS source_product_name_normalized,
         uploaded_at
       FROM source_products
       WHERE source_product_name IS NOT NULL
         AND TRIM(source_product_name) != ''
     ),
+    normalized_mapping AS (
+      SELECT DISTINCT
+        LOWER(
+          TRIM(
+            REGEXP_REPLACE(
+              REGEXP_REPLACE(NORMALIZE(COALESCE(source_pack_des, source_pack_des_normalized), NFD), r'\pM', ''),
+              r'[^a-zA-Z0-9]+',
+              ' '
+            )
+          )
+        ) AS source_pack_des_normalized
+      FROM \`chiesi-committee.chiesi_committee_admin.pmm_product_mapping\`
+      WHERE is_active = TRUE
+        AND (
+          (product_id IS NOT NULL AND TRIM(product_id) != '')
+          OR (market_group IS NOT NULL AND TRIM(market_group) != '')
+        )
+    ),
     grouped AS (
       SELECT
-        ANY_VALUE(source_product_name) AS source_product_name,
+        source_product_name,
         source_product_name_normalized,
         COUNT(1) AS occurrences,
         MAX(uploaded_at) AS last_seen_at
       FROM normalized
-      GROUP BY source_product_name_normalized
+      GROUP BY source_product_name, source_product_name_normalized
     )
     SELECT
       g.source_product_name,
@@ -1016,19 +1049,17 @@ export async function getPmmUnmappedProducts(
       g.occurrences,
       g.last_seen_at
     FROM grouped g
-    LEFT JOIN \`chiesi-committee.chiesi_committee_admin.pmm_product_mapping\` m
+    LEFT JOIN normalized_mapping m
       ON m.source_pack_des_normalized = g.source_product_name_normalized
-      AND m.is_active = TRUE
-      AND (
-        (m.product_id IS NOT NULL AND TRIM(m.product_id) != '')
-        OR (m.market_group IS NOT NULL AND TRIM(m.market_group) != '')
-      )
     WHERE m.source_pack_des_normalized IS NULL
     ORDER BY g.source_product_name ASC
     LIMIT @limit
   `;
 
-  const [rows] = await client.query({ query, params: { limit } });
+  const [rows] = await client.query({
+    query,
+    params: hasScopedUploadIds ? { limit, uploadIds: scopedUploadIds } : { limit },
+  });
   return (rows as Record<string, unknown>[]).map((row) => ({
     sourceProductName: String(row.source_product_name ?? ''),
     sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),

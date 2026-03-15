@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { createUploadRecord, inspectUploadWorkbook } from '@/app/admin/uploads/actions';
@@ -135,6 +135,59 @@ export function UploadForm({ options }: UploadFormProps) {
     moduleCode === 'sell_out';
   const showsSourceSelector = isDddModule || isSellOutModule;
 
+  useEffect(() => {
+    try {
+      const savedDraft = window.sessionStorage.getItem('admin-upload-form-draft');
+      if (!savedDraft) return;
+      const draft = JSON.parse(savedDraft) as Partial<{
+        moduleCode: string;
+        dddSource: string;
+        reportingVersionId: string;
+        periodMonth: string;
+        sourceAsOfMonth: string;
+        selectedSheetName: string;
+        headerRow: string;
+      }>;
+
+      if (draft.moduleCode) setModuleCode(draft.moduleCode);
+      if (draft.dddSource !== undefined) setDddSource(draft.dddSource);
+      if (draft.reportingVersionId) setReportingVersionId(draft.reportingVersionId);
+      if (draft.periodMonth) setPeriodMonth(draft.periodMonth);
+      if (draft.sourceAsOfMonth) setSourceAsOfMonth(draft.sourceAsOfMonth);
+      if (draft.selectedSheetName) setSelectedSheetName(draft.selectedSheetName);
+      if (draft.headerRow) setHeaderRow(draft.headerRow);
+    } catch {
+      // Ignore corrupt session draft and keep defaults.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(
+        'admin-upload-form-draft',
+        JSON.stringify({
+          moduleCode,
+          dddSource,
+          reportingVersionId,
+          periodMonth,
+          sourceAsOfMonth,
+          selectedSheetName,
+          headerRow,
+        }),
+      );
+    } catch {
+      // Ignore session storage failures in the upload form.
+    }
+  }, [
+    dddSource,
+    headerRow,
+    moduleCode,
+    periodMonth,
+    reportingVersionId,
+    selectedSheetName,
+    sourceAsOfMonth,
+  ]);
+
   function inspectWorkbook(file: File) {
     const inspectFormData = new FormData();
     inspectFormData.append('file', file);
@@ -187,6 +240,13 @@ export function UploadForm({ options }: UploadFormProps) {
       return;
     }
 
+    const payload = new FormData();
+    for (const [key, value] of formData.entries()) {
+      if (key === 'file') continue;
+      payload.append(key, value);
+    }
+    payload.set('file', selectedFile, selectedFile.name);
+
     setUiStage('uploading');
 
     startRegisterTransition(async () => {
@@ -198,17 +258,34 @@ export function UploadForm({ options }: UploadFormProps) {
       }, 2200);
 
       try {
-        const result = await createUploadRecord(formData);
-        setResultMessage(
-          `Upload registered successfully: ${result.uploadId}. Redirecting to Upload Logs to continue with Process...`,
-        );
-        setUiStage('registered');
+          const result = await createUploadRecord(payload);
+          setResultMessage(
+            `Upload registered successfully: ${result.uploadId}. Redirecting to Upload Logs to continue with Process and Normalize...`,
+          );
+          setUiStage('registered');
+        try {
+          window.sessionStorage.removeItem('admin-upload-form-draft');
+        } catch {
+          // Ignore session storage failures after successful registration.
+        }
         setTimeout(() => {
           router.push(
             `/admin/uploads/logs?readyUploadId=${encodeURIComponent(result.uploadId)}`,
           );
         }, 900);
       } catch (error) {
+        console.error('[UploadForm] register upload failed', {
+          moduleCode,
+          reportingVersionId,
+          periodMonth,
+          sourceAsOfMonth,
+          dddSource,
+          selectedSheetName,
+          headerRow,
+          selectedFileName: selectedFile?.name ?? null,
+          selectedFileSize: selectedFile?.size ?? null,
+          error,
+        });
         setResultMessage(
           error instanceof Error ? error.message : 'Unable to register upload.',
         );
@@ -395,6 +472,11 @@ export function UploadForm({ options }: UploadFormProps) {
             <p className="mt-2 flex items-center gap-2 text-xs text-slate-600">
               {isInspecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               {inspectMessage}
+            </p>
+          ) : null}
+          {selectedFile ? (
+            <p className="mt-1 text-xs text-slate-500">
+              Selected file: <span className="font-medium text-slate-700">{selectedFile.name}</span>
             </p>
           ) : null}
         </label>

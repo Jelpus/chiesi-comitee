@@ -34,7 +34,13 @@ export function SellOutProductMapping({
   const [editMappedBySource, setEditMappedBySource] = useState<Record<string, boolean>>({});
   const [mappedProductBySource, setMappedProductBySource] = useState<Record<string, string>>({});
   const [mappedMarketBySource, setMappedMarketBySource] = useState<Record<string, string>>({});
+  const [showMapped, setShowMapped] = useState(true);
   const [showUnmapped, setShowUnmapped] = useState(false);
+  const [mappedMarketFilter, setMappedMarketFilter] = useState('');
+  const totalOptions = mappedRows.length + unmappedRows.length;
+  const filteredMappedRows = mappedRows.filter((row) =>
+    mappedMarketFilter ? (row.marketGroup ?? '') === mappedMarketFilter : true,
+  );
 
   if (unmappedRows.length === 0 && mappedRows.length === 0) {
     return (
@@ -47,9 +53,59 @@ export function SellOutProductMapping({
   return (
     <div className="space-y-4">
       <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Current mappings</p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-full border-collapse">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Sell Out Mapping Process</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-[18px] border border-emerald-200 bg-emerald-50/80 p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-700">Mapped</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">
+              {mappedRows.length} <span className="text-base font-medium text-slate-500">from {totalOptions} total options</span>
+            </p>
+          </div>
+          <div className="rounded-[18px] border border-amber-200 bg-amber-50/80 p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-amber-700">Remaining unmapped</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{unmappedRows.length}</p>
+          </div>
+        </div>
+
+        {feedback ? (
+          <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{feedback}</p>
+        ) : null}
+      </div>
+
+      <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+        <button
+          type="button"
+          onClick={() => setShowMapped((prev) => !prev)}
+          className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-slate-200 bg-slate-50/70 px-3 py-2 text-left"
+        >
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Mapped</p>
+            <p className="mt-1 text-sm font-medium text-slate-900">Mapped Sell Out Products ({mappedRows.length})</p>
+          </div>
+          <span className="text-slate-600">{showMapped ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
+        </button>
+
+        {showMapped ? (
+          <div className="mt-4 space-y-4">
+            <div className="flex max-w-[320px] flex-col gap-2">
+              <label className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Filter by market group
+              </label>
+              <select
+                value={mappedMarketFilter}
+                onChange={(e) => setMappedMarketFilter(e.target.value)}
+                className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+              >
+                <option value="">All market groups</option>
+                {localMarketGroups.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/70">
                 <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Sell Out product</th>
@@ -60,7 +116,7 @@ export function SellOutProductMapping({
               </tr>
             </thead>
             <tbody>
-              {mappedRows.slice(0, 160).map((row) => {
+              {filteredMappedRows.slice(0, 160).map((row) => {
                 const key = row.sourceProductNameNormalized;
                 const editing = Boolean(editMappedBySource[key]);
                 const selectedProduct = mappedProductBySource[key] ?? (row.productId ?? '');
@@ -173,14 +229,20 @@ export function SellOutProductMapping({
                   </tr>
                 );
               })}
-              {mappedRows.length === 0 ? (
+              {filteredMappedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">No mappings registered yet.</td>
+                  <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">
+                    {mappedRows.length === 0
+                      ? 'No mappings registered yet.'
+                      : 'No mapped Sell Out products match the selected market group.'}
+                  </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
-        </div>
+          </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
@@ -195,10 +257,6 @@ export function SellOutProductMapping({
           </div>
           <span className="text-slate-600">{showUnmapped ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
         </button>
-
-        {feedback ? (
-          <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{feedback}</p>
-        ) : null}
 
         {showUnmapped ? (
           <div className="mt-4 overflow-x-auto">

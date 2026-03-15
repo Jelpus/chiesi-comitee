@@ -277,6 +277,59 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         return { ok: true, checked: sampleRows.length };
     }
 
+    if (
+        moduleCode === 'business_excellence_iqvia_weekly' ||
+        moduleCode === 'business_excellence_weekly_tracking' ||
+        moduleCode === 'iqvia_weekly' ||
+        moduleCode === 'weekly_tracking'
+    ) {
+        const hasDate = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Week', 'WEEK', 'Date', 'DATE', 'Fecha', 'Period', 'Periodo']) ?? '')
+                .trim()
+                .length > 0,
+        );
+        const hasMetric = sampleRows.some((row) => {
+            const units = asNumber(getRowValue(row.payload, ['Un', 'UN', 'Units']));
+            const netSales = asNumber(getRowValue(row.payload, ['Lc', 'LC', 'Net Sales', 'NetSales']));
+            return units != null || netSales != null;
+        });
+
+        const hasProductColumns = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['PACK_DES', 'PROD_DES', 'PRODCODE']) ?? '')
+                .trim()
+                .length > 0,
+        );
+
+        if (!hasDate) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Weekly Tracking: expected Week column in first rows.',
+            };
+        }
+
+        if (!hasMetric) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Weekly Tracking: expected numeric UN/LC values in first rows.',
+            };
+        }
+
+        if (!hasProductColumns) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Weekly Tracking: expected product columns (PACK_DES/PROD_DES/PRODCODE).',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
     return { ok: true, checked: sampleRows.length };
 }
 
@@ -843,6 +896,22 @@ async function updateUploadNormalizationResult(params: {
     });
 }
 
+function formatNormalizationSummary(result: {
+    normalizedRows: number;
+    rowsValid: number;
+    rowsSkipped: number;
+    rowsError: number;
+    topValidationIssues: Array<{ reason: string; count: number }>;
+}) {
+    const counts = `normalized=${result.normalizedRows}, valid=${result.rowsValid}, skipped=${result.rowsSkipped}, error=${result.rowsError}`;
+    const issues = result.topValidationIssues
+        .slice(0, 3)
+        .map((item) => `${item.reason} [${item.count}]`)
+        .join(' | ');
+
+    return issues ? `${counts}. Top issues: ${issues}` : counts;
+}
+
 async function getUploadContext(uploadId: string) {
     const client = getBigQueryClient();
 
@@ -952,6 +1021,19 @@ export async function createUploadRecord(formData: FormData) {
   const headerRowValue = Number(formData.get('headerRow') ?? 1);
   const headerRow = Number.isFinite(headerRowValue) && headerRowValue > 0 ? headerRowValue : 1;
 
+  console.info('[createUploadRecord] start', {
+    moduleCode,
+    reportingVersionId,
+    periodMonth,
+    sourceAsOfMonth,
+    dddSource,
+    selectedSheetName,
+    headerRow,
+    fileName: file instanceof File ? file.name : null,
+    fileSize: file instanceof File ? file.size : null,
+    fileType: file instanceof File ? file.type : null,
+  });
+
     if (!(file instanceof File) || file.size === 0) {
         throw new Error('You must select a source file (.xlsx, .xls, .csv).');
     }
@@ -997,6 +1079,13 @@ export async function createUploadRecord(formData: FormData) {
             : '',
     });
 
+    console.info('[createUploadRecord] upload record inserted', {
+      uploadId,
+      moduleCode,
+      storagePath,
+      effectiveSelectedSheetName,
+    });
+
     try {
         const storageClient = getStorageClient();
         const bucket = storageClient.bucket(bucketName);
@@ -1017,13 +1106,24 @@ export async function createUploadRecord(formData: FormData) {
       },
     });
     await setUploadStatus(uploadId, 'uploaded');
+    console.info('[createUploadRecord] file saved to storage and status updated', {
+      uploadId,
+      storageObjectPath,
+    });
   } catch (error) {
+    console.error('[createUploadRecord] storage/save failure', {
+      uploadId,
+      moduleCode,
+      storageObjectPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
     await markUploadAsError(uploadId);
     throw error;
   }
 
   revalidatePath('/admin/uploads');
   revalidatePath('/admin/uploads/logs');
+  console.info('[createUploadRecord] complete', { uploadId, moduleCode });
   return { ok: true, uploadId };
 }
 
@@ -1066,176 +1166,85 @@ export async function processUpload(uploadId: string) {
 
     const context = await getUploadProcessContext(uploadId);
     const { moduleCode, status } = context;
-    if (status === 'normalized' || status === 'published') {
-        revalidatePath('/admin/uploads');
-        revalidatePath('/admin/uploads/logs');
-        return {
-            ok: true as const,
-            phase: 'normalized' as const,
-            sampleRowsChecked: 0,
-            normalizedRows: context.rowsTotal,
-            rowsValid: 0,
-            rowsError: 0,
-        };
-    }
-    if (status !== 'uploaded' && status !== 'raw_loaded' && status !== 'error') {
+    if (
+        status !== 'uploaded' &&
+        status !== 'raw_loaded' &&
+        status !== 'error' &&
+        status !== 'normalized' &&
+        status !== 'published'
+    ) {
         throw new Error(`Upload ${uploadId} is not ready to process (current status: ${status}).`);
     }
 
     let sampleRowsChecked = 0;
     try {
-        // Phase 1: load RAW only (from uploaded or from empty-error retries).
-        const shouldLoadRaw = status === 'uploaded' || (status === 'error' && context.rowsTotal === 0);
-        if (shouldLoadRaw) {
-            await setUploadStatus(uploadId, 'parsing');
+        // Phase 1: load RAW only.
+        await setUploadStatus(uploadId, 'parsing');
 
-            const storageClient = getStorageClient();
-            const { bucketName, objectPath } = parseGcsPath(context.storagePath);
-            const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
+        const storageClient = getStorageClient();
+        const { bucketName, objectPath } = parseGcsPath(context.storagePath);
+        const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
 
-            const parsedRows = parseExcelRows(fileBuffer, {
-                sheetName: context.selectedSheetName,
-                headerRow: context.selectedHeaderRow,
-            });
-            if (parsedRows.length === 0) {
-                throw new Error(
-                    'No rows were parsed from source file. Check delimiter/encoding and selected header row.',
-                );
-            }
-            const sampleCheck = validateSampleRows(moduleCode, parsedRows);
-            if (!sampleCheck.ok) {
-                throw new Error(sampleCheck.message);
-            }
-            sampleRowsChecked = sampleCheck.checked;
+        const parsedRows = parseExcelRows(fileBuffer, {
+            sheetName: context.selectedSheetName,
+            headerRow: context.selectedHeaderRow,
+        });
+        if (parsedRows.length === 0) {
+            throw new Error(
+                'No rows were parsed from source file. Check delimiter/encoding and selected header row.',
+            );
+        }
+        const sampleCheck = validateSampleRows(moduleCode, parsedRows);
+        if (!sampleCheck.ok) {
+            throw new Error(sampleCheck.message);
+        }
+        sampleRowsChecked = sampleCheck.checked;
 
-            let rowsForRaw = parsedRows;
-            if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
-                // Keep full RAW for discovery: do not prefilter by existing mappings.
-                // This preserves newly arriving source products so unmapped lists stay complete.
-                rowsForRaw = parsedRows;
-            }
-            // DDD/PMM strategy: always load RAW first; mapping gate is evaluated after RAW load.
-            if (
-                moduleCode === 'business_excellence_ddd' ||
-                moduleCode === 'business_excellence_pmm' ||
-                moduleCode === 'pmm' ||
-                moduleCode === 'ddd' ||
-                moduleCode === 'business_excellence_budget_sell_out' ||
-                moduleCode === 'business_excellence_sell_out' ||
-                moduleCode === 'sell_out'
-            ) {
-                rowsForRaw = parsedRows;
-            }
-
-            await setUploadStatus(uploadId, 'loading_raw');
-            await clearUploadRawRows(uploadId);
-            const tempFile = await writeRawRowsNdjsonToGcs({
-                uploadId,
-                selectedSheetName: context.selectedSheetName,
-                rows: rowsForRaw.map((row) => ({
-                    rowNumber: row.rowNumber,
-                    payload: row.payload,
-                })),
-                storagePath: context.storagePath,
-            });
-            try {
-                await loadRawRowsIntoBigQueryFromGcs(tempFile.gcsUri);
-            } finally {
-                await deleteTemporaryNdjson(tempFile.bucketName, tempFile.ndjsonObjectPath);
-            }
-            await updateUploadCounters(uploadId, rowsForRaw.length);
-
-            // DDD mapping gate: stop after RAW load whenever unmapped PACK_DES still exist.
-            if (
-                moduleCode === 'business_excellence_ddd' ||
-                moduleCode === 'business_excellence_pmm' ||
-                moduleCode === 'pmm' ||
-                moduleCode === 'ddd' ||
-                moduleCode === 'business_excellence_budget_sell_out' ||
-                moduleCode === 'business_excellence_sell_out' ||
-                moduleCode === 'sell_out'
-            ) {
-                const unmappedCount =
-                  moduleCode === 'business_excellence_budget_sell_out' ||
-                  moduleCode === 'business_excellence_sell_out' ||
-                  moduleCode === 'sell_out'
-                    ? await countUnmappedSellOutProducts(uploadId)
-                    : await countUnmappedDddProducts(uploadId);
-                if (unmappedCount > 0) {
-                    await setUploadStatus(uploadId, 'raw_loaded');
-                    await setUploadError(
-                        uploadId,
-                        `Mapping required: ${unmappedCount} source products are unmapped. Complete mapping in Admin > Products and run Process again.`,
-                        'raw_loaded',
-                    );
-                    revalidatePath('/admin/uploads');
-                    revalidatePath('/admin/uploads/logs');
-                    revalidatePath('/admin/products');
-                    return {
-                        ok: true as const,
-                        phase: 'raw_loaded_mapping_required' as const,
-                        sampleRowsChecked,
-                        unmappedProducts: unmappedCount,
-                        normalizedRows: 0,
-                        rowsValid: 0,
-                        rowsError: 0,
-                    };
-                }
-            }
-
-            // Discovery mode for DDD/PMM: stop after RAW load when no active mappings exist at all.
-            if (
-                (moduleCode === 'business_excellence_ddd' ||
-                    moduleCode === 'business_excellence_pmm' ||
-                    moduleCode === 'pmm' ||
-                    moduleCode === 'ddd') &&
-                (await getPmmMappingKeySet()).size === 0
-            ) {
-                revalidatePath('/admin/uploads');
-                revalidatePath('/admin/uploads/logs');
-                revalidatePath('/admin/products');
-                return {
-                    ok: true as const,
-                    phase: 'raw_loaded' as const,
-                    sampleRowsChecked,
-                    normalizedRows: 0,
-                    rowsValid: 0,
-                    rowsError: 0,
-                };
-            }
-            if (
-                (moduleCode === 'business_excellence_budget_sell_out' ||
-                    moduleCode === 'business_excellence_sell_out' ||
-                    moduleCode === 'sell_out') &&
-                (await getSellOutMappingKeySet()).size === 0
-            ) {
-                revalidatePath('/admin/uploads');
-                revalidatePath('/admin/uploads/logs');
-                revalidatePath('/admin/products');
-                return {
-                    ok: true as const,
-                    phase: 'raw_loaded' as const,
-                    sampleRowsChecked,
-                    normalizedRows: 0,
-                    rowsValid: 0,
-                    rowsError: 0,
-                };
-            }
+        let rowsForRaw = parsedRows;
+        if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
+            rowsForRaw = parsedRows;
+        }
+        if (
+            moduleCode === 'business_excellence_ddd' ||
+            moduleCode === 'business_excellence_pmm' ||
+            moduleCode === 'pmm' ||
+            moduleCode === 'ddd' ||
+            moduleCode === 'business_excellence_budget_sell_out' ||
+            moduleCode === 'business_excellence_sell_out' ||
+            moduleCode === 'sell_out'
+        ) {
+            rowsForRaw = parsedRows;
         }
 
-        // Phase 2: normalize from existing RAW rows (auto-chain after RAW load).
-        await setUploadStatus(uploadId, 'normalizing');
-        const result = await normalizeUpload(uploadId, moduleCode);
-
-        await updateUploadNormalizationResult({
+        await setUploadStatus(uploadId, 'loading_raw');
+        await clearUploadRawRows(uploadId);
+        const tempFile = await writeRawRowsNdjsonToGcs({
             uploadId,
-            rowsValid: result.rowsValid,
-            rowsError: result.rowsError,
+            selectedSheetName: context.selectedSheetName,
+            rows: rowsForRaw.map((row) => ({
+                rowNumber: row.rowNumber,
+                payload: row.payload,
+            })),
+            storagePath: context.storagePath,
         });
+        try {
+            await loadRawRowsIntoBigQueryFromGcs(tempFile.gcsUri);
+        } finally {
+            await deleteTemporaryNdjson(tempFile.bucketName, tempFile.ndjsonObjectPath);
+        }
+        await updateUploadCounters(uploadId, rowsForRaw.length);
+        await setUploadStatus(uploadId, 'raw_loaded');
 
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
-        return { ...result, phase: 'normalized', sampleRowsChecked };
+        return {
+            ok: true as const,
+            phase: 'raw_loaded' as const,
+            sampleRowsChecked,
+            normalizedRows: 0,
+            rowsValid: 0,
+            rowsError: 0,
+        };
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown process error';
         const [countRows] = await getBigQueryClient().query({
@@ -1248,6 +1257,54 @@ export async function processUpload(uploadId: string) {
         });
         const totalRawRows = Number((countRows as Record<string, unknown>[])[0]?.total ?? 0);
         await setUploadError(uploadId, message, totalRawRows > 0 ? 'raw_loaded' : 'error');
+        revalidatePath('/admin/uploads');
+        revalidatePath('/admin/uploads/logs');
+        throw error;
+    }
+}
+
+export async function normalizeExistingUpload(uploadId: string) {
+    if (!uploadId) {
+        throw new Error('uploadId is required for normalization.');
+    }
+
+    const context = await getUploadProcessContext(uploadId);
+    const { moduleCode, status } = context;
+    if (status !== 'raw_loaded' && status !== 'normalized' && status !== 'published') {
+        throw new Error(`Upload ${uploadId} is not ready to normalize (current status: ${status}).`);
+    }
+
+    try {
+        await setUploadStatus(uploadId, 'normalizing');
+        const result = await normalizeUpload(uploadId, moduleCode);
+
+        if (result.normalizedRows === 0) {
+            const summary = formatNormalizationSummary(result);
+            await setUploadError(
+                uploadId,
+                `Normalization produced 0 staging rows. ${summary}`,
+                'raw_loaded',
+            );
+            revalidatePath('/admin/uploads');
+            revalidatePath('/admin/uploads/logs');
+            return {
+                ...result,
+                phase: 'raw_loaded' as const,
+            };
+        }
+
+        await updateUploadNormalizationResult({
+            uploadId,
+            rowsValid: result.rowsValid,
+            rowsError: result.rowsError,
+        });
+
+        revalidatePath('/admin/uploads');
+        revalidatePath('/admin/uploads/logs');
+        return { ...result, phase: 'normalized' as const };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown normalization error';
+        await setUploadError(uploadId, message, 'raw_loaded');
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         throw error;

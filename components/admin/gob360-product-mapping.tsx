@@ -34,7 +34,40 @@ export function Gob360ProductMapping({
   const [editMappedBySource, setEditMappedBySource] = useState<Record<string, boolean>>({});
   const [mappedProductBySource, setMappedProductBySource] = useState<Record<string, string>>({});
   const [mappedMarketBySource, setMappedMarketBySource] = useState<Record<string, string>>({});
+  const [showMapped, setShowMapped] = useState(true);
   const [showUnmapped, setShowUnmapped] = useState(false);
+  const [selectedUnmappedSources, setSelectedUnmappedSources] = useState<Record<string, boolean>>({});
+  const [batchMarketGroup, setBatchMarketGroup] = useState('');
+  const [showBatchMarketInput, setShowBatchMarketInput] = useState(false);
+  const [newBatchMarketGroup, setNewBatchMarketGroup] = useState('');
+  const [mappedMarketFilter, setMappedMarketFilter] = useState('');
+  const totalOptions = mappedRows.length + unmappedRows.length;
+  const filteredMappedRows = mappedRows.filter((row) =>
+    mappedMarketFilter ? (row.marketGroup ?? '') === mappedMarketFilter : true,
+  );
+  const selectedUnmappedCount = unmappedRows.filter(
+    (row) => selectedUnmappedSources[row.sourceClave],
+  ).length;
+  const allVisibleUnmappedSelected =
+    unmappedRows.length > 0 && unmappedRows.every((row) => selectedUnmappedSources[row.sourceClave]);
+
+  function toggleUnmappedSelection(sourceClave: string) {
+    setSelectedUnmappedSources((prev) => ({
+      ...prev,
+      [sourceClave]: !prev[sourceClave],
+    }));
+  }
+
+  function toggleAllVisibleUnmapped() {
+    const nextValue = !allVisibleUnmappedSelected;
+    setSelectedUnmappedSources((prev) => {
+      const next = { ...prev };
+      for (const row of unmappedRows) {
+        next[row.sourceClave] = nextValue;
+      }
+      return next;
+    });
+  }
 
   if (unmappedRows.length === 0 && mappedRows.length === 0) {
     return (
@@ -47,9 +80,61 @@ export function Gob360ProductMapping({
   return (
     <div className="space-y-4">
       <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Current mappings</p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-full border-collapse">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">GOB360 Mapping Process</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-[18px] border border-emerald-200 bg-emerald-50/80 p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-700">Mapped</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">
+              {mappedRows.length} <span className="text-base font-medium text-slate-500">from {totalOptions} total options</span>
+            </p>
+          </div>
+          <div className="rounded-[18px] border border-amber-200 bg-amber-50/80 p-4">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-amber-700">Remaining unmapped</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">{unmappedRows.length}</p>
+          </div>
+        </div>
+
+        {feedback ? (
+          <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{feedback}</p>
+        ) : null}
+      </div>
+
+      <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
+        <button
+          type="button"
+          onClick={() => setShowMapped((prev) => !prev)}
+          className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-slate-200 bg-slate-50/70 px-3 py-2 text-left"
+        >
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Mapped</p>
+            <p className="mt-1 text-sm font-medium text-slate-900">Mapped GOB360 CLAVEs ({mappedRows.length})</p>
+          </div>
+          <span className="text-slate-600">
+            {showMapped ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </span>
+        </button>
+
+        {showMapped ? (
+          <div className="mt-4 space-y-4">
+            <div className="flex max-w-[320px] flex-col gap-2">
+              <label className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Filter by market group
+              </label>
+              <select
+                value={mappedMarketFilter}
+                onChange={(e) => setMappedMarketFilter(e.target.value)}
+                className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+              >
+                <option value="">All market groups</option>
+                {localMarketGroups.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/70">
                 <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">GOB360 CLAVE</th>
@@ -60,7 +145,7 @@ export function Gob360ProductMapping({
               </tr>
             </thead>
             <tbody>
-              {mappedRows.slice(0, 180).map((row) => {
+              {filteredMappedRows.slice(0, 180).map((row) => {
                 const key = row.sourceClaveNormalized;
                 const editing = Boolean(editMappedBySource[key]);
                 const selectedProduct = mappedProductBySource[key] ?? (row.productId ?? '');
@@ -159,14 +244,20 @@ export function Gob360ProductMapping({
                   </tr>
                 );
               })}
-              {mappedRows.length === 0 ? (
+              {filteredMappedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">No mappings registered yet.</td>
+                  <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">
+                    {mappedRows.length === 0
+                      ? 'No mappings registered yet.'
+                      : 'No mapped GOB360 keys match the selected market group.'}
+                  </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
-        </div>
+          </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_10px_30px_rgba(15,23,42,0.05)]">
@@ -184,15 +275,157 @@ export function Gob360ProductMapping({
           </span>
         </button>
 
-        {feedback ? (
-          <p className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{feedback}</p>
-        ) : null}
-
         {showUnmapped ? (
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 space-y-4">
+            <div className="rounded-[18px] border border-slate-200 bg-slate-50/70 p-4">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Batch mapping</p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    Select multiple unmapped GOB360 keys and assign the same market group in one step.
+                  </p>
+                </div>
+                <div className="text-sm font-medium text-slate-800">
+                  Selected: {selectedUnmappedCount}
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-center">
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleUnmappedSelected}
+                    onChange={toggleAllVisibleUnmapped}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                  />
+                  Select all visible
+                </label>
+
+                <div className="flex min-w-[280px] flex-1 items-center gap-2">
+                  <select
+                    value={batchMarketGroup}
+                    onChange={(e) => setBatchMarketGroup(e.target.value)}
+                    className="w-full rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                  >
+                    <option value="">Select market group...</option>
+                    {localMarketGroups.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowBatchMarketInput((prev) => !prev)}
+                    className="rounded-full border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={selectedUnmappedCount === 0 || !batchMarketGroup}
+                  onClick={() => {
+                    setSelectedMarketBySource((prev) => {
+                      const next = { ...prev };
+                      for (const row of unmappedRows) {
+                        if (selectedUnmappedSources[row.sourceClave]) {
+                          next[row.sourceClave] = batchMarketGroup;
+                        }
+                      }
+                      return next;
+                    });
+                    setFeedback(
+                      `Assigned market group "${batchMarketGroup}" to ${selectedUnmappedCount} selected GOB360 keys in the form.`,
+                    );
+                  }}
+                  className="rounded-full border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Apply market to selected
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isPending || selectedUnmappedCount === 0 || !batchMarketGroup}
+                  onClick={() => {
+                    startTransition(async () => {
+                      try {
+                        const selectedRows = unmappedRows.filter(
+                          (row) => selectedUnmappedSources[row.sourceClave],
+                        );
+
+                        await Promise.all(
+                          selectedRows.map(async (row) => {
+                            const payload = new FormData();
+                            payload.set('sourceClave', row.sourceClave);
+                            payload.set('productId', selectedBySource[row.sourceClave] ?? '');
+                            payload.set(
+                              'marketGroup',
+                              selectedMarketBySource[row.sourceClave] || batchMarketGroup,
+                            );
+                            payload.set('isActive', 'true');
+                            payload.set('createdBy', 'system');
+                            payload.set('updatedBy', 'system');
+                            await saveGob360ProductMapping(payload);
+                          }),
+                        );
+
+                        setFeedback(
+                          `Batch mapping saved for ${selectedRows.length} GOB360 keys with market group "${batchMarketGroup}".`,
+                        );
+                        setSelectedUnmappedSources({});
+                        router.refresh();
+                      } catch (error) {
+                        setFeedback(
+                          error instanceof Error
+                            ? error.message
+                            : 'Unable to save batch GOB360 mapping.',
+                        );
+                      }
+                    });
+                  }}
+                  className="rounded-full bg-slate-900 px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {isPending ? 'Saving batch...' : 'Save selected'}
+                </button>
+              </div>
+
+              {showBatchMarketInput ? (
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    value={newBatchMarketGroup}
+                    onChange={(e) => setNewBatchMarketGroup(e.target.value)}
+                    placeholder="New market group..."
+                    className="w-full rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newMarket = newBatchMarketGroup.trim();
+                      if (!newMarket) return;
+                      setLocalMarketGroups((prev) =>
+                        [...new Set([...prev, newMarket])].sort((a, b) =>
+                          a.localeCompare(b, 'en', { sensitivity: 'base' }),
+                        ),
+                      );
+                      setBatchMarketGroup(newMarket);
+                      setShowBatchMarketInput(false);
+                      setNewBatchMarketGroup('');
+                    }}
+                    className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Add
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="overflow-x-auto">
             <table className="min-w-full border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70">
+                  <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Select</th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">GOB360 CLAVE</th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Occurrences</th>
                   <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.14em] text-slate-500">Map to product_id</th>
@@ -207,6 +440,14 @@ export function Gob360ProductMapping({
                   const canSave = Boolean(selected || selectedMarket);
                   return (
                     <tr key={`${row.sourceClaveNormalized}-${row.sourceClave}`} className="border-b border-slate-100">
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedUnmappedSources[row.sourceClave])}
+                          onChange={() => toggleUnmappedSelection(row.sourceClave)}
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                        />
+                      </td>
                       <td className="px-3 py-2 text-sm text-slate-800">{row.sourceClave}</td>
                       <td className="px-3 py-2 text-sm text-slate-700">{row.occurrences.toLocaleString('en-US')}</td>
                       <td className="px-3 py-2">
@@ -312,11 +553,12 @@ export function Gob360ProductMapping({
                 })}
                 {unmappedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-4 text-sm text-slate-600">All detected GOB360 keys are already mapped.</td>
+                    <td colSpan={6} className="px-3 py-4 text-sm text-slate-600">All detected GOB360 keys are already mapped.</td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
+          </div>
           </div>
         ) : null}
       </div>

@@ -7,7 +7,6 @@ export type ExecutiveCardItem = {
   target: string;
   variance: string;
   status: SemanticStatus;
-  owner: string;
   detailHref: string | null;
 };
 

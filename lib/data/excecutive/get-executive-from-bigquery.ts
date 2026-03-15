@@ -4,6 +4,7 @@ import type { ExecutiveCardItem } from '@/types/executive';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import type { SemanticStatus } from '@/lib/status/status-styles';
 import { getSalesInternalBudgetDualKpis, getSalesInternalDualKpisYoY } from '@/lib/data/sales-internal';
+import { getBusinessExcellenceBusinessUnitChannelRows } from '@/lib/data/business-excellence';
 
 type ExecutiveModuleKey =
   | 'internal_sales'
@@ -36,63 +37,54 @@ const executiveCardOrder: Array<{
   key: ExecutiveModuleKey;
   module: string;
   defaultKpi: string;
-  defaultOwner: string;
   detailHref: string | null;
 }> = [
   {
     key: 'internal_sales',
     module: 'Internal Sales',
-    defaultKpi: 'Net Sales YTD',
-    defaultOwner: 'Sales Internal',
-    detailHref: '/executive/sales-internal/dashboard',
+    defaultKpi: 'Sell In',
+    detailHref: '/executive/sales-internal/insights',
   },
   {
     key: 'commercial_operations',
     module: 'Commercial Operations',
     defaultKpi: 'Pending Integration',
-    defaultOwner: 'Commercial Operations',
     detailHref: null,
   },
   {
     key: 'business_excellence',
     module: 'Business Excellence',
-    defaultKpi: 'Pending Integration',
-    defaultOwner: 'Business Excellence',
-    detailHref: null,
+    defaultKpi: 'Sell OUT',
+    detailHref: '/executive/business-excellence/insights',
   },
   {
     key: 'medical',
     module: 'Medical',
     defaultKpi: 'Pending Integration',
-    defaultOwner: 'Medical',
     detailHref: null,
   },
   {
     key: 'opex',
     module: 'Opex',
     defaultKpi: 'Pending Integration',
-    defaultOwner: 'Opex',
     detailHref: null,
   },
   {
     key: 'human_resources',
     module: 'Human Resources',
     defaultKpi: 'Pending Integration',
-    defaultOwner: 'Human Resources',
-    detailHref: null,
+    detailHref: '/executive/human-resources/insights',
   },
   {
     key: 'ra_quality_fv',
     module: 'RA - Quality - FV',
     defaultKpi: 'Pending Integration',
-    defaultOwner: 'RA - Quality - FV',
     detailHref: null,
   },
   {
     key: 'legal_compliance',
     module: 'Legal & Compliance',
     defaultKpi: 'Pending Integration',
-    defaultOwner: 'Legal & Compliance',
     detailHref: null,
   },
 ];
@@ -139,7 +131,7 @@ function statusFromCoverage(coverage: number | null): SemanticStatus {
 }
 
 async function getSalesInternalExecutiveSnapshot(
-  fallback?: Pick<ExecutiveCardItem, 'module' | 'kpi' | 'owner'>,
+  fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
   const [dualKpisYoY, budgetDualKpis] = await Promise.all([
     getSalesInternalDualKpisYoY({}),
@@ -153,13 +145,48 @@ async function getSalesInternalExecutiveSnapshot(
 
   return {
     module: fallback?.module ?? 'Internal Sales',
-    kpi: fallback?.kpi ?? 'Net Sales YTD',
+    kpi: 'Sell In',
     actual: toCurrency(actual),
     target: toCurrency(target),
     variance: toCurrency(variance),
     status: statusFromCoverage(coverage),
-    owner: fallback?.owner ?? 'Sales Internal',
-    detailHref: '/executive/sales-internal/dashboard',
+    detailHref: '/executive/sales-internal/insights',
+  };
+}
+
+function toUnits(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function toSignedUnits(value: number) {
+  const formatted = toUnits(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
+async function getBusinessExcellenceExecutiveSnapshot(
+  reportingVersionId: string,
+  fallback?: Pick<ExecutiveCardItem, 'module'>,
+): Promise<ExecutiveCardItem> {
+  const rows = await getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId);
+  const targetUnits = new Set(['air', 'care']);
+  const scopedRows = rows.filter((row) => targetUnits.has(row.businessUnitName.trim().toLowerCase()));
+  const actual = scopedRows.reduce((sum, row) => sum + row.totalYtdUnits, 0);
+  const target = scopedRows.reduce((sum, row) => sum + row.totalYtdBudgetUnits, 0);
+  const variance = actual - target;
+  const coverage = target === 0 ? null : actual / target;
+
+  return {
+    module: fallback?.module ?? 'Business Excellence',
+    kpi: 'Sell OUT',
+    actual: toUnits(actual),
+    target: toUnits(target),
+    variance: toSignedUnits(variance),
+    status: statusFromCoverage(coverage),
+    detailHref: '/executive/business-excellence/insights',
   };
 }
 
@@ -194,11 +221,12 @@ export async function getExecutiveCardsFromBigQuery(
     target: row.target_value?.toString() ?? '-',
     variance: row.variance_vs_target?.toString() ?? '-',
     status: toSemanticStatus(row.status_color),
-    owner: String(row.owner_name ?? '-'),
     detailHref: null,
   }));
 
   const cardsByModuleKey = new Map<ExecutiveModuleKey, ExecutiveCardItem>();
+  const detailHrefWithVersion = (href: string | null) =>
+    href ? `${href}${href.includes('?') ? '&' : '?'}version=${encodeURIComponent(reportingVersionId)}` : null;
   for (const card of cards) {
     const key = detectModuleKey(`${card.module} ${card.kpi}`);
     if (!key) continue;
@@ -214,10 +242,20 @@ export async function getExecutiveCardsFromBigQuery(
       finalCards.push(
         await getSalesInternalExecutiveSnapshot({
           module: spec.module,
-          kpi: fallback?.kpi ?? spec.defaultKpi,
-          owner: fallback?.owner ?? spec.defaultOwner,
         }),
       );
+      continue;
+    }
+
+    if (spec.key === 'business_excellence') {
+      const fallback = cardsByModuleKey.get(spec.key);
+      const snapshot = await getBusinessExcellenceExecutiveSnapshot(reportingVersionId, {
+        module: spec.module,
+      });
+      finalCards.push({
+        ...snapshot,
+        detailHref: detailHrefWithVersion(spec.detailHref),
+      });
       continue;
     }
 
@@ -226,7 +264,7 @@ export async function getExecutiveCardsFromBigQuery(
       finalCards.push({
         ...existing,
         module: spec.module,
-        detailHref: spec.detailHref,
+        detailHref: detailHrefWithVersion(spec.detailHref),
       });
       continue;
     }
@@ -238,8 +276,7 @@ export async function getExecutiveCardsFromBigQuery(
       target: '-',
       variance: '-',
       status: 'neutral',
-      owner: spec.defaultOwner,
-      detailHref: spec.detailHref,
+      detailHref: detailHrefWithVersion(spec.detailHref),
     });
   }
 

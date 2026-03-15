@@ -25,6 +25,14 @@ function formatMonth(value: string) {
   }).format(date);
 }
 
+function getNextStepLabel(status: string) {
+  if (status === 'uploaded' || status === 'error') return 'Process';
+  if (status === 'raw_loaded') return 'Normalize';
+  if (status === 'normalized') return 'Publish';
+  if (status === 'published') return 'Completed';
+  return 'Review';
+}
+
 export function CurrentUploadCard({ row }: CurrentUploadCardProps) {
   if (!row) {
     return (
@@ -53,6 +61,9 @@ export function CurrentUploadCard({ row }: CurrentUploadCardProps) {
           <h3 className="mt-2 text-lg font-semibold text-slate-950">{row.sourceFileName}</h3>
           <p className="mt-1 text-sm text-slate-600">
             {row.moduleCode} | Report: {formatMonth(row.periodMonth)} | As Of: {formatMonth(row.sourceAsOfMonth)} | {formatDate(row.uploadedAt)}
+          </p>
+          <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+            Next step: {getNextStepLabel(row.status)}
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -40,12 +40,15 @@ type CloseupNormalizedRow = {
   productCloseupRaw: string;
   productCloseupNormalized: string;
   productId: string | null;
-  canonicalProductName: string;
+  canonicalProductName: string | null;
   marketGroup: string | null;
   specialty: string | null;
   sourceDateRaw: string | null;
   sourceDate: string;
+  periodRaw: string | null;
   periodMonth: string;
+  visitedSourceRaw: string | null;
+  visited: boolean;
   recetasValue: number;
 };
 
@@ -54,7 +57,7 @@ type PmmNormalizedRow = {
   packDesRaw: string;
   packDesNormalized: string;
   productId: string | null;
-  canonicalProductName: string;
+  canonicalProductName: string | null;
   marketGroup: string | null;
   brick: string | null;
   sourceMonthRaw: string | null;
@@ -70,7 +73,7 @@ type SellOutNormalizedRow = {
   sourceProductRaw: string;
   sourceProductNormalized: string;
   productId: string | null;
-  canonicalProductName: string;
+  canonicalProductName: string | null;
   marketGroup: string | null;
   channel: string | null;
   periodMonth: string;
@@ -93,40 +96,98 @@ type BrickAssignmentNormalizedRow = {
   periodMonth: string;
 };
 
-type ProductReference = {
-  productId: string;
-  canonicalProductCode: string | null;
-  canonicalProductName: string | null;
-  brandName: string | null;
-  subbrandOrDevice: string | null;
+type WeeklyTrackingNormalizedRow = {
+  rowNumber: number;
+  weekRaw: string | null;
+  periodMonth: string;
+  brickCode: string | null;
+  brickDescription: string | null;
+  prodDes: string | null;
+  prodCode: string | null;
+  packDes: string | null;
+  atcivCode: string | null;
+  atcivDesc: string | null;
+  packCode: string | null;
+  marketCode: string | null;
+  salesGroup: 'Units' | 'Net Sales';
+  amountValue: number;
+  payload: Record<string, unknown>;
 };
 
-type ProductMatch = {
-  productId: string | null;
-  canonicalProductName: string;
-  marketGroup: string | null;
+type HumanResourcesMetricNormalizedRow = {
+  rowNumber: number;
+  metricType: 'turnover' | 'training';
+  area: string | null;
+  periodMonth: string;
+  metricValue: number;
+  payload: Record<string, unknown>;
 };
 
-type CloseupSourceMapping = {
-  sourceProductNameNormalized: string;
-  productId: string | null;
-  marketGroup: string | null;
-  canonicalProductName: string | null;
+type HumanResourcesTurnoverNormalizedRow = {
+  rowNumber: number;
+  periodMonth: string;
+  volNonVol: string | null;
+  lastName: string | null;
+  firstName: string | null;
+  positionName: string | null;
+  department: string | null;
+  territory: string | null;
+  manager: string | null;
+  salary: number | null;
+  salaryBands: string | null;
+  salaryBandsPct: number | null;
+  internalOrExternal: string | null;
+  keyPeople: string | null;
+  keyPosition: string | null;
+  hiringDateMonth: string | null;
+  lastWorkingDayMonth: string | null;
+  quarter: string | null;
+  year: number | null;
+  years: number | null;
+  seniorityCluster: string | null;
+  ageAsOfDate: number | null;
+  seniority: number | null;
+  gender: string | null;
+  grade: string | null;
+  terminationAdRationale: string | null;
+  payload: Record<string, unknown>;
 };
 
-type PmmSourceMapping = {
-  sourcePackDesNormalized: string;
-  productId: string | null;
-  marketGroup: string | null;
-  canonicalProductName: string | null;
+type HumanResourcesTrainingNormalizedRow = {
+  rowNumber: number;
+  periodMonth: string;
+  userName: string | null;
+  activeUser: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  middleName: string | null;
+  entityId: string | null;
+  itemType: string | null;
+  entityType: string | null;
+  itemRevisionDateMonth: string | null;
+  revisionNumber: string | null;
+  entityTitle: string | null;
+  classId: string | null;
+  completionDateMonth: string | null;
+  grade: string | null;
+  completionStatusId: string | null;
+  completionStatus: string | null;
+  totalHours: number | null;
+  creditHoursProfessionalAssociations: number | null;
+  contactHours: number | null;
+  cpe: number | null;
+  tuition: number | null;
+  currencySymbol: string | null;
+  currencyId: string | null;
+  instructor: string | null;
+  lastUpdateUser: string | null;
+  lastUpdateTimeMonth: string | null;
+  eSignatureMeaningCode: string | null;
+  comments: string | null;
+  payload: Record<string, unknown>;
 };
 
-type SellOutSourceMapping = {
-  sourceProductNameNormalized: string;
-  productId: string | null;
-  marketGroup: string | null;
-  canonicalProductName: string | null;
-};
+let ensureCloseupStagingSchemaPromise: Promise<void> | null = null;
 
 function chunkItems<T>(items: T[], size: number) {
   const chunks: T[][] = [];
@@ -164,7 +225,9 @@ function isConcurrentUpdateError(error: unknown) {
   const message = error.message.toLowerCase();
   return (
     message.includes('could not serialize access to table') ||
-    message.includes('concurrent update')
+    message.includes('concurrent update') ||
+    message.includes('exceeded quota for table update operations') ||
+    message.includes('rate limits')
   );
 }
 
@@ -189,38 +252,161 @@ async function runQueryWithRetryOnConcurrentUpdate<T>(
   throw lastError;
 }
 
+async function ensureCloseupStagingSchema() {
+  if (!ensureCloseupStagingSchemaPromise) {
+    ensureCloseupStagingSchemaPromise = (async () => {
+      const client = getBigQueryClient();
+
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query: `
+            CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\` (
+              upload_id STRING,
+              row_number INT64,
+              product_closeup_raw STRING,
+              product_closeup_normalized STRING,
+              product_id STRING,
+              canonical_product_name STRING,
+              market_group STRING,
+              specialty STRING,
+              source_date_raw STRING,
+              source_date DATE,
+              period_raw STRING,
+              period_month DATE,
+              visited_source_raw STRING,
+              visited BOOL,
+              recetas_value NUMERIC,
+              source_payload_json JSON,
+              normalized_at TIMESTAMP
+            )
+          `,
+        }),
+      );
+
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\`
+            ADD COLUMN IF NOT EXISTS period_raw STRING
+          `,
+        }),
+      );
+
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\`
+            ADD COLUMN IF NOT EXISTS visited_source_raw STRING
+          `,
+        }),
+      );
+
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\`
+            ADD COLUMN IF NOT EXISTS visited BOOL
+          `,
+        }),
+      );
+    })();
+  }
+
+  await ensureCloseupStagingSchemaPromise;
+}
+
 export type NormalizeUploadResult = {
   ok: true;
   normalizedRows: number;
   rowsValid: number;
+  rowsSkipped: number;
   rowsError: number;
+  topValidationIssues: Array<{
+    reason: string;
+    count: number;
+  }>;
 };
+
+function countValidRows(validations: RowValidationResult[]) {
+  return validations.filter((item) => item.validationStatus === 'valid').length;
+}
+
+function countErrorRows(validations: RowValidationResult[]) {
+  return validations.filter((item) => item.validationStatus === 'error').length;
+}
+
+function countSkippedRows(validations: RowValidationResult[]) {
+  return validations.filter((item) => item.validationStatus === 'skipped').length;
+}
+
+function summarizeValidationIssues(validations: RowValidationResult[], limit = 3) {
+  const counts = new Map<string, number>();
+
+  for (const validation of validations) {
+    for (const error of validation.errors) {
+      const reason = error.trim();
+      if (!reason) continue;
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(counts.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+    .slice(0, limit);
+}
+
+function buildNormalizeUploadResult(
+  validations: RowValidationResult[],
+  normalizedRowCount: number,
+): NormalizeUploadResult {
+  return {
+    ok: true,
+    normalizedRows: normalizedRowCount,
+    rowsValid: countValidRows(validations),
+    rowsSkipped: countSkippedRows(validations),
+    rowsError: countErrorRows(validations),
+    topValidationIssues: summarizeValidationIssues(validations),
+  };
+}
 
 const MONTHS: Record<string, string> = {
   january: '01',
+  jan: '01',
   enero: '01',
   february: '02',
+  feb: '02',
   febrero: '02',
   march: '03',
+  mar: '03',
   marzo: '03',
   april: '04',
+  apr: '04',
   abril: '04',
   may: '05',
   mayo: '05',
   june: '06',
+  jun: '06',
   junio: '06',
   july: '07',
+  jul: '07',
   julio: '07',
   august: '08',
+  aug: '08',
   agosto: '08',
   september: '09',
+  sep: '09',
+  sept: '09',
   septiembre: '09',
   setiembre: '09',
   october: '10',
+  oct: '10',
   octubre: '10',
   november: '11',
+  nov: '11',
   noviembre: '11',
   december: '12',
+  dec: '12',
   diciembre: '12',
 };
 
@@ -236,7 +422,44 @@ function asNullableString(value: unknown) {
 
 function asNullableNumber(value: unknown) {
   if (value == null || value === '') return null;
-  const normalized = String(value).replace(/\s/g, '').replace(',', '.');
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const compact = raw
+    .replace(/\s/g, '')
+    .replace(/[$€£]/g, '')
+    .replace(/[^\d,.\-]/g, '');
+  if (!compact) return null;
+
+  const commaCount = (compact.match(/,/g) ?? []).length;
+  const dotCount = (compact.match(/\./g) ?? []).length;
+  const lastComma = compact.lastIndexOf(',');
+  const lastDot = compact.lastIndexOf('.');
+  let normalized = compact;
+
+  // If both separators exist, whichever appears last is treated as decimal separator.
+  if (commaCount > 0 && dotCount > 0) {
+    if (lastComma > lastDot) {
+      normalized = compact.replace(/\./g, '').replace(/,/g, '.');
+    } else {
+      normalized = compact.replace(/,/g, '');
+    }
+  } else if (commaCount > 0) {
+    const lastChunk = compact.slice(lastComma + 1);
+    // Single comma with 1-2 decimals => decimal separator; otherwise thousands separator.
+    normalized =
+      commaCount === 1 && lastChunk.length <= 2
+        ? compact.replace(/,/g, '.')
+        : compact.replace(/,/g, '');
+  } else if (dotCount > 0) {
+    const lastChunk = compact.slice(lastDot + 1);
+    // Single dot with 1-2 decimals => decimal separator; otherwise thousands separator.
+    normalized =
+      dotCount === 1 && lastChunk.length <= 2
+        ? compact
+        : compact.replace(/\./g, '');
+  }
+
   const numberValue = Number(normalized);
   return Number.isFinite(numberValue) ? numberValue : null;
 }
@@ -361,6 +584,22 @@ function parseDateField(value: unknown): string | null {
   const raw = String(value).trim();
   if (!raw) return null;
 
+  const isoUtc = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/,
+  );
+  if (isoUtc) {
+    const parsedUtc = new Date(raw);
+    if (!Number.isNaN(parsedUtc.getTime())) {
+      const hour = Number(isoUtc[4]);
+      // Excel -> JSON conversions can shift midnight local dates to 22:xx/23:xx UTC.
+      // When that happens, recover the intended calendar date before month truncation.
+      if (hour >= 22) {
+        parsedUtc.setUTCDate(parsedUtc.getUTCDate() + 1);
+      }
+      return toMonthStartFromDate(parsedUtc);
+    }
+  }
+
   const numericValue = Number(raw);
   if (Number.isFinite(numericValue) && /^\d+(\.\d+)?$/.test(raw)) {
     const fromExcel = parseExcelSerialDate(numericValue);
@@ -391,6 +630,27 @@ function parseDateField(value: unknown): string | null {
   }
 
   return null;
+}
+
+function parseDateFieldMonthFirst(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (value instanceof Date || typeof value === 'number') {
+    return parseDateField(value);
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const mmDdYyyy = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (mmDdYyyy) {
+    const month = Number(mmDdYyyy[1]);
+    const day = Number(mmDdYyyy[2]);
+    const year = Number(mmDdYyyy[3]);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (!Number.isNaN(parsed.getTime())) return toMonthStartFromDate(parsed);
+  }
+
+  return parseDateField(value);
 }
 
 function parseMonthToken(value: unknown): string | null {
@@ -447,6 +707,29 @@ function parseMonthYearField(monthValue: unknown, yearValue: unknown): string | 
   return `${year}-${month}-01`;
 }
 
+function parseCloseupPeriodField(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const parsedAsDate = parseDateField(raw);
+  if (parsedAsDate) return parsedAsDate;
+
+  const normalized = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim();
+
+  const match = normalized.match(/([A-Za-z]{3,})\s+(\d{2,4})$/);
+  if (!match) return null;
+
+  const month = parseMonthToken(match[1]);
+  const year = parseYearToken(match[2]);
+  if (!month || !year) return null;
+  return `${year}-${month}-01`;
+}
+
 function shiftMonths(periodMonth: string, deltaMonths: number) {
   const date = new Date(`${periodMonth}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return periodMonth;
@@ -454,6 +737,44 @@ function shiftMonths(periodMonth: string, deltaMonths: number) {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
   return `${year}-${month}-01`;
+}
+
+function toIsoWeekStartDate(year: number, isoWeek: number): Date | null {
+  if (!Number.isInteger(year) || year < 1900 || year > 2200) return null;
+  if (!Number.isInteger(isoWeek) || isoWeek < 1 || isoWeek > 53) return null;
+
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4IsoDay = jan4.getUTCDay() === 0 ? 7 : jan4.getUTCDay();
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - jan4IsoDay + 1);
+
+  const target = new Date(week1Monday);
+  target.setUTCDate(week1Monday.getUTCDate() + (isoWeek - 1) * 7);
+  if (Number.isNaN(target.getTime())) return null;
+  return target;
+}
+
+function parseWeeklyPeriodField(value: unknown): string | null {
+  if (value == null || value === '') return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const compact = raw.replace(/\s+/g, '').toUpperCase();
+  const sixDigit = compact.match(/^(\d{4})(\d{2})$/);
+  const isoWeekPattern = compact.match(/^(\d{4})[-_/]?W?(\d{1,2})$/);
+  const parsed =
+    sixDigit ??
+    isoWeekPattern;
+
+  if (parsed) {
+    const year = Number(parsed[1]);
+    const week = Number(parsed[2]);
+    const weekStart = toIsoWeekStartDate(year, week);
+    if (weekStart) return toMonthStartFromDate(weekStart);
+  }
+
+  return parseDateField(value);
 }
 
 function extractMonthlyValues(payload: Record<string, unknown>) {
@@ -478,80 +799,6 @@ function hasBusinessContent(payload: Record<string, unknown>) {
     if (typeof value === 'string') return value.trim().length > 0;
     return true;
   });
-}
-
-function buildCloseupAliasCandidates(reference: ProductReference) {
-  const aliases = new Set<string>();
-
-  const addAlias = (value: string | null) => {
-    if (!value) return;
-    const normalized = normalizeText(value);
-    if (normalized) aliases.add(normalized);
-  };
-
-  addAlias(reference.canonicalProductName);
-  addAlias(reference.brandName);
-  addAlias(reference.subbrandOrDevice);
-
-  if (reference.canonicalProductCode) {
-    const cleanCode = reference.canonicalProductCode.replace(/^0+/, '').trim();
-    if (cleanCode) aliases.add(cleanCode.toLowerCase());
-  }
-
-  return Array.from(aliases);
-}
-
-function mapCloseupProduct(
-  rawProduct: string,
-  references: ProductReference[],
-): ProductMatch | null {
-  const productNormalized = normalizeText(rawProduct);
-  if (!productNormalized) return null;
-
-  const scored: Array<{ ref: ProductReference; score: number }> = [];
-  for (const ref of references) {
-    const aliases = buildCloseupAliasCandidates(ref);
-    let score = 0;
-
-    for (const alias of aliases) {
-      if (!alias) continue;
-      if (productNormalized === alias) {
-        score += 100;
-        continue;
-      }
-
-      if (alias.length >= 4 && productNormalized.includes(alias)) {
-        score += 15;
-      }
-
-      const terms = alias.split(' ').filter((term) => term.length >= 4);
-      for (const term of terms) {
-        if (productNormalized.includes(term)) {
-          score += 4;
-        }
-      }
-    }
-
-    if (score > 0) {
-      scored.push({ ref, score });
-    }
-  }
-
-  if (scored.length === 0) return null;
-
-  scored.sort((a, b) => b.score - a.score);
-  if (scored.length > 1 && scored[0].score === scored[1].score) {
-    return null;
-  }
-
-  const winner = scored[0].ref;
-  if (scored[0].score < 8) return null;
-
-  return {
-    productId: winner.productId,
-    canonicalProductName: winner.canonicalProductName ?? winner.productId,
-    marketGroup: null,
-  };
 }
 
 async function getRawRows(uploadId: string): Promise<RawUploadRow[]> {
@@ -610,123 +857,6 @@ async function getUploadSourceTag(uploadId: string) {
     return null;
   } catch {
     return null;
-  }
-}
-
-async function getProductReferences(): Promise<ProductReference[]> {
-  const client = getBigQueryClient();
-  const query = `
-    SELECT
-      d.product_id,
-      d.canonical_product_code,
-      d.canonical_product_name,
-      m.brand_name,
-      m.subbrand_or_device
-    FROM \`chiesi-committee.chiesi_committee_core.dim_product\` d
-    LEFT JOIN \`chiesi-committee.chiesi_committee_admin.product_metadata\` m
-      ON m.product_id = d.product_id
-  `;
-
-  const [rows] = await client.query({ query });
-  return (rows as Array<Record<string, unknown>>).map((row) => ({
-    productId: String(row.product_id ?? ''),
-    canonicalProductCode: row.canonical_product_code
-      ? String(row.canonical_product_code)
-      : null,
-    canonicalProductName: row.canonical_product_name
-      ? String(row.canonical_product_name)
-      : null,
-    brandName: row.brand_name ? String(row.brand_name) : null,
-    subbrandOrDevice: row.subbrand_or_device
-      ? String(row.subbrand_or_device)
-      : null,
-  }));
-}
-
-async function getCloseupSourceMappings(): Promise<CloseupSourceMapping[]> {
-  const client = getBigQueryClient();
-  const query = `
-    SELECT
-      m.source_product_name_normalized,
-      m.product_id,
-      m.market_group,
-      d.canonical_product_name
-    FROM \`chiesi-committee.chiesi_committee_admin.closeup_product_mapping\` m
-    LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_product\` d
-      ON d.product_id = m.product_id
-    WHERE m.is_active = TRUE
-  `;
-
-  try {
-    const [rows] = await client.query({ query });
-    return (rows as Array<Record<string, unknown>>).map((row) => ({
-      sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),
-      productId: row.product_id ? String(row.product_id) : null,
-      marketGroup: row.market_group ? String(row.market_group) : null,
-      canonicalProductName: row.canonical_product_name
-        ? String(row.canonical_product_name)
-        : null,
-    }));
-  } catch {
-    return [];
-  }
-}
-
-async function getPmmSourceMappings(): Promise<PmmSourceMapping[]> {
-  const client = getBigQueryClient();
-  const query = `
-    SELECT
-      m.source_pack_des_normalized,
-      m.product_id,
-      m.market_group,
-      d.canonical_product_name
-    FROM \`chiesi-committee.chiesi_committee_admin.pmm_product_mapping\` m
-    LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_product\` d
-      ON d.product_id = m.product_id
-    WHERE m.is_active = TRUE
-  `;
-
-  try {
-    const [rows] = await client.query({ query });
-    return (rows as Array<Record<string, unknown>>).map((row) => ({
-      sourcePackDesNormalized: String(row.source_pack_des_normalized ?? ''),
-      productId: row.product_id ? String(row.product_id) : null,
-      marketGroup: row.market_group ? String(row.market_group) : null,
-      canonicalProductName: row.canonical_product_name
-        ? String(row.canonical_product_name)
-        : null,
-    }));
-  } catch {
-    return [];
-  }
-}
-
-async function getSellOutSourceMappings(): Promise<SellOutSourceMapping[]> {
-  const client = getBigQueryClient();
-  const query = `
-    SELECT
-      m.source_product_name_normalized,
-      m.product_id,
-      m.market_group,
-      d.canonical_product_name
-    FROM \`chiesi-committee.chiesi_committee_admin.sell_out_product_mapping\` m
-    LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_product\` d
-      ON d.product_id = m.product_id
-    WHERE m.is_active = TRUE
-  `;
-
-  try {
-    const [rows] = await client.query({ query });
-    return (rows as Array<Record<string, unknown>>).map((row) => ({
-      sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),
-      productId: row.product_id ? String(row.product_id) : null,
-      marketGroup: row.market_group ? String(row.market_group) : null,
-      canonicalProductName: row.canonical_product_name
-        ? String(row.canonical_product_name)
-        : null,
-    }));
-  } catch {
-    return [];
   }
 }
 
@@ -889,6 +1019,7 @@ async function loadSalesInternalStaging(uploadId: string, rows: SalesInternalNor
 
 async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]) {
   const client = getBigQueryClient();
+  await ensureCloseupStagingSchema();
 
   await client.query({
     query: `
@@ -935,7 +1066,10 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
       specialty,
       source_date_raw,
       source_date,
+      period_raw,
       period_month,
+      visited_source_raw,
+      visited,
       recetas_value,
       source_payload_json,
       normalized_at
@@ -946,12 +1080,15 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
       row.product_closeup_raw,
       row.product_closeup_normalized,
       NULLIF(row.product_id, ''),
-      row.canonical_product_name,
+      NULLIF(row.canonical_product_name, ''),
       NULLIF(row.market_group, ''),
       row.specialty,
       row.source_date_raw,
       DATE(row.source_date),
+      row.period_raw,
       DATE(row.period_month),
+      row.visited_source_raw,
+      row.visited,
       SAFE_CAST(row.recetas_value AS NUMERIC),
       PARSE_JSON('{}'),
       CURRENT_TIMESTAMP()
@@ -971,12 +1108,15 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
             product_closeup_raw: row.productCloseupRaw,
             product_closeup_normalized: row.productCloseupNormalized,
             product_id: row.productId ?? '',
-            canonical_product_name: row.canonicalProductName,
+            canonical_product_name: row.canonicalProductName ?? '',
             market_group: row.marketGroup ?? '',
             specialty: row.specialty,
             source_date_raw: row.sourceDateRaw,
             source_date: row.sourceDate,
+            period_raw: row.periodRaw ?? '',
             period_month: row.periodMonth,
+            visited_source_raw: row.visitedSourceRaw ?? '',
+            visited: row.visited,
             recetas_value: String(row.recetasValue),
           })),
         },
@@ -1073,7 +1213,7 @@ async function loadPmmStaging(uploadId: string, rows: PmmNormalizedRow[]) {
       row.pack_des_raw,
       row.pack_des_normalized,
       NULLIF(row.product_id, ''),
-      row.canonical_product_name,
+      NULLIF(row.canonical_product_name, ''),
       NULLIF(row.market_group, ''),
       row.brick,
       row.source_month_raw,
@@ -1100,7 +1240,7 @@ async function loadPmmStaging(uploadId: string, rows: PmmNormalizedRow[]) {
             pack_des_raw: row.packDesRaw,
             pack_des_normalized: row.packDesNormalized,
             product_id: row.productId ?? '',
-            canonical_product_name: row.canonicalProductName,
+            canonical_product_name: row.canonicalProductName ?? '',
             market_group: row.marketGroup ?? '',
             brick: row.brick,
             source_month_raw: row.sourceMonthRaw,
@@ -1216,7 +1356,7 @@ async function loadSellOutStaging(uploadId: string, rows: SellOutNormalizedRow[]
       row.source_product_raw,
       row.source_product_normalized,
       NULLIF(row.product_id, ''),
-      row.canonical_product_name,
+      NULLIF(row.canonical_product_name, ''),
       NULLIF(row.market_group, ''),
       row.channel,
       DATE(row.period_month),
@@ -1240,7 +1380,7 @@ async function loadSellOutStaging(uploadId: string, rows: SellOutNormalizedRow[]
             source_product_raw: row.sourceProductRaw,
             source_product_normalized: row.sourceProductNormalized,
             product_id: row.productId ?? '',
-            canonical_product_name: row.canonicalProductName,
+            canonical_product_name: row.canonicalProductName ?? '',
             market_group: row.marketGroup ?? '',
             channel: row.channel,
             period_month: row.periodMonth,
@@ -1470,22 +1610,9 @@ function normalizeSalesInternal(rows: RawUploadRow[]) {
   return { validations, normalizedRows };
 }
 
-async function normalizeBusinessExcellenceCloseup(
-  rows: RawUploadRow[],
-  asOfMonth: string | null,
-) {
+async function normalizeBusinessExcellenceCloseup(rows: RawUploadRow[]) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: CloseupNormalizedRow[] = [];
-  const productReferences = await getProductReferences();
-  const closeupMappings = await getCloseupSourceMappings();
-  const effectiveAsOfMonth = asOfMonth && /^\d{4}-\d{2}-01$/.test(asOfMonth) ? asOfMonth : null;
-  const minIncludedMonth = effectiveAsOfMonth ? shiftMonths(effectiveAsOfMonth, -23) : null;
-  const productReferenceById = new Map(
-    productReferences.map((ref) => [ref.productId, ref]),
-  );
-  const explicitMappingByNormalizedSource = new Map(
-    closeupMappings.map((item) => [item.sourceProductNameNormalized, item]),
-  );
 
   for (const row of rows) {
     const payload = toPayloadObject(row.row_payload_json);
@@ -1511,69 +1638,29 @@ async function normalizeBusinessExcellenceCloseup(
       ]),
     );
 
-    const rawDateValue = pickValue(index, ['Date', 'Fecha', 'Month', 'Mes', 'Periodo']);
-    const parsedPeriodMonth = parseDateField(rawDateValue);
+    const rawDateValue = pickValue(index, ['Date', 'Fecha']);
+    const parsedSourceDate = parseDateField(rawDateValue);
+    const rawPeriodValue = pickValue(index, ['Period', 'Periodo', 'Month', 'Mes']);
+    const parsedPeriodLabelMonth = parseCloseupPeriodField(rawPeriodValue);
+    const parsedPeriodMonth = parsedSourceDate ?? parsedPeriodLabelMonth;
     const recetasValue = asNullableNumber(
       pickValue(index, ['Recetas', 'Receta', 'Rx', 'Prescripciones']),
     );
     const specialty = asNullableString(
       pickValue(index, ['Especialidad', 'Especilidad', 'Specialty']),
     );
+    const visitedSourceRaw = asNullableString(
+      pickValue(index, ['Visitado en ficheros', 'Visitado', 'Visited', 'Territory', 'Territorio']),
+    );
 
     if (!productRaw) {
       errors.push('Missing required closeup product column (Producto/Product).');
     }
     if (!parsedPeriodMonth) {
-      errors.push('Unable to parse Date value. Accepted: Excel serial, YYYY/MM/DD, DD/MM/YYYY.');
+      errors.push('Unable to parse Closeup prescription period. Expected Date/Fecha, with Period/Month as fallback.');
     }
     if (recetasValue == null) {
       errors.push('Missing numeric recetas value.');
-    }
-
-    if (
-      parsedPeriodMonth &&
-      effectiveAsOfMonth &&
-      minIncludedMonth &&
-      (parsedPeriodMonth < minIncludedMonth || parsedPeriodMonth > effectiveAsOfMonth)
-    ) {
-      validations.push({
-        rowNumber: row.row_number,
-        validationStatus: 'skipped',
-        errors: [
-          `Skipped: outside 24-month window (${minIncludedMonth} to ${effectiveAsOfMonth}).`,
-        ],
-      });
-      continue;
-    }
-
-    const productNormalizedKey = productRaw ? normalizeText(productRaw) : '';
-    let productMatch: ProductMatch | null = null;
-    const explicitMapping = productNormalizedKey
-      ? explicitMappingByNormalizedSource.get(productNormalizedKey)
-      : undefined;
-
-    if (explicitMapping && (explicitMapping.productId || explicitMapping.marketGroup)) {
-      const ref = explicitMapping.productId
-        ? productReferenceById.get(explicitMapping.productId)
-        : null;
-      const resolvedProductId = explicitMapping.productId ?? 'COMPETITOR';
-      productMatch = {
-        productId: resolvedProductId,
-        canonicalProductName:
-          explicitMapping.canonicalProductName ??
-          ref?.canonicalProductName ??
-          productRaw!,
-        marketGroup: explicitMapping.marketGroup ?? null,
-      };
-    }
-
-    if (!productMatch && errors.length === 0) {
-      validations.push({
-        rowNumber: row.row_number,
-        validationStatus: 'skipped',
-        errors: ['Skipped: no explicit closeup mapping (product_id and/or market_group).'],
-      });
-      continue;
     }
 
     const status: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
@@ -1590,13 +1677,16 @@ async function normalizeBusinessExcellenceCloseup(
       rowNumber: row.row_number,
       productCloseupRaw: productRaw!,
       productCloseupNormalized: normalizeText(productRaw!),
-      productId: productMatch!.productId,
-      canonicalProductName: productMatch!.canonicalProductName,
-      marketGroup: productMatch!.marketGroup ?? null,
+      productId: null,
+      canonicalProductName: null,
+      marketGroup: null,
       specialty,
       sourceDateRaw: rawDateValue == null ? null : String(rawDateValue),
-      sourceDate: parsedPeriodMonth!,
+      sourceDate: parsedSourceDate ?? parsedPeriodMonth!,
+      periodRaw: rawPeriodValue == null ? null : String(rawPeriodValue),
       periodMonth: parsedPeriodMonth!,
+      visitedSourceRaw,
+      visited: deriveVisitedFromTerritory(visitedSourceRaw),
       recetasValue: recetasValue!,
     });
   }
@@ -1610,16 +1700,8 @@ async function normalizeBusinessExcellencePmm(
 ) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: PmmNormalizedRow[] = [];
-  const productReferences = await getProductReferences();
-  const pmmMappings = await getPmmSourceMappings();
   const effectiveAsOfMonth = asOfMonth && /^\d{4}-\d{2}-01$/.test(asOfMonth) ? asOfMonth : null;
   const minIncludedMonth = effectiveAsOfMonth ? shiftMonths(effectiveAsOfMonth, -23) : null;
-  const productReferenceById = new Map(
-    productReferences.map((ref) => [ref.productId, ref]),
-  );
-  const explicitMappingByNormalizedSource = new Map(
-    pmmMappings.map((item) => [item.sourcePackDesNormalized, item]),
-  );
 
   for (const row of rows) {
     const payload = toPayloadObject(row.row_payload_json);
@@ -1679,36 +1761,6 @@ async function normalizeBusinessExcellencePmm(
       continue;
     }
 
-    const productNormalizedKey = packDesRaw ? normalizeText(packDesRaw) : '';
-    let productMatch: ProductMatch | null = null;
-    const explicitMapping = productNormalizedKey
-      ? explicitMappingByNormalizedSource.get(productNormalizedKey)
-      : undefined;
-
-    if (explicitMapping && (explicitMapping.productId || explicitMapping.marketGroup)) {
-      const ref = explicitMapping.productId
-        ? productReferenceById.get(explicitMapping.productId)
-        : null;
-      const resolvedProductId = explicitMapping.productId ?? 'COMPETITOR';
-      productMatch = {
-        productId: resolvedProductId,
-        canonicalProductName:
-          explicitMapping.canonicalProductName ??
-          ref?.canonicalProductName ??
-          packDesRaw!,
-        marketGroup: explicitMapping.marketGroup ?? null,
-      };
-    }
-
-    if (!productMatch && errors.length === 0) {
-      validations.push({
-        rowNumber: row.row_number,
-        validationStatus: 'skipped',
-        errors: ['Skipped: no explicit PMM mapping (product_id and/or market_group).'],
-      });
-      continue;
-    }
-
     const status: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
     validations.push({
       rowNumber: row.row_number,
@@ -1722,9 +1774,9 @@ async function normalizeBusinessExcellencePmm(
       rowNumber: row.row_number,
       packDesRaw: packDesRaw!,
       packDesNormalized: normalizeText(packDesRaw!),
-      productId: productMatch!.productId,
-      canonicalProductName: productMatch!.canonicalProductName,
-      marketGroup: productMatch!.marketGroup ?? null,
+      productId: null,
+      canonicalProductName: null,
+      marketGroup: null,
       brick,
       sourceMonthRaw: monthRaw == null ? null : String(monthRaw),
       sourceYearRaw: yearRaw == null ? null : String(yearRaw),
@@ -1754,28 +1806,19 @@ async function normalizeBusinessExcellencePmm(
 
 async function normalizeBusinessExcellenceSellOut(
   rows: RawUploadRow[],
-  asOfMonth: string | null,
+  _asOfMonth: string | null,
   sourceTag: string | null,
 ) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: SellOutNormalizedRow[] = [];
-  const productReferences = await getProductReferences();
-  const sellOutMappings = await getSellOutSourceMappings();
-  const productReferenceById = new Map(
-    productReferences.map((ref) => [ref.productId, ref]),
-  );
-  const explicitMappingByNormalizedSource = new Map(
-    sellOutMappings.map((item) => [item.sourceProductNameNormalized, item]),
-  );
-  const effectiveAsOfMonth = asOfMonth && /^\d{4}-\d{2}-01$/.test(asOfMonth) ? asOfMonth : null;
-  const minIncludedMonth = effectiveAsOfMonth ? shiftMonths(effectiveAsOfMonth, -23) : null;
+  const dedupedByProductPeriod = new Map<string, SellOutNormalizedRow>();
 
   for (const row of rows) {
     const payload = toPayloadObject(row.row_payload_json);
     const index = buildPayloadIndex(payload);
     const errors: string[] = [];
     const dateValue = pickValue(index, ['Date', 'DATE', 'Fecha', 'Period', 'Periodo']);
-    const parsedPeriodMonth = parseDateField(dateValue);
+    const parsedPeriodMonth = parseDateFieldMonthFirst(dateValue);
 
     if (!hasBusinessContent(payload)) {
       validations.push({
@@ -1788,22 +1831,6 @@ async function normalizeBusinessExcellenceSellOut(
 
     if (!parsedPeriodMonth) {
       errors.push('Unable to parse Sell Out period date.');
-    }
-
-    if (
-      parsedPeriodMonth &&
-      effectiveAsOfMonth &&
-      minIncludedMonth &&
-      (parsedPeriodMonth < minIncludedMonth || parsedPeriodMonth > effectiveAsOfMonth)
-    ) {
-      validations.push({
-        rowNumber: row.row_number,
-        validationStatus: 'skipped',
-        errors: [
-          `Skipped: outside 24-month window (${minIncludedMonth} to ${effectiveAsOfMonth}).`,
-        ],
-      });
-      continue;
     }
 
     const numericCells = Object.entries(payload)
@@ -1836,23 +1863,25 @@ async function normalizeBusinessExcellenceSellOut(
 
     for (const cell of numericCells) {
       const normalizedKey = normalizeText(cell.sourceProductRaw);
-      const mapping = explicitMappingByNormalizedSource.get(normalizedKey);
-      if (!mapping || (!mapping.productId && !mapping.marketGroup)) continue;
+      const dedupKey = [
+        parsedPeriodMonth!,
+        sourceTag ?? '',
+        'Units',
+        normalizedKey,
+      ].join('|||');
+      const existing = dedupedByProductPeriod.get(dedupKey);
+      if (existing) {
+        existing.amountValue += cell.amountValue!;
+        continue;
+      }
 
-      const ref = mapping.productId ? productReferenceById.get(mapping.productId) : null;
-      const resolvedProductId = mapping.productId ?? 'COMPETITOR';
-      const canonicalProductName =
-        mapping.canonicalProductName ??
-        ref?.canonicalProductName ??
-        cell.sourceProductRaw;
-
-      normalizedRows.push({
+      dedupedByProductPeriod.set(dedupKey, {
         rowNumber: row.row_number,
         sourceProductRaw: cell.sourceProductRaw,
         sourceProductNormalized: normalizedKey,
-        productId: resolvedProductId,
-        canonicalProductName,
-        marketGroup: mapping.marketGroup ?? null,
+        productId: null,
+        canonicalProductName: null,
+        marketGroup: null,
         channel: sourceTag,
         periodMonth: parsedPeriodMonth!,
         salesGroup: 'Units',
@@ -1862,6 +1891,7 @@ async function normalizeBusinessExcellenceSellOut(
     }
   }
 
+  normalizedRows.push(...dedupedByProductPeriod.values());
   return { validations, normalizedRows };
 }
 
@@ -1939,6 +1969,891 @@ function normalizeBusinessExcellenceBrickAssignment(
   return { validations, normalizedRows };
 }
 
+function normalizeBusinessExcellenceWeeklyTracking(
+  rows: RawUploadRow[],
+  asOfMonth: string | null,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: WeeklyTrackingNormalizedRow[] = [];
+  const effectiveAsOfMonth = asOfMonth && /^\d{4}-\d{2}-01$/.test(asOfMonth) ? asOfMonth : null;
+  const minIncludedMonth = effectiveAsOfMonth ? shiftMonths(effectiveAsOfMonth, -23) : null;
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+    const weekValue = pickValue(index, ['Week', 'WEEK', 'Date', 'Fecha', 'DATE', 'Period', 'Periodo']);
+    const periodMonth = parseWeeklyPeriodField(weekValue);
+    const weekRaw = asNullableString(weekValue);
+    const unitsValue = asNullableNumber(pickValue(index, ['Un', 'UN', 'Units']));
+    const netSalesValue = asNullableNumber(pickValue(index, ['Lc', 'LC', 'Net Sales', 'NetSales']));
+    const errors: string[] = [];
+
+    if (!periodMonth) {
+      errors.push('Missing or invalid Week column.');
+    }
+    if (unitsValue == null && netSalesValue == null) {
+      errors.push('Missing numeric UN/LC values.');
+    }
+
+    if (
+      periodMonth &&
+      effectiveAsOfMonth &&
+      minIncludedMonth &&
+      (periodMonth < minIncludedMonth || periodMonth > effectiveAsOfMonth)
+    ) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: [
+          `Skipped: outside 24-month window (${minIncludedMonth} to ${effectiveAsOfMonth}).`,
+        ],
+      });
+      continue;
+    }
+
+    const status: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: status,
+      errors,
+    });
+
+    if (status === 'error') continue;
+    const base = {
+      rowNumber: row.row_number,
+      weekRaw,
+      periodMonth: periodMonth!,
+      brickCode: asNullableString(pickValue(index, ['BRICK_COD', 'Brick Cod', 'BrickCode'])),
+      brickDescription: asNullableString(pickValue(index, ['BRICK_DES', 'Brick Des', 'Brick Description'])),
+      prodDes: asNullableString(pickValue(index, ['PROD_DES', 'Prod Des'])),
+      prodCode: asNullableString(pickValue(index, ['PRODCODE', 'ProdCode', 'Prod Code'])),
+      packDes: asNullableString(pickValue(index, ['PACK_DES', 'Pack Des'])),
+      atcivCode: asNullableString(pickValue(index, ['ATCIV_CODE', 'Atciv Code'])),
+      atcivDesc: asNullableString(pickValue(index, ['ATCIV_DESC', 'Atciv Desc'])),
+      packCode: asNullableString(pickValue(index, ['PACKCODE', 'Pack Code'])),
+      marketCode: asNullableString(pickValue(index, ['MKT_COD', 'Mkt Cod', 'Market Code'])),
+      payload,
+    };
+
+    if (unitsValue != null) {
+      normalizedRows.push({
+        ...base,
+        salesGroup: 'Units',
+        amountValue: unitsValue,
+      });
+    }
+    if (netSalesValue != null) {
+      normalizedRows.push({
+        ...base,
+        salesGroup: 'Net Sales',
+        amountValue: netSalesValue,
+      });
+    }
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadWeeklyTrackingStaging(uploadId: string, rows: WeeklyTrackingNormalizedRow[]) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_weekly_tracking\` (
+        upload_id STRING,
+        row_number INT64,
+        week_raw STRING,
+        period_month DATE,
+        brick_code STRING,
+        brick_description STRING,
+        prod_des STRING,
+        prod_code STRING,
+        pack_des STRING,
+        atciv_code STRING,
+        atciv_desc STRING,
+        pack_code STRING,
+        market_code STRING,
+        sales_group STRING,
+        amount_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_weekly_tracking\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_iqvia_weekly',
+          'business_excellence_weekly_tracking',
+          'iqvia_weekly',
+          'weekly_tracking'
+        )
+          AND u.upload_id != @uploadId
+      )
+    `,
+    params: { uploadId },
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_weekly_tracking\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_weekly_tracking\`
+    (
+      upload_id,
+      row_number,
+      week_raw,
+      period_month,
+      brick_code,
+      brick_description,
+      prod_des,
+      prod_code,
+      pack_des,
+      atciv_code,
+      atciv_desc,
+      pack_code,
+      market_code,
+      sales_group,
+      amount_value,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.week_raw,
+      DATE(row.period_month),
+      NULLIF(row.brick_code, ''),
+      NULLIF(row.brick_description, ''),
+      NULLIF(row.prod_des, ''),
+      NULLIF(row.prod_code, ''),
+      NULLIF(row.pack_des, ''),
+      NULLIF(row.atciv_code, ''),
+      NULLIF(row.atciv_desc, ''),
+      NULLIF(row.pack_code, ''),
+      NULLIF(row.market_code, ''),
+      row.sales_group,
+      SAFE_CAST(row.amount_value AS NUMERIC),
+      PARSE_JSON(row.source_payload_json),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1800);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            week_raw: row.weekRaw,
+            period_month: row.periodMonth,
+            brick_code: row.brickCode ?? '',
+            brick_description: row.brickDescription ?? '',
+            prod_des: row.prodDes ?? '',
+            prod_code: row.prodCode ?? '',
+            pack_des: row.packDes ?? '',
+            atciv_code: row.atcivCode ?? '',
+            atciv_desc: row.atcivDesc ?? '',
+            pack_code: row.packCode ?? '',
+            market_code: row.marketCode ?? '',
+            sales_group: row.salesGroup,
+            amount_value: String(row.amountValue),
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
+function detectHumanResourcesArea(payload: Record<string, unknown>) {
+  const index = buildPayloadIndex(payload);
+  const area = asNullableString(
+    pickValue(index, ['Area', 'AREA', 'Business Unit', 'BU', 'Departamento', 'Department', 'Equipo']),
+  );
+  return area;
+}
+
+function detectHumanResourcesPeriodMonth(payload: Record<string, unknown>, asOfMonth: string | null) {
+  const index = buildPayloadIndex(payload);
+  const direct = pickValue(index, ['Date', 'DATE', 'Fecha', 'FECHA', 'Period', 'Periodo', 'Month', 'Mes']);
+  const parsedDirect = parseDateFieldMonthFirst(direct) ?? parseDateField(direct);
+  if (parsedDirect) return parsedDirect;
+
+  const parsedMonthYear = parseMonthYearField(
+    pickValue(index, ['Month', 'Mes']),
+    pickValue(index, ['Year', 'Año', 'Ano']),
+  );
+  if (parsedMonthYear) return parsedMonthYear;
+
+  return asOfMonth;
+}
+
+function detectHumanResourcesMetricValue(payload: Record<string, unknown>, metricType: 'turnover' | 'training') {
+  const index = buildPayloadIndex(payload);
+  const preferred = metricType === 'turnover'
+    ? ['Turnover', 'Rotacion', 'Rotación', 'Attrition', 'Rotation']
+    : ['Training', 'Entrenamiento', 'Capacitacion', 'Capacitación', 'Hours', 'Horas'];
+
+  const preferredValue = asNullableNumber(pickValue(index, preferred));
+  if (preferredValue != null) return preferredValue;
+
+  for (const value of Object.values(payload)) {
+    const numeric = asNullableNumber(value);
+    if (numeric != null) return numeric;
+  }
+  return null;
+}
+
+function normalizeHumanResourcesMetric(
+  rows: RawUploadRow[],
+  asOfMonth: string | null,
+  metricType: 'turnover' | 'training',
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: HumanResourcesMetricNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+
+    if (!hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const periodMonth = detectHumanResourcesPeriodMonth(payload, asOfMonth);
+    if (!periodMonth) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: period not detected.'],
+      });
+      continue;
+    }
+
+    const metricValue = detectHumanResourcesMetricValue(payload, metricType);
+    if (metricValue == null) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: [`Skipped: ${metricType} metric value not detected.`],
+      });
+      continue;
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: 'valid',
+      errors: [],
+    });
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      metricType,
+      area: detectHumanResourcesArea(payload),
+      periodMonth,
+      metricValue,
+      payload,
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadHumanResourcesMetricStaging(uploadId: string, rows: HumanResourcesMetricNormalizedRow[]) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_human_resources_metrics\` (
+        upload_id STRING,
+        row_number INT64,
+        metric_type STRING,
+        area STRING,
+        period_month DATE,
+        metric_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_metrics\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_human_resources_metrics\`
+    (
+      upload_id,
+      row_number,
+      metric_type,
+      area,
+      period_month,
+      metric_value,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.metric_type,
+      NULLIF(row.area, ''),
+      DATE(row.period_month),
+      SAFE_CAST(row.metric_value AS NUMERIC),
+      PARSE_JSON(row.source_payload_json),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1800);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            metric_type: row.metricType,
+            area: row.area ?? '',
+            period_month: row.periodMonth,
+            metric_value: String(row.metricValue),
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
+function normalizeHumanResourcesTurnover(
+  rows: RawUploadRow[],
+  asOfMonth: string | null,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: HumanResourcesTurnoverNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+
+    if (!hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const lastWorkingDayMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['Last Working day', 'Last Working Day', 'Last day', 'Termination Date']),
+    );
+    const hiringDateMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['Hiring date', 'Hiring Date', 'Hire Date']),
+    );
+    const periodMonth = lastWorkingDayMonth ?? hiringDateMonth ?? asOfMonth;
+
+    if (!periodMonth) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: period not detected from Last Working day / Hiring date / as_of_month.'],
+      });
+      continue;
+    }
+
+    const department = asNullableString(pickValue(index, ['DEPARTMENT', 'Department']));
+    const positionName = asNullableString(pickValue(index, ['Position Name', 'Position']));
+    const lastName = asNullableString(pickValue(index, ['Last Name', 'Apellido']));
+    const firstName = asNullableString(pickValue(index, ['First Name', 'Nombre']));
+
+    if (!department && !positionName && !lastName && !firstName) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: no turnover business columns detected.'],
+      });
+      continue;
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: 'valid',
+      errors: [],
+    });
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      periodMonth,
+      volNonVol: asNullableString(pickValue(index, ['Vol/NonVol', 'Vol NonVol', 'Voluntary', 'Involuntary'])),
+      lastName,
+      firstName,
+      positionName,
+      department,
+      territory: asNullableString(pickValue(index, ['TERRITORY', 'Territory'])),
+      manager: asNullableString(pickValue(index, ['MANAGER', 'Manager'])),
+      salary: asNullableNumber(pickValue(index, ['SALARY', 'Salary'])),
+      salaryBands: asNullableString(pickValue(index, ['SALARY BANDS', 'Salary Bands'])),
+      salaryBandsPct: asNullableNumber(pickValue(index, ['SALARY BANDS %', 'Salary Bands %'])),
+      internalOrExternal: asNullableString(pickValue(index, ['Internal Or External', 'Internal/External'])),
+      keyPeople: asNullableString(pickValue(index, ['KEY PEOPLE?', 'Key People'])),
+      keyPosition: asNullableString(pickValue(index, ['KEY POSITION', 'Key Position'])),
+      hiringDateMonth,
+      lastWorkingDayMonth,
+      quarter: asNullableString(pickValue(index, ['Quarter', 'QUARTER'])),
+      year: asNullableNumber(pickValue(index, ['YEAR', 'Year'])),
+      years: asNullableNumber(pickValue(index, ['Years', 'YEARS'])),
+      seniorityCluster: asNullableString(pickValue(index, ['Seniority Cluster', 'SENIORITY CLUSTER'])),
+      ageAsOfDate: asNullableNumber(pickValue(index, ['Age (as of Date)', 'Age'])),
+      seniority: asNullableNumber(pickValue(index, ['Seniority', 'SENIORITY'])),
+      gender: asNullableString(pickValue(index, ['Gender', 'GENDER'])),
+      grade: asNullableString(pickValue(index, ['Grade', 'GRADE'])),
+      terminationAdRationale: asNullableString(pickValue(index, ['Termination Ad. Rationale', 'Termination Rationale'])),
+      payload,
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadHumanResourcesTurnoverStaging(
+  uploadId: string,
+  rows: HumanResourcesTurnoverNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_human_resources_turnover\` (
+        upload_id STRING,
+        row_number INT64,
+        period_month DATE,
+        vol_non_vol STRING,
+        last_name STRING,
+        first_name STRING,
+        position_name STRING,
+        department STRING,
+        territory STRING,
+        manager STRING,
+        salary NUMERIC,
+        salary_bands STRING,
+        salary_bands_pct NUMERIC,
+        internal_or_external STRING,
+        key_people STRING,
+        key_position STRING,
+        hiring_date_month DATE,
+        last_working_day_month DATE,
+        quarter STRING,
+        year INT64,
+        years NUMERIC,
+        seniority_cluster STRING,
+        age_as_of_date NUMERIC,
+        seniority NUMERIC,
+        gender STRING,
+        grade STRING,
+        termination_ad_rationale STRING,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_turnover\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_human_resources_turnover\`
+    (
+      upload_id, row_number, period_month, vol_non_vol, last_name, first_name, position_name, department,
+      territory, manager, salary, salary_bands, salary_bands_pct, internal_or_external, key_people, key_position,
+      hiring_date_month, last_working_day_month, quarter, year, years, seniority_cluster, age_as_of_date, seniority,
+      gender, grade, termination_ad_rationale, source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      DATE(row.period_month),
+      NULLIF(row.vol_non_vol, ''),
+      NULLIF(row.last_name, ''),
+      NULLIF(row.first_name, ''),
+      NULLIF(row.position_name, ''),
+      NULLIF(row.department, ''),
+      NULLIF(row.territory, ''),
+      NULLIF(row.manager, ''),
+      SAFE_CAST(row.salary AS NUMERIC),
+      NULLIF(row.salary_bands, ''),
+      SAFE_CAST(row.salary_bands_pct AS NUMERIC),
+      NULLIF(row.internal_or_external, ''),
+      NULLIF(row.key_people, ''),
+      NULLIF(row.key_position, ''),
+      IF(row.hiring_date_month = '', NULL, DATE(row.hiring_date_month)),
+      IF(row.last_working_day_month = '', NULL, DATE(row.last_working_day_month)),
+      NULLIF(row.quarter, ''),
+      SAFE_CAST(row.year AS INT64),
+      SAFE_CAST(row.years AS NUMERIC),
+      NULLIF(row.seniority_cluster, ''),
+      SAFE_CAST(row.age_as_of_date AS NUMERIC),
+      SAFE_CAST(row.seniority AS NUMERIC),
+      NULLIF(row.gender, ''),
+      NULLIF(row.grade, ''),
+      NULLIF(row.termination_ad_rationale, ''),
+      PARSE_JSON(row.source_payload_json),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1500);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            period_month: row.periodMonth,
+            vol_non_vol: row.volNonVol ?? '',
+            last_name: row.lastName ?? '',
+            first_name: row.firstName ?? '',
+            position_name: row.positionName ?? '',
+            department: row.department ?? '',
+            territory: row.territory ?? '',
+            manager: row.manager ?? '',
+            salary: row.salary == null ? '' : String(row.salary),
+            salary_bands: row.salaryBands ?? '',
+            salary_bands_pct: row.salaryBandsPct == null ? '' : String(row.salaryBandsPct),
+            internal_or_external: row.internalOrExternal ?? '',
+            key_people: row.keyPeople ?? '',
+            key_position: row.keyPosition ?? '',
+            hiring_date_month: row.hiringDateMonth ?? '',
+            last_working_day_month: row.lastWorkingDayMonth ?? '',
+            quarter: row.quarter ?? '',
+            year: row.year == null ? '' : String(row.year),
+            years: row.years == null ? '' : String(row.years),
+            seniority_cluster: row.seniorityCluster ?? '',
+            age_as_of_date: row.ageAsOfDate == null ? '' : String(row.ageAsOfDate),
+            seniority: row.seniority == null ? '' : String(row.seniority),
+            gender: row.gender ?? '',
+            grade: row.grade ?? '',
+            termination_ad_rationale: row.terminationAdRationale ?? '',
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
+function normalizeHumanResourcesTraining(
+  rows: RawUploadRow[],
+  asOfMonth: string | null,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: HumanResourcesTrainingNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+
+    if (!hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const completionDateMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['Completion Date', 'CompletionDate']),
+    );
+    const itemRevisionDateMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['Item Revision Date', 'Revision Date']),
+    );
+    const lastUpdateTimeMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['Last Update Time', 'LastUpdateTime']),
+    );
+    const periodMonth = completionDateMonth ?? itemRevisionDateMonth ?? lastUpdateTimeMonth ?? asOfMonth;
+
+    if (!periodMonth) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: period not detected from Completion/Revision/Update dates.'],
+      });
+      continue;
+    }
+
+    const firstName = asNullableString(pickValue(index, ['First Name', 'FirstName']));
+    const lastName = asNullableString(pickValue(index, ['Last Name', 'LastName']));
+    const entityTitle = asNullableString(pickValue(index, ['Entity Title', 'Course Title']));
+    const completionStatus = asNullableString(
+      pickValue(index, ['Completion Status', 'Status']),
+    );
+
+    if (!firstName && !lastName && !entityTitle && !completionStatus) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: no training business columns detected.'],
+      });
+      continue;
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: 'valid',
+      errors: [],
+    });
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      periodMonth,
+      userName: asNullableString(pickValue(index, ['User'])),
+      activeUser: asNullableString(pickValue(index, ['Active User', 'ActiveUser'])),
+      firstName,
+      lastName,
+      middleName: asNullableString(pickValue(index, ['Middle Name', 'MiddleName'])),
+      entityId: asNullableString(pickValue(index, ['Entity ID', 'EntityID'])),
+      itemType: asNullableString(pickValue(index, ['Item Type', 'ItemType'])),
+      entityType: asNullableString(pickValue(index, ['Entity Type', 'EntityType'])),
+      itemRevisionDateMonth,
+      revisionNumber: asNullableString(pickValue(index, ['Revision Number', 'RevisionNumber'])),
+      entityTitle,
+      classId: asNullableString(pickValue(index, ['Class ID', 'ClassID'])),
+      completionDateMonth,
+      grade: asNullableString(pickValue(index, ['Grade'])),
+      completionStatusId: asNullableString(
+        pickValue(index, ['Completion Status ID', 'CompletionStatusID']),
+      ),
+      completionStatus,
+      totalHours: asNullableNumber(pickValue(index, ['Total Hours', 'TotalHours'])),
+      creditHoursProfessionalAssociations: asNullableNumber(
+        pickValue(index, [
+          'Credit Hours for professional associations',
+          'Credit Hours Professional Associations',
+        ]),
+      ),
+      contactHours: asNullableNumber(pickValue(index, ['Contact Hours', 'ContactHours'])),
+      cpe: asNullableNumber(pickValue(index, ['CPE'])),
+      tuition: asNullableNumber(pickValue(index, ['Tuition'])),
+      currencySymbol: asNullableString(pickValue(index, ['Currency Symbol', 'CurrencySymbol'])),
+      currencyId: asNullableString(pickValue(index, ['Currency ID', 'CurrencyID'])),
+      instructor: asNullableString(pickValue(index, ['Instructor'])),
+      lastUpdateUser: asNullableString(pickValue(index, ['Last Update User', 'LastUpdateUser'])),
+      lastUpdateTimeMonth,
+      eSignatureMeaningCode: asNullableString(
+        pickValue(index, ['E-signature Meaning Code', 'E Signature Meaning Code']),
+      ),
+      comments: asNullableString(pickValue(index, ['Comments', 'Comment'])),
+      payload,
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadHumanResourcesTrainingStaging(
+  uploadId: string,
+  rows: HumanResourcesTrainingNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_human_resources_training\` (
+        upload_id STRING,
+        row_number INT64,
+        period_month DATE,
+        user_name STRING,
+        active_user STRING,
+        first_name STRING,
+        last_name STRING,
+        middle_name STRING,
+        entity_id STRING,
+        item_type STRING,
+        entity_type STRING,
+        item_revision_date_month DATE,
+        revision_number STRING,
+        entity_title STRING,
+        class_id STRING,
+        completion_date_month DATE,
+        grade STRING,
+        completion_status_id STRING,
+        completion_status STRING,
+        total_hours NUMERIC,
+        credit_hours_professional_associations NUMERIC,
+        contact_hours NUMERIC,
+        cpe NUMERIC,
+        tuition NUMERIC,
+        currency_symbol STRING,
+        currency_id STRING,
+        instructor STRING,
+        last_update_user STRING,
+        last_update_time_month DATE,
+        e_signature_meaning_code STRING,
+        comments STRING,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_training\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_human_resources_training\`
+    (
+      upload_id, row_number, period_month, user_name, active_user, first_name, last_name, middle_name,
+      entity_id, item_type, entity_type, item_revision_date_month, revision_number, entity_title, class_id,
+      completion_date_month, grade, completion_status_id, completion_status, total_hours,
+      credit_hours_professional_associations, contact_hours, cpe, tuition, currency_symbol, currency_id,
+      instructor, last_update_user, last_update_time_month, e_signature_meaning_code, comments,
+      source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      DATE(row.period_month),
+      NULLIF(row.user_name, ''),
+      NULLIF(row.active_user, ''),
+      NULLIF(row.first_name, ''),
+      NULLIF(row.last_name, ''),
+      NULLIF(row.middle_name, ''),
+      NULLIF(row.entity_id, ''),
+      NULLIF(row.item_type, ''),
+      NULLIF(row.entity_type, ''),
+      IF(row.item_revision_date_month = '', NULL, DATE(row.item_revision_date_month)),
+      NULLIF(row.revision_number, ''),
+      NULLIF(row.entity_title, ''),
+      NULLIF(row.class_id, ''),
+      IF(row.completion_date_month = '', NULL, DATE(row.completion_date_month)),
+      NULLIF(row.grade, ''),
+      NULLIF(row.completion_status_id, ''),
+      NULLIF(row.completion_status, ''),
+      SAFE_CAST(row.total_hours AS NUMERIC),
+      SAFE_CAST(row.credit_hours_professional_associations AS NUMERIC),
+      SAFE_CAST(row.contact_hours AS NUMERIC),
+      SAFE_CAST(row.cpe AS NUMERIC),
+      SAFE_CAST(row.tuition AS NUMERIC),
+      NULLIF(row.currency_symbol, ''),
+      NULLIF(row.currency_id, ''),
+      NULLIF(row.instructor, ''),
+      NULLIF(row.last_update_user, ''),
+      IF(row.last_update_time_month = '', NULL, DATE(row.last_update_time_month)),
+      NULLIF(row.e_signature_meaning_code, ''),
+      NULLIF(row.comments, ''),
+      PARSE_JSON(row.source_payload_json),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1500);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            period_month: row.periodMonth,
+            user_name: row.userName ?? '',
+            active_user: row.activeUser ?? '',
+            first_name: row.firstName ?? '',
+            last_name: row.lastName ?? '',
+            middle_name: row.middleName ?? '',
+            entity_id: row.entityId ?? '',
+            item_type: row.itemType ?? '',
+            entity_type: row.entityType ?? '',
+            item_revision_date_month: row.itemRevisionDateMonth ?? '',
+            revision_number: row.revisionNumber ?? '',
+            entity_title: row.entityTitle ?? '',
+            class_id: row.classId ?? '',
+            completion_date_month: row.completionDateMonth ?? '',
+            grade: row.grade ?? '',
+            completion_status_id: row.completionStatusId ?? '',
+            completion_status: row.completionStatus ?? '',
+            total_hours: row.totalHours == null ? '' : String(row.totalHours),
+            credit_hours_professional_associations:
+              row.creditHoursProfessionalAssociations == null ? '' : String(row.creditHoursProfessionalAssociations),
+            contact_hours: row.contactHours == null ? '' : String(row.contactHours),
+            cpe: row.cpe == null ? '' : String(row.cpe),
+            tuition: row.tuition == null ? '' : String(row.tuition),
+            currency_symbol: row.currencySymbol ?? '',
+            currency_id: row.currencyId ?? '',
+            instructor: row.instructor ?? '',
+            last_update_user: row.lastUpdateUser ?? '',
+            last_update_time_month: row.lastUpdateTimeMonth ?? '',
+            e_signature_meaning_code: row.eSignatureMeaningCode ?? '',
+            comments: row.comments ?? '',
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
 export async function normalizeUpload(uploadId: string, moduleCode: string): Promise<NormalizeUploadResult> {
   const rows = await getRawRows(uploadId);
 
@@ -1946,36 +2861,14 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = normalizeSalesInternal(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadSalesInternalStaging(uploadId, normalizedRows);
-
-    const rowsValid = validations.filter((item) => item.validationStatus !== 'error').length;
-    const rowsError = validations.filter((item) => item.validationStatus === 'error').length;
-
-    return {
-      ok: true,
-      normalizedRows: normalizedRows.length,
-      rowsValid,
-      rowsError,
-    };
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
   if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
-    const asOfMonth = await getUploadAsOfMonth(uploadId);
-    const { validations, normalizedRows } = await normalizeBusinessExcellenceCloseup(
-      rows,
-      asOfMonth,
-    );
+    const { validations, normalizedRows } = await normalizeBusinessExcellenceCloseup(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadCloseupStaging(uploadId, normalizedRows);
-
-    const rowsValid = validations.filter((item) => item.validationStatus !== 'error').length;
-    const rowsError = validations.filter((item) => item.validationStatus === 'error').length;
-
-    return {
-      ok: true,
-      normalizedRows: normalizedRows.length,
-      rowsValid,
-      rowsError,
-    };
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
   if (moduleCode === 'business_excellence_ddd' || moduleCode === 'business_excellence_pmm' || moduleCode === 'pmm' || moduleCode === 'ddd') {
@@ -1983,16 +2876,7 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = await normalizeBusinessExcellencePmm(rows, asOfMonth);
     await updateRawValidationStatus(uploadId, validations);
     await loadPmmStaging(uploadId, normalizedRows);
-
-    const rowsValid = validations.filter((item) => item.validationStatus !== 'error').length;
-    const rowsError = validations.filter((item) => item.validationStatus === 'error').length;
-
-    return {
-      ok: true,
-      normalizedRows: normalizedRows.length,
-      rowsValid,
-      rowsError,
-    };
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
   if (
@@ -2009,16 +2893,7 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     );
     await updateRawValidationStatus(uploadId, validations);
     await loadSellOutStaging(uploadId, normalizedRows);
-
-    const rowsValid = validations.filter((item) => item.validationStatus !== 'error').length;
-    const rowsError = validations.filter((item) => item.validationStatus === 'error').length;
-
-    return {
-      ok: true,
-      normalizedRows: normalizedRows.length,
-      rowsValid,
-      rowsError,
-    };
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
   if (
@@ -2033,16 +2908,39 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     );
     await updateRawValidationStatus(uploadId, validations);
     await loadBrickAssignmentStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
 
-    const rowsValid = validations.filter((item) => item.validationStatus !== 'error').length;
-    const rowsError = validations.filter((item) => item.validationStatus === 'error').length;
+  if (
+    moduleCode === 'business_excellence_iqvia_weekly' ||
+    moduleCode === 'business_excellence_weekly_tracking' ||
+    moduleCode === 'iqvia_weekly' ||
+    moduleCode === 'weekly_tracking'
+  ) {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    const { validations, normalizedRows } = normalizeBusinessExcellenceWeeklyTracking(
+      rows,
+      asOfMonth,
+    );
+    await updateRawValidationStatus(uploadId, validations);
+    await loadWeeklyTrackingStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
 
-    return {
-      ok: true,
-      normalizedRows: normalizedRows.length,
-      rowsValid,
-      rowsError,
-    };
+  if (moduleCode === 'human_resources_turnover') {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    const { validations, normalizedRows } = normalizeHumanResourcesTurnover(rows, asOfMonth);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadHumanResourcesTurnoverStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'human_resources_training' || moduleCode === 'human_resources_entrenamiento') {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    const { validations, normalizedRows } = normalizeHumanResourcesTraining(rows, asOfMonth);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadHumanResourcesTrainingStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
   throw new Error(`No normalizer configured for module "${moduleCode}".`);

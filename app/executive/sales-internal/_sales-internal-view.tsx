@@ -1,4 +1,4 @@
-﻿import Link from 'next/link';
+import Link from 'next/link';
 import { SalesInternalFilterBar } from '@/components/executive/sales-internal/filter-bar';
 import { unstable_cache } from 'next/cache';
 import { SalesInternalInsightsDashboard } from '@/components/executive/sales-internal/insights-dashboard';
@@ -402,7 +402,7 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
 
             <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Actual vs Budget Snapshot</p>
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Actual vs Budget Snapshot</p>
                 <p className={`rounded-full border px-2 py-1 text-xs font-semibold ${growthTone(
                   selectedVariancePctYtd === null ? null : selectedVariancePctYtd * 100,
                 )}`}>
@@ -1260,12 +1260,12 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
             <article className="rounded-[24px] border border-slate-200/80 bg-gradient-to-br from-slate-900 to-slate-800 p-6 text-white shadow-[0_14px_40px_rgba(15,23,42,0.30)]">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-300">Executive Narrative</p>
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Executive Narrative</p>
                   <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">{insightsModel!.headline}</h3>
                 </div>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
                       insightsModel!.source === 'openai_enhanced'
                         ? 'border-cyan-300 bg-cyan-50 text-cyan-800'
                         : 'border-slate-300 bg-slate-100 text-slate-700'
@@ -1282,25 +1282,25 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
 
                 <div className="mt-4 grid gap-3 md:grid-cols-4">
                 <div className="rounded-[14px] border border-slate-700 bg-slate-800/80 p-3">
-                  <p className="text-[11px] text-slate-300">Net Sales YoY</p>
+                  <p className="text-xs text-slate-300">Net Sales YoY</p>
                   <p className={`mt-1 inline-flex rounded-full border px-2 py-1 text-sm font-semibold ${growthTone(dualKpisYoY.netSales.deltaPct)}`}>
                     {formatPct(dualKpisYoY.netSales.deltaPct)}
                   </p>
                 </div>
                 <div className="rounded-[14px] border border-slate-700 bg-slate-800/80 p-3">
-                  <p className="text-[11px] text-slate-300">Units YoY</p>
+                  <p className="text-xs text-slate-300">Units YoY</p>
                   <p className={`mt-1 inline-flex rounded-full border px-2 py-1 text-sm font-semibold ${growthTone(dualKpisYoY.units.deltaPct)}`}>
                     {formatPct(dualKpisYoY.units.deltaPct)}
                   </p>
                 </div>
                 <div className="rounded-[14px] border border-slate-700 bg-slate-800/80 p-3">
-                  <p className="text-[11px] text-slate-300">Monthly Momentum</p>
+                  <p className="text-xs text-slate-300">Monthly Momentum</p>
                   <p className={`mt-1 inline-flex rounded-full border px-2 py-1 text-sm font-semibold ${growthTone(trendMomentum)}`}>
                     {formatPct(trendMomentum)}
                   </p>
                 </div>
                 <div className="rounded-[14px] border border-slate-700 bg-slate-800/80 p-3">
-                  <p className="text-[11px] text-slate-300">YTD Window</p>
+                  <p className="text-xs text-slate-300">YTD Window</p>
                   <p className="mt-1 text-sm font-semibold">
                     {trendYoY.context.analysisYear && trendYoY.context.cutoffMonth
                       ? `${trendYoY.context.analysisYear} M${trendYoY.context.cutoffMonth}`
@@ -1311,24 +1311,24 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
             </article>
 
             <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.10)]">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Budget Signal</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Budget Signal</p>
               <div className="mt-3 grid gap-3 md:grid-cols-4">
                 <div className="rounded-[12px] border border-slate-200 bg-slate-50/70 p-3">
-                  <p className="text-[11px] text-slate-500">Actual YTD</p>
+                  <p className="text-xs text-slate-500">Actual YTD</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">{formatSalesMetric(selectedActualYtd, metricMode)}</p>
                 </div>
                 <div className="rounded-[12px] border border-slate-200 bg-slate-50/70 p-3">
-                  <p className="text-[11px] text-slate-500">Budget YTD</p>
+                  <p className="text-xs text-slate-500">Budget YTD</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">{formatSalesMetric(selectedBudgetYtd, metricMode)}</p>
                 </div>
                 <div className="rounded-[12px] border border-slate-200 bg-slate-50/70 p-3">
-                  <p className="text-[11px] text-slate-500">Variance</p>
+                  <p className="text-xs text-slate-500">Variance</p>
                   <p className={`mt-1 text-sm font-semibold ${selectedVarianceYtd >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                     {formatSalesMetric(selectedVarianceYtd, metricMode)}
                   </p>
                 </div>
                 <div className="rounded-[12px] border border-slate-200 bg-slate-50/70 p-3">
-                  <p className="text-[11px] text-slate-500">Variance %</p>
+                  <p className="text-xs text-slate-500">Variance %</p>
                   <p className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-sm font-semibold ${growthTone(
                     selectedVariancePctYtd === null ? null : selectedVariancePctYtd * 100,
                   )}`}>
@@ -1340,31 +1340,31 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
 
             <div className="grid gap-4 xl:grid-cols-2">
               <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.10)]">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Executive Focus</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Executive Focus</p>
                 <div className="mt-3 space-y-3 text-sm text-slate-700">
                   {insightsModel!.facts.slice(0, 3).map((fact) => (
                     <div key={fact.title} className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{fact.title}</p>
                       <p className="mt-1 text-sm text-slate-700">{fact.message}</p>
-                      <p className="mt-2 text-[11px] text-slate-500">{fact.evidence[0] ?? ''}</p>
+                      <p className="mt-2 text-xs text-slate-500">{fact.evidence[0] ?? ''}</p>
                     </div>
                   ))}
                 </div>
               </article>
 
               <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.10)]">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Decision Clarity</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Decision Clarity</p>
                 <div className="mt-3 space-y-3">
                   {dedupedScorecardPriorities.slice(0, 2).map((item) => (
                     <div key={item.title} className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{item.title}</p>
-                      <p className="mt-1 text-[11px] text-slate-700">
+                      <p className="mt-1 text-xs text-slate-700">
                         <span className="font-semibold text-slate-800">What happened:</span> {item.why}
                       </p>
-                      <p className="mt-1 text-[11px] text-slate-700">
+                      <p className="mt-1 text-xs text-slate-700">
                         <span className="font-semibold text-slate-800">Why it matters:</span> {item.opportunity}
                       </p>
-                      <p className="mt-1 text-[11px] text-slate-700">
+                      <p className="mt-1 text-xs text-slate-700">
                         <span className="font-semibold text-slate-800">What to do next:</span> {item.action}
                       </p>
                     </div>
@@ -1374,25 +1374,25 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Budget Performance</p>
                     <div className="mt-2 grid gap-2 md:grid-cols-2">
                       <div className="rounded-[10px] border border-rose-200 bg-rose-50/70 p-2">
-                        <p className="text-[11px] font-semibold text-rose-900">Brands Driving Budget Gap</p>
+                        <p className="text-xs font-semibold text-rose-900">Brands Driving Budget Gap</p>
                         <div className="mt-1 space-y-1">
                           {brandBudgetUnderRows.slice(0, 4).map((row) => (
-                            <p key={`budget-under-${row.brandName}`} className="text-[11px] text-slate-700">
+                            <p key={`budget-under-${row.brandName}`} className="text-xs text-slate-700">
                               <span className="font-semibold text-rose-800">{row.brandName}</span>: {row.contributionPct.toFixed(1)}% of gap ({formatSalesMetric(row.value, metricMode)})
                             </p>
                           ))}
-                          {brandBudgetUnderRows.length === 0 ? <p className="text-[11px] text-slate-500">No under-budget brands in current filters.</p> : null}
+                          {brandBudgetUnderRows.length === 0 ? <p className="text-xs text-slate-500">No under-budget brands in current filters.</p> : null}
                         </div>
                       </div>
                       <div className="rounded-[10px] border border-emerald-200 bg-emerald-50/70 p-2">
-                        <p className="text-[11px] font-semibold text-emerald-900">Brands Driving Budget Delivery</p>
+                        <p className="text-xs font-semibold text-emerald-900">Brands Driving Budget Delivery</p>
                         <div className="mt-1 space-y-1">
                           {brandBudgetOverRows.slice(0, 4).map((row) => (
-                            <p key={`budget-over-${row.brandName}`} className="text-[11px] text-slate-700">
+                            <p key={`budget-over-${row.brandName}`} className="text-xs text-slate-700">
                               <span className="font-semibold text-emerald-800">{row.brandName}</span>: {row.contributionPct.toFixed(1)}% of positive variance (+{formatSalesMetric(row.value, metricMode)})
                             </p>
                           ))}
-                          {brandBudgetOverRows.length === 0 ? <p className="text-[11px] text-slate-500">No over-budget brands in current filters.</p> : null}
+                          {brandBudgetOverRows.length === 0 ? <p className="text-xs text-slate-500">No over-budget brands in current filters.</p> : null}
                         </div>
                       </div>
                     </div>
@@ -1402,25 +1402,25 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">YTD Growth Contribution</p>
                     <div className="mt-2 grid gap-2 md:grid-cols-2">
                       <div className="rounded-[10px] border border-rose-200 bg-rose-50/70 p-2">
-                        <p className="text-[11px] font-semibold text-rose-900">Brands Pulling YTD Down</p>
+                        <p className="text-xs font-semibold text-rose-900">Brands Pulling YTD Down</p>
                         <div className="mt-1 space-y-1">
                           {brandYtdDeclineRows.slice(0, 4).map((row) => (
-                            <p key={`ytd-down-${row.brandName}`} className="text-[11px] text-slate-700">
+                            <p key={`ytd-down-${row.brandName}`} className="text-xs text-slate-700">
                               <span className="font-semibold text-rose-800">{row.brandName}</span>: {row.contributionPct.toFixed(1)}% of decline ({formatSalesMetric(row.value, metricMode)})
                             </p>
                           ))}
-                          {brandYtdDeclineRows.length === 0 ? <p className="text-[11px] text-slate-500">No negative YTD contributors in current filters.</p> : null}
+                          {brandYtdDeclineRows.length === 0 ? <p className="text-xs text-slate-500">No negative YTD contributors in current filters.</p> : null}
                         </div>
                       </div>
                       <div className="rounded-[10px] border border-emerald-200 bg-emerald-50/70 p-2">
-                        <p className="text-[11px] font-semibold text-emerald-900">Brands Pulling YTD Up</p>
+                        <p className="text-xs font-semibold text-emerald-900">Brands Pulling YTD Up</p>
                         <div className="mt-1 space-y-1">
                           {brandYtdGrowthRows.slice(0, 4).map((row) => (
-                            <p key={`ytd-up-${row.brandName}`} className="text-[11px] text-slate-700">
+                            <p key={`ytd-up-${row.brandName}`} className="text-xs text-slate-700">
                               <span className="font-semibold text-emerald-800">{row.brandName}</span>: {row.contributionPct.toFixed(1)}% of growth (+{formatSalesMetric(row.value, metricMode)})
                             </p>
                           ))}
-                          {brandYtdGrowthRows.length === 0 ? <p className="text-[11px] text-slate-500">No positive YTD contributors in current filters.</p> : null}
+                          {brandYtdGrowthRows.length === 0 ? <p className="text-xs text-slate-500">No positive YTD contributors in current filters.</p> : null}
                         </div>
                       </div>
                     </div>
@@ -1429,31 +1429,31 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
               </article>
 
               <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.10)] xl:col-span-2">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Channel Diagnostic</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Channel Diagnostic</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-700">Under Pressure</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-700">Under Pressure</p>
                     {channelImprove.slice(0, 3).map((row) => (
                       <div key={`ins-channel-bad-${row.channel}`} className="rounded-[12px] border border-rose-200 bg-rose-50/70 p-3">
                         <p className="text-xs font-semibold text-rose-900">{row.channel}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {row.variance === null ? 'N/A' : formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Impact mainly by brands: {(row.topBrands.length > 0 ? row.topBrands : ['Unclassified Brand']).join(', ')}.
                         </p>
                       </div>
                     ))}
                   </div>
                   <div className="space-y-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Outperforming</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Outperforming</p>
                     {channelWorking.slice(0, 3).map((row) => (
                       <div key={`ins-channel-good-${row.channel}`} className="rounded-[12px] border border-emerald-200 bg-emerald-50/70 p-3">
                         <p className="text-xs font-semibold text-emerald-900">{row.channel}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {row.variance === null ? 'N/A' : formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Growth is mainly driven by: {(row.topBrands.length > 0 ? row.topBrands : ['Unclassified Brand']).join(', ')}.
                         </p>
                       </div>
@@ -1463,7 +1463,7 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
               </article>
 
               <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_36px_rgba(15,23,42,0.10)] xl:col-span-2">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Risk And Opportunity Radar</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Risk And Opportunity Radar</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div className="rounded-[14px] border border-rose-200 bg-rose-50/70 p-3 text-sm text-rose-900">
                     <p className="text-xs font-semibold uppercase tracking-[0.14em]">Primary Risk</p>
@@ -1494,10 +1494,10 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
 
             <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-600">Action Plan Priorities</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Action Plan Priorities</p>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
                       scorecardPriorities!.source === 'openai_enhanced'
                         ? 'border-cyan-300 bg-cyan-50 text-cyan-800'
                         : 'border-slate-300 bg-slate-100 text-slate-700'
@@ -1515,7 +1515,7 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {dedupedScorecardPriorities.map((item, index) => (
                   <div key={item.title} className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
                       Priority {index + 1} · {item.title}
                     </p>
                     <p className="mt-1 text-sm font-semibold text-slate-800">{item.action}</p>
@@ -1532,68 +1532,68 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
           <div className="space-y-4">
             <article className="rounded-[24px] border border-indigo-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-indigo-700">Brand Performance Map</p>
-                <p className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">
+                <p className="text-xs uppercase tracking-[0.16em] text-indigo-700">Brand Performance Map</p>
+                <p className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
                   YTD Growth + Coverage + MoM
                 </p>
               </div>
               <div className="mt-4 grid gap-3 xl:grid-cols-4">
                 <div className="rounded-[14px] border border-emerald-200 bg-emerald-50/70 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Scale Up</p>
-                  <p className="mt-1 text-[11px] text-emerald-900">Strong on growth, coverage and momentum.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Scale Up</p>
+                  <p className="mt-1 text-xs text-emerald-900">Strong on growth, coverage and momentum.</p>
                   <div className="mt-2 space-y-2">
                     {segmentBuckets.scale_up.map((row) => (
                       <div key={`seg-scale-${row.brandName}`} className="rounded-[10px] border border-emerald-200 bg-white/80 p-2">
                         <p className="text-xs font-semibold text-emerald-900">{row.brandName}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           YoY {formatPct(row.yoyPct)} | Cov {formatBudgetCoverage(row.coveragePct)} | MoM {formatPct(row.momPct)}
                         </p>
-                        <p className="mt-1 text-[11px] text-emerald-800">Message: scale investment and protect this execution model.</p>
+                        <p className="mt-1 text-xs text-emerald-800">Message: scale investment and protect this execution model.</p>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div className="rounded-[14px] border border-amber-200 bg-amber-50/70 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700">Defend Momentum</p>
-                  <p className="mt-1 text-[11px] text-amber-900">Coverage is solid but trend needs stabilization.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">Defend Momentum</p>
+                  <p className="mt-1 text-xs text-amber-900">Coverage is solid but trend needs stabilization.</p>
                   <div className="mt-2 space-y-2">
                     {segmentBuckets.defend_momentum.map((row) => (
                       <div key={`seg-defend-${row.brandName}`} className="rounded-[10px] border border-amber-200 bg-white/80 p-2">
                         <p className="text-xs font-semibold text-amber-900">{row.brandName}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           YoY {formatPct(row.yoyPct)} | Cov {formatBudgetCoverage(row.coveragePct)} | MoM {formatPct(row.momPct)}
                         </p>
-                        <p className="mt-1 text-[11px] text-amber-800">Message: protect baseline and recover short-term trajectory.</p>
+                        <p className="mt-1 text-xs text-amber-800">Message: protect baseline and recover short-term trajectory.</p>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div className="rounded-[14px] border border-cyan-200 bg-cyan-50/70 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-700">Monetize Growth</p>
-                  <p className="mt-1 text-[11px] text-cyan-900">Demand is growing but budget capture is still low.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-700">Monetize Growth</p>
+                  <p className="mt-1 text-xs text-cyan-900">Demand is growing but budget capture is still low.</p>
                   <div className="mt-2 space-y-2">
                     {segmentBuckets.monetize_growth.map((row) => (
                       <div key={`seg-monetize-${row.brandName}`} className="rounded-[10px] border border-cyan-200 bg-white/80 p-2">
                         <p className="text-xs font-semibold text-cyan-900">{row.brandName}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           YoY {formatPct(row.yoyPct)} | Cov {formatBudgetCoverage(row.coveragePct)} | MoM {formatPct(row.momPct)}
                         </p>
-                        <p className="mt-1 text-[11px] text-cyan-800">Message: convert demand into budget delivery through mix and channel focus.</p>
+                        <p className="mt-1 text-xs text-cyan-800">Message: convert demand into budget delivery through mix and channel focus.</p>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div className="rounded-[14px] border border-rose-200 bg-rose-50/70 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-700">Turnaround</p>
-                  <p className="mt-1 text-[11px] text-rose-900">Gap on coverage with weak growth signals.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-700">Turnaround</p>
+                  <p className="mt-1 text-xs text-rose-900">Gap on coverage with weak growth signals.</p>
                   <div className="mt-2 space-y-2">
                     {segmentBuckets.turnaround.map((row) => (
                       <div key={`seg-turn-${row.brandName}`} className="rounded-[10px] border border-rose-200 bg-white/80 p-2">
                         <p className="text-xs font-semibold text-rose-900">{row.brandName}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           YoY {formatPct(row.yoyPct)} | Cov {formatBudgetCoverage(row.coveragePct)} | MoM {formatPct(row.momPct)}
                         </p>
-                        <p className="mt-1 text-[11px] text-rose-800">Message: activate immediate recovery plan with weekly executive tracking.</p>
+                        <p className="mt-1 text-xs text-rose-800">Message: activate immediate recovery plan with weekly executive tracking.</p>
                       </div>
                     ))}
                   </div>
@@ -1603,18 +1603,18 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
 
             <div className="grid gap-4 xl:grid-cols-2">
             <article className="rounded-[24px] border border-emerald-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-emerald-700">What Is Working</p>
+              <p className="text-xs uppercase tracking-[0.16em] text-emerald-700">What Is Working</p>
               <div className="mt-4 space-y-4">
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Business Director Brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Business Director Brief</p>
                   <div className="mt-2 space-y-2">
                     {buDirectorWorking.slice(0, 3).map((row) => (
                       <div key={`bu-win-${row.owner}`} className="rounded-[12px] border border-emerald-200 bg-emerald-50/70 px-3 py-2">
                         <p className="text-xs font-semibold text-emerald-900">{row.owner}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} (Gap {formatPct(row.coveragePct === null ? null : (row.coveragePct - 1) * 100)}) | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] font-medium text-emerald-800">
+                        <p className="mt-1 text-xs font-medium text-emerald-800">
                           Message: excellent BU performance, mainly driven by{' '}
                           {(buTopWinningBrands.get(row.owner) ?? ['its top performing brands'])
                             .slice(0, 3)
@@ -1627,15 +1627,15 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Brand Owner Brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Brand Owner Brief</p>
                   <div className="mt-2 space-y-2">
                     {brandOwnerWorking.slice(0, 3).map((row) => (
                       <div key={`brand-win-${row.owner}`} className="rounded-[12px] border border-emerald-200 bg-emerald-50/70 px-3 py-2">
                         <p className="text-xs font-semibold text-emerald-900">{row.owner}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} (Gap {formatPct(row.coveragePct === null ? null : (row.coveragePct - 1) * 100)}) | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] font-medium text-emerald-800">
+                        <p className="mt-1 text-xs font-medium text-emerald-800">
                           Message: excellent performance driven by{' '}
                           {(brandTopBudgetWinningSkus.get(row.owner) ?? brandTopLyWinningSkus.get(row.owner) ?? ['top-performing SKUs'])
                             .slice(0, 3)
@@ -1648,15 +1648,15 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Channel Brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Channel Brief</p>
                   <div className="mt-2 space-y-2">
                     {channelWorking.slice(0, 3).map((row) => (
                       <div key={`sc-channel-good-${row.channel}`} className="rounded-[12px] border border-emerald-200 bg-emerald-50/70 px-3 py-2">
                         <p className="text-xs font-semibold text-emerald-900">{row.channel}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {row.variance === null ? 'N/A' : formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] font-medium text-emerald-800">
+                        <p className="mt-1 text-xs font-medium text-emerald-800">
                           Message: excellent execution in this channel, mainly driven by {(row.topBrands.length > 0 ? row.topBrands : ['Unclassified Brand']).join(', ')}.
                         </p>
                       </div>
@@ -1667,30 +1667,30 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
             </article>
 
             <article className="rounded-[24px] border border-rose-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-rose-700">{isWatchlistMode ? 'Watchlist Priorities' : 'What Needs To Improve'}</p>
+              <p className="text-xs uppercase tracking-[0.16em] text-rose-700">{isWatchlistMode ? 'Watchlist Priorities' : 'What Needs To Improve'}</p>
               {isWatchlistMode ? (
-                <p className="mt-2 text-[11px] text-slate-500">
+                <p className="mt-2 text-xs text-slate-500">
                   Watchlist mode: no negative budget gaps detected; showing early risk signals by coverage and trend.
                 </p>
               ) : null}
               <div className="mt-4 space-y-4">
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Business Director Brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Business Director Brief</p>
                   <div className="mt-2 space-y-2">
                     {buDirectorImproveDisplay.map((row) => {
                       const underTarget = isUnderTarget(row.coveragePct, row.variance);
                       return (
                       <div key={`bu-imp-${row.owner}`} className="rounded-[12px] border border-rose-200 bg-rose-50/70 px-3 py-2">
                         <p className="text-xs font-semibold text-rose-900">{row.owner}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} (Gap {formatPct(row.coveragePct === null ? null : (row.coveragePct - 1) * 100)}) | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] font-medium text-rose-800">
+                        <p className="mt-1 text-xs font-medium text-rose-800">
                           {underTarget
                             ? 'Message: recover this BU first, because it is meaningful in weight and currently under target.'
                             : 'Message: no hard budget gap, but monitor this BU as an early-warning watchlist priority.'}
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           {underTarget ? (
                             <>
                               How: prioritize your attention on{' '}
@@ -1716,22 +1716,22 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Brand Owner Brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Brand Owner Brief</p>
                   <div className="mt-2 space-y-2">
                     {brandOwnerImproveDisplay.map((row) => {
                       const underTarget = isUnderTarget(row.coveragePct, row.variance);
                       return (
                       <div key={`brand-imp-${row.owner}`} className="rounded-[12px] border border-rose-200 bg-rose-50/70 px-3 py-2">
                         <p className="text-xs font-semibold text-rose-900">{row.owner}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} (Gap {formatPct(row.coveragePct === null ? null : (row.coveragePct - 1) * 100)}) | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] font-medium text-rose-800">
+                        <p className="mt-1 text-xs font-medium text-rose-800">
                           {underTarget
                             ? 'Message: fix this brand trajectory now; it is pulling down consolidated YTD delivery.'
                             : 'Message: no hard budget gap, but keep this brand under close watch for trend deterioration.'}
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           {underTarget ? (
                             <>
                               How: prioritize these SKUs for budget recovery:{' '}
@@ -1761,17 +1761,17 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">Channel Brief</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Channel Brief</p>
                   <div className="mt-2 space-y-2">
                     {channelImproveDisplay.map((row) => {
                       const underTarget = isUnderTarget(row.coveragePct, row.variance);
                       return (
                       <div key={`sc-channel-bad-${row.channel}`} className="rounded-[12px] border border-rose-200 bg-rose-50/70 px-3 py-2">
                         <p className="text-xs font-semibold text-rose-900">{row.channel}</p>
-                        <p className="mt-1 text-[11px] text-slate-700">
+                        <p className="mt-1 text-xs text-slate-700">
                           Budget Coverage {formatBudgetCoverage(row.coveragePct)} | Share {row.sharePct.toFixed(1)}% | Variance vs Budget {row.variance === null ? 'N/A' : formatSalesMetric(row.variance, metricMode)}
                         </p>
-                        <p className="mt-1 text-[11px] font-medium text-rose-800">
+                        <p className="mt-1 text-xs font-medium text-rose-800">
                           {underTarget
                             ? `Message: this channel is under target, mainly impacted by ${(row.topBrands.length > 0 ? row.topBrands : ['Unclassified Brand']).join(', ')}.`
                             : `Message: this channel is currently above target, but remains a watchlist area due to relative momentum risk in ${(row.topBrands.length > 0 ? row.topBrands : ['Unclassified Brand']).join(', ')}.`}
@@ -1791,4 +1791,5 @@ export async function SalesInternalView({ searchParams: params, viewMode }: Sale
     </section>
   );
 }
+
 

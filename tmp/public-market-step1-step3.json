@@ -1,0 +1,1450 @@
+{
+  "generatedAt": "2026-03-14T23:31:25.145Z",
+  "step1_base_gob360": {
+    "stats": {
+      "rows_total": 2593427,
+      "rows_with_event_date": 2593427,
+      "distinct_claves": 89,
+      "min_event_date": "2017-01-01",
+      "max_event_date": "2026-01-01",
+      "units_total": "75245342.61"
+    },
+    "periods_last_24": [
+      {
+        "period_month": "2026-01-01",
+        "rows_count": 25614,
+        "units_total": "826311"
+      },
+      {
+        "period_month": "2025-12-01",
+        "rows_count": 26309,
+        "units_total": "712375"
+      },
+      {
+        "period_month": "2025-11-01",
+        "rows_count": 28735,
+        "units_total": "758040"
+      },
+      {
+        "period_month": "2025-10-01",
+        "rows_count": 29524,
+        "units_total": "812950.2"
+      },
+      {
+        "period_month": "2025-09-01",
+        "rows_count": 29343,
+        "units_total": "855438.5"
+      },
+      {
+        "period_month": "2025-08-01",
+        "rows_count": 29065,
+        "units_total": "716784"
+      },
+      {
+        "period_month": "2025-07-01",
+        "rows_count": 30560,
+        "units_total": "710067"
+      },
+      {
+        "period_month": "2025-06-01",
+        "rows_count": 40308,
+        "units_total": "715603.8"
+      },
+      {
+        "period_month": "2025-05-01",
+        "rows_count": 39183,
+        "units_total": "717347"
+      },
+      {
+        "period_month": "2025-04-01",
+        "rows_count": 40848,
+        "units_total": "798666"
+      },
+      {
+        "period_month": "2025-03-01",
+        "rows_count": 38992,
+        "units_total": "772250"
+      },
+      {
+        "period_month": "2025-02-01",
+        "rows_count": 38567,
+        "units_total": "771557.2"
+      },
+      {
+        "period_month": "2025-01-01",
+        "rows_count": 38511,
+        "units_total": "890101"
+      },
+      {
+        "period_month": "2024-12-01",
+        "rows_count": 26171,
+        "units_total": "805832"
+      },
+      {
+        "period_month": "2024-11-01",
+        "rows_count": 26366,
+        "units_total": "748150"
+      },
+      {
+        "period_month": "2024-10-01",
+        "rows_count": 27899,
+        "units_total": "751367.4"
+      },
+      {
+        "period_month": "2024-09-01",
+        "rows_count": 27954,
+        "units_total": "718608"
+      },
+      {
+        "period_month": "2024-08-01",
+        "rows_count": 27863,
+        "units_total": "724849"
+      },
+      {
+        "period_month": "2024-07-01",
+        "rows_count": 26083,
+        "units_total": "797479"
+      },
+      {
+        "period_month": "2024-06-01",
+        "rows_count": 27344,
+        "units_total": "618301"
+      },
+      {
+        "period_month": "2024-05-01",
+        "rows_count": 27254,
+        "units_total": "699497"
+      },
+      {
+        "period_month": "2024-04-01",
+        "rows_count": 25811,
+        "units_total": "789351.85"
+      },
+      {
+        "period_month": "2024-03-01",
+        "rows_count": 25952,
+        "units_total": "826651.28"
+      },
+      {
+        "period_month": "2024-02-01",
+        "rows_count": 25835,
+        "units_total": "921197"
+      }
+    ],
+    "sample_rows": [
+      {
+        "clue": "HGPMX000016",
+        "source_clave": "11582",
+        "source_clave_normalized": "11582",
+        "event_date": "2017-10-01",
+        "units": "30"
+      },
+      {
+        "clue": "SLIMS000061",
+        "source_clave": "010.000.4332.01",
+        "source_clave_normalized": "010000433201",
+        "event_date": "2024-05-01",
+        "units": "0"
+      },
+      {
+        "clue": "SLIMS000061",
+        "source_clave": "010.000.4332.01",
+        "source_clave_normalized": "010000433201",
+        "event_date": "2024-03-01",
+        "units": "0"
+      },
+      {
+        "clue": "SLIMS000435",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2020-12-01",
+        "units": "0"
+      },
+      {
+        "clue": "BSIMS000142",
+        "source_clave": "010.000.4332.01",
+        "source_clave_normalized": "010000433201",
+        "event_date": "2025-06-01",
+        "units": "0"
+      },
+      {
+        "clue": "JCIMS000704",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2020-07-01",
+        "units": "0"
+      },
+      {
+        "clue": "TSIMS000141",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2022-11-01",
+        "units": "0"
+      },
+      {
+        "clue": "SRIMS000215",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2022-01-01",
+        "units": "0"
+      },
+      {
+        "clue": "GTIMS000342",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2020-09-01",
+        "units": "0"
+      },
+      {
+        "clue": "SLIMS000213",
+        "source_clave": "010.000.6150.00",
+        "source_clave_normalized": "010000615000",
+        "event_date": "2017-02-01",
+        "units": "0"
+      },
+      {
+        "clue": "JCIMS000844",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2023-02-01",
+        "units": "0"
+      },
+      {
+        "clue": "TSIMS000141",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2021-07-01",
+        "units": "0"
+      },
+      {
+        "clue": "SRIMS000821",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2021-12-01",
+        "units": "0"
+      },
+      {
+        "clue": "GTIMS000342",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2021-10-01",
+        "units": "0"
+      },
+      {
+        "clue": "BSIMS000212",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2024-08-01",
+        "units": "0"
+      },
+      {
+        "clue": "ZSIMS000360",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2023-08-01",
+        "units": "0"
+      },
+      {
+        "clue": "TSIMS000235",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2020-12-01",
+        "units": "0"
+      },
+      {
+        "clue": "JCIST000021",
+        "source_clave": "010.000.4332.01",
+        "source_clave_normalized": "010000433201",
+        "event_date": "2021-04-01",
+        "units": "0"
+      },
+      {
+        "clue": "CCPMX000023",
+        "source_clave": "11582",
+        "source_clave_normalized": "11582",
+        "event_date": "2017-08-01",
+        "units": "7"
+      },
+      {
+        "clue": "SRIMS000512",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2025-06-01",
+        "units": "0"
+      },
+      {
+        "clue": "BSIMS000212",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2024-04-01",
+        "units": "0"
+      },
+      {
+        "clue": "SRIMS000215",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2022-10-01",
+        "units": "0"
+      },
+      {
+        "clue": "CCPMX000013",
+        "source_clave": "11582",
+        "source_clave_normalized": "11582",
+        "event_date": "2017-01-01",
+        "units": "33"
+      },
+      {
+        "clue": "JCIST000021",
+        "source_clave": "010.000.4332.01",
+        "source_clave_normalized": "010000433201",
+        "event_date": "2021-11-01",
+        "units": "0"
+      },
+      {
+        "clue": "SRIMS000215",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2021-08-01",
+        "units": "0"
+      },
+      {
+        "clue": "TSIMS000141",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2021-12-01",
+        "units": "0"
+      },
+      {
+        "clue": "SRIMS000186",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2021-01-01",
+        "units": "0"
+      },
+      {
+        "clue": "PLIMS000154",
+        "source_clave": "010.000.4333.01",
+        "source_clave_normalized": "010000433301",
+        "event_date": "2025-06-01",
+        "units": "0"
+      },
+      {
+        "clue": "SRIMS000186",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2020-12-01",
+        "units": "0"
+      },
+      {
+        "clue": "TCIMS000046",
+        "source_clave": "010.000.4336.00",
+        "source_clave_normalized": "010000433600",
+        "event_date": "2022-12-01",
+        "units": "0"
+      }
+    ]
+  },
+  "step2_enrichment_mapping": {
+    "mapping_total_rows": 21,
+    "mapped_with_product_id": 7,
+    "mapped_with_market_group": 21,
+    "sample_rows": [
+      {
+        "source_clave_normalized": "010000044200",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000044300",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000044700",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000226200",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000226300",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000533100",
+        "product_id": null,
+        "market_group": "Distrés Respiratorio (SDR)"
+      },
+      {
+        "source_clave_normalized": "010000533500",
+        "product_id": "PRD_000007",
+        "market_group": "Distrés Respiratorio (SDR)"
+      },
+      {
+        "source_clave_normalized": "010000533501",
+        "product_id": "PRD_000012",
+        "market_group": "Distrés Respiratorio (SDR)"
+      },
+      {
+        "source_clave_normalized": "010000602100",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000608300",
+        "product_id": null,
+        "market_group": "Apnea primaria del prematuro"
+      },
+      {
+        "source_clave_normalized": "010000608301",
+        "product_id": "PRD_000006",
+        "market_group": "Apnea primaria del prematuro"
+      },
+      {
+        "source_clave_normalized": "010000609100",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000615000",
+        "product_id": "PRD_000005",
+        "market_group": "Asma - Monoterpia"
+      },
+      {
+        "source_clave_normalized": "010000615700",
+        "product_id": "PRD_000008",
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000622300",
+        "product_id": "PRD_000003",
+        "market_group": "Triples - media dosis"
+      },
+      {
+        "source_clave_normalized": "010000632600",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "010000700200",
+        "product_id": null,
+        "market_group": "Triples - media dosis"
+      },
+      {
+        "source_clave_normalized": "010000713600",
+        "product_id": null,
+        "market_group": "Triples - media dosis"
+      },
+      {
+        "source_clave_normalized": "010000715300",
+        "product_id": null,
+        "market_group": "Asma"
+      },
+      {
+        "source_clave_normalized": "16538",
+        "product_id": null,
+        "market_group": "Apnea primaria del prematuro"
+      },
+      {
+        "source_clave_normalized": "18170",
+        "product_id": "PRD_000004",
+        "market_group": "Cuidados Críticos"
+      }
+    ]
+  },
+  "step3_classification": {
+    "summary": {
+      "claves_total": 89,
+      "claves_with_mapping": 21,
+      "claves_with_product_id": 7,
+      "claves_competitor": 82,
+      "units_chiesi": 1376604.33,
+      "units_competitor": 73868738.28000002
+    },
+    "top_units_rows": [
+      {
+        "source_clave_normalized": "010000044200",
+        "rows_count": 222453,
+        "units_total": 16612802.5,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000047700",
+        "rows_count": 199647,
+        "units_total": 14709949,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000564600",
+        "rows_count": 149077,
+        "units_total": 9543321.06,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000226300",
+        "rows_count": 155635,
+        "units_total": 4154241.4,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000226200",
+        "rows_count": 203379,
+        "units_total": 3818096.67,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000433200",
+        "rows_count": 109533,
+        "units_total": 3766061.6,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000044600",
+        "rows_count": 158891,
+        "units_total": 3419688.45,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000250800",
+        "rows_count": 126014,
+        "units_total": 2819953,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000433300",
+        "rows_count": 98328,
+        "units_total": 2735147,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000044000",
+        "rows_count": 124872,
+        "units_total": 2281395,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000045000",
+        "rows_count": 162935,
+        "units_total": 2042893,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000044300",
+        "rows_count": 99878,
+        "units_total": 1841512,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000602100",
+        "rows_count": 163202,
+        "units_total": 1828696.56,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000044700",
+        "rows_count": 70817,
+        "units_total": 978111,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000622300",
+        "rows_count": 70790,
+        "units_total": 720444.79,
+        "min_event_date": "2018-12-01",
+        "max_event_date": "2026-01-01",
+        "product_id": "PRD_000003",
+        "market_group": "Triples - media dosis",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "010000044500",
+        "rows_count": 83127,
+        "units_total": 636376.98,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000433700",
+        "rows_count": 85873,
+        "units_total": 603236,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000598000",
+        "rows_count": 59146,
+        "units_total": 571046.94,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000433400",
+        "rows_count": 84278,
+        "units_total": 563031,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000608301",
+        "rows_count": 15385,
+        "units_total": 204699,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": "PRD_000006",
+        "market_group": "Apnea primaria del prematuro",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "010000533501",
+        "rows_count": 16202,
+        "units_total": 168745,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": "PRD_000012",
+        "market_group": "Distrés Respiratorio (SDR)",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "010000615700",
+        "rows_count": 39958,
+        "units_total": 130122.54,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": "PRD_000008",
+        "market_group": "Asma",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "010000433201",
+        "rows_count": 4459,
+        "units_total": 82676,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000615000",
+        "rows_count": 28951,
+        "units_total": 78544,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": "PRD_000005",
+        "market_group": "Asma - Monoterpia",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "010000533100",
+        "rows_count": 20529,
+        "units_total": 76818,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": null,
+        "market_group": "Distrés Respiratorio (SDR)",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10805",
+        "rows_count": 682,
+        "units_total": 75775.7,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10609",
+        "rows_count": 466,
+        "units_total": 75469.4,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000533500",
+        "rows_count": 9478,
+        "units_total": 73663,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": "PRD_000007",
+        "market_group": "Distrés Respiratorio (SDR)",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "010000632600",
+        "rows_count": 9147,
+        "units_total": 55021,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000635700",
+        "rows_count": 234,
+        "units_total": 53927,
+        "min_event_date": "2019-02-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10896",
+        "rows_count": 716,
+        "units_total": 53049.67,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13946",
+        "rows_count": 46,
+        "units_total": 49176,
+        "min_event_date": "2017-07-01",
+        "max_event_date": "2025-10-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10431",
+        "rows_count": 236,
+        "units_total": 46112,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2023-05-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000713600",
+        "rows_count": 4205,
+        "units_total": 41501.4,
+        "min_event_date": "2023-02-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Triples - media dosis",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10398",
+        "rows_count": 787,
+        "units_total": 40258.37,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000635600",
+        "rows_count": 261,
+        "units_total": 39811,
+        "min_event_date": "2019-02-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000700200",
+        "rows_count": 2348,
+        "units_total": 33321.93,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Triples - media dosis",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000608300",
+        "rows_count": 1639,
+        "units_total": 27657,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": null,
+        "market_group": "Apnea primaria del prematuro",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11433",
+        "rows_count": 880,
+        "units_total": 27010.09,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000433301",
+        "rows_count": 4036,
+        "units_total": 23983,
+        "min_event_date": "2017-07-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000715300",
+        "rows_count": 300,
+        "units_total": 21030,
+        "min_event_date": "2017-07-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10199",
+        "rows_count": 354,
+        "units_total": 19417.45,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "14114",
+        "rows_count": 266,
+        "units_total": 17164,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11892",
+        "rows_count": 268,
+        "units_total": 13783.94,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13786",
+        "rows_count": 193,
+        "units_total": 12583,
+        "min_event_date": "2017-02-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11582",
+        "rows_count": 312,
+        "units_total": 9009,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2023-04-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "14767",
+        "rows_count": 4,
+        "units_total": 7205,
+        "min_event_date": "2020-05-01",
+        "max_event_date": "2022-11-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11422",
+        "rows_count": 163,
+        "units_total": 6471,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-09-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13669",
+        "rows_count": 55,
+        "units_total": 6001,
+        "min_event_date": "2018-03-01",
+        "max_event_date": "2021-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "14207",
+        "rows_count": 3,
+        "units_total": 5938,
+        "min_event_date": "2021-09-01",
+        "max_event_date": "2023-07-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13950",
+        "rows_count": 158,
+        "units_total": 3076,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-06-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000609100",
+        "rows_count": 161,
+        "units_total": 2184,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2023-10-01",
+        "product_id": null,
+        "market_group": "Asma",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "12059",
+        "rows_count": 96,
+        "units_total": 1960,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2024-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11015",
+        "rows_count": 236,
+        "units_total": 1877.91,
+        "min_event_date": "2017-02-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "15571",
+        "rows_count": 3,
+        "units_total": 1724,
+        "min_event_date": "2024-01-01",
+        "max_event_date": "2025-09-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13060",
+        "rows_count": 206,
+        "units_total": 1634,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "12568",
+        "rows_count": 35,
+        "units_total": 1481,
+        "min_event_date": "2017-07-01",
+        "max_event_date": "2019-11-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11906",
+        "rows_count": 160,
+        "units_total": 1292,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10804",
+        "rows_count": 145,
+        "units_total": 1093,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13949",
+        "rows_count": 80,
+        "units_total": 914,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2022-06-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "12173",
+        "rows_count": 185,
+        "units_total": 825,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2025-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13944",
+        "rows_count": 14,
+        "units_total": 741,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2023-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10542",
+        "rows_count": 14,
+        "units_total": 682,
+        "min_event_date": "2017-06-01",
+        "max_event_date": "2019-05-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "16538",
+        "rows_count": 7,
+        "units_total": 640,
+        "min_event_date": "2020-09-01",
+        "max_event_date": "2025-01-01",
+        "product_id": null,
+        "market_group": "Apnea primaria del prematuro",
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11854",
+        "rows_count": 156,
+        "units_total": 580,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13782",
+        "rows_count": 26,
+        "units_total": 448,
+        "min_event_date": "2017-03-01",
+        "max_event_date": "2023-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "18170",
+        "rows_count": 47,
+        "units_total": 386,
+        "min_event_date": "2025-10-01",
+        "max_event_date": "2025-12-01",
+        "product_id": "PRD_000004",
+        "market_group": "Cuidados Críticos",
+        "is_chiesi": true,
+        "is_competitor": false
+      },
+      {
+        "source_clave_normalized": "14341",
+        "rows_count": 87,
+        "units_total": 293,
+        "min_event_date": "2017-02-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "12268",
+        "rows_count": 50,
+        "units_total": 284,
+        "min_event_date": "2017-02-01",
+        "max_event_date": "2025-06-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13783",
+        "rows_count": 25,
+        "units_total": 277.26,
+        "min_event_date": "2017-04-01",
+        "max_event_date": "2020-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "10815",
+        "rows_count": 19,
+        "units_total": 175,
+        "min_event_date": "2018-01-01",
+        "max_event_date": "2018-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11908",
+        "rows_count": 28,
+        "units_total": 137,
+        "min_event_date": "2017-01-01",
+        "max_event_date": "2024-04-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13947",
+        "rows_count": 24,
+        "units_total": 134,
+        "min_event_date": "2017-08-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "12827",
+        "rows_count": 45,
+        "units_total": 121,
+        "min_event_date": "2018-03-01",
+        "max_event_date": "2025-05-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13781",
+        "rows_count": 2,
+        "units_total": 120,
+        "min_event_date": "2018-06-01",
+        "max_event_date": "2021-04-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "15572",
+        "rows_count": 11,
+        "units_total": 92,
+        "min_event_date": "2023-06-01",
+        "max_event_date": "2024-08-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13948",
+        "rows_count": 14,
+        "units_total": 48,
+        "min_event_date": "2017-04-01",
+        "max_event_date": "2021-04-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "12399",
+        "rows_count": 15,
+        "units_total": 38,
+        "min_event_date": "2017-03-01",
+        "max_event_date": "2018-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11660",
+        "rows_count": 3,
+        "units_total": 27,
+        "min_event_date": "2017-07-01",
+        "max_event_date": "2019-11-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "14768",
+        "rows_count": 5,
+        "units_total": 26,
+        "min_event_date": "2025-04-01",
+        "max_event_date": "2025-12-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000433600",
+        "rows_count": 808,
+        "units_total": 25,
+        "min_event_date": "2019-02-01",
+        "max_event_date": "2023-07-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "15570",
+        "rows_count": 4,
+        "units_total": 22,
+        "min_event_date": "2025-03-01",
+        "max_event_date": "2025-07-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "15569",
+        "rows_count": 2,
+        "units_total": 15,
+        "min_event_date": "2023-01-01",
+        "max_event_date": "2023-07-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "14769",
+        "rows_count": 1,
+        "units_total": 10,
+        "min_event_date": "2018-04-01",
+        "max_event_date": "2018-04-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "15054",
+        "rows_count": 1,
+        "units_total": 7,
+        "min_event_date": "2017-05-01",
+        "max_event_date": "2017-05-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "11909",
+        "rows_count": 3,
+        "units_total": 4,
+        "min_event_date": "2018-07-01",
+        "max_event_date": "2019-04-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "13488",
+        "rows_count": 1,
+        "units_total": 1,
+        "min_event_date": "2019-11-01",
+        "max_event_date": "2019-11-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "16593",
+        "rows_count": 1,
+        "units_total": 1,
+        "min_event_date": "2018-05-01",
+        "max_event_date": "2018-05-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      },
+      {
+        "source_clave_normalized": "010000720800",
+        "rows_count": 111,
+        "units_total": 0,
+        "min_event_date": "2025-07-01",
+        "max_event_date": "2026-01-01",
+        "product_id": null,
+        "market_group": null,
+        "is_chiesi": false,
+        "is_competitor": true
+      }
+    ]
+  }
+}

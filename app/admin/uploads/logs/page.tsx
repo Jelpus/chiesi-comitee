@@ -25,7 +25,7 @@ export default async function UploadLogsPage({ searchParams }: UploadLogsPagePro
       {params.readyUploadId ? (
         <div className="rounded-[18px] border border-indigo-200/80 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
           Upload <span className="font-semibold">{params.readyUploadId}</span> was registered.
-          Next step: click <span className="font-semibold">Process</span> for this row.
+          Next step: click <span className="font-semibold">Process</span>, then <span className="font-semibold">Normalize</span>.
         </div>
       ) : null}
 

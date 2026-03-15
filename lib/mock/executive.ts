@@ -8,7 +8,6 @@ export const executiveCardsMock: ExecutiveCardItem[] = [
     target: '1.30M',
     variance: '-50K',
     status: 'yellow',
-    owner: 'Commercial',
     detailHref: '/executive/sales-internal',
   },
   {
@@ -18,7 +17,6 @@ export const executiveCardsMock: ExecutiveCardItem[] = [
     target: '1.22M',
     variance: '-30K',
     status: 'yellow',
-    owner: 'Commercial',
     detailHref: '/executive/sales-internal',
   },
   {
@@ -28,7 +26,6 @@ export const executiveCardsMock: ExecutiveCardItem[] = [
     target: '95%',
     variance: '-3 pts',
     status: 'green',
-    owner: 'Commercial Operations',
     detailHref: null,
   },
   {
@@ -38,7 +35,6 @@ export const executiveCardsMock: ExecutiveCardItem[] = [
     target: '520K',
     variance: '+20K',
     status: 'red',
-    owner: 'Finance',
     detailHref: null,
   },
   {
@@ -48,7 +44,6 @@ export const executiveCardsMock: ExecutiveCardItem[] = [
     target: '150',
     variance: '-2',
     status: 'green',
-    owner: 'Medical',
     detailHref: null,
   },
 ];

@@ -6,6 +6,7 @@ import type { ComponentType } from 'react';
 import {
   BarChart3,
   Calendar,
+  Database,
   FolderUp,
   Gauge,
   Home,
@@ -35,9 +36,11 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     '/admin/versions': Layers,
     '/admin/uploads': FolderUp,
     '/admin/uploads/logs': FolderUp,
+    '/admin/tables': Database,
     '/admin/products': Tag,
     '/executive': Home,
     '/executive/sales-internal': BarChart3,
+    '/executive/business-excellence': Layers,
   };
   const currentSection = pathname.startsWith('/admin')
     ? 'admin'

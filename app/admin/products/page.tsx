@@ -19,8 +19,34 @@ import { unstable_noStore as noStore } from 'next/cache';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ProductsPage() {
+function normalizeMappingKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+type ProductsPageProps = {
+  searchParams?: Promise<{
+    pmmUploadIds?: string;
+    weeklyUploadIds?: string;
+  }>;
+};
+
+export default async function ProductsPage({ searchParams }: ProductsPageProps) {
   noStore();
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const pmmUploadIds = (resolvedSearchParams.pmmUploadIds ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const weeklyUploadIds = (resolvedSearchParams.weeklyUploadIds ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const sourceUploadIds = [...new Set([...pmmUploadIds, ...weeklyUploadIds])];
 
   const [
     rows,
@@ -40,7 +66,7 @@ export default async function ProductsPage() {
     getCloseupProductMappings(500),
     getDimProductOptions(2500),
     getSharedMarketGroups(500),
-    getPmmUnmappedProducts(200),
+    getPmmUnmappedProducts(1000, sourceUploadIds),
     getPmmProductMappings(500),
     getSellOutUnmappedProducts(300),
     getSellOutProductMappings(700),
@@ -51,19 +77,25 @@ export default async function ProductsPage() {
     (row) => row.completedRequiredFields >= row.requiredFieldsTotal,
   ).length;
   const pendingCount = rows.length - completedCount;
-  const closeupMappedKeys = new Set(closeupMappings.map((row) => row.sourceProductNameNormalized));
-  const pmmMappedKeys = new Set(pmmMappings.map((row) => row.sourceProductNameNormalized));
-  const sellOutMappedKeys = new Set(sellOutMappings.map((row) => row.sourceProductNameNormalized));
+  const closeupMappedKeys = new Set(
+    closeupMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
+  );
+  const pmmMappedKeys = new Set(
+    pmmMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
+  );
+  const sellOutMappedKeys = new Set(
+    sellOutMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
+  );
   const gob360MappedKeys = new Set(gob360Mappings.map((row) => row.sourceClaveNormalized));
 
   const filteredCloseupUnmappedRows = unmappedCloseupRows.filter(
-    (row) => !closeupMappedKeys.has(row.sourceProductNameNormalized),
+    (row) => !closeupMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
   );
   const filteredPmmUnmappedRows = unmappedPmmRows.filter(
-    (row) => !pmmMappedKeys.has(row.sourceProductNameNormalized),
+    (row) => !pmmMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
   );
   const filteredSellOutUnmappedRows = sellOutUnmappedRows.filter(
-    (row) => !sellOutMappedKeys.has(row.sourceProductNameNormalized),
+    (row) => !sellOutMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
   );
   const filteredGob360UnmappedRows = gob360UnmappedClaves.filter(
     (row) => !gob360MappedKeys.has(row.sourceClaveNormalized),
@@ -104,6 +136,12 @@ export default async function ProductsPage() {
           </>
         }
       />
+
+      {sourceUploadIds.length > 0 ? (
+        <div className="rounded-[20px] border border-blue-200/80 bg-blue-50/70 px-4 py-3 text-sm text-blue-950">
+          DDD + Weekly unmapped list filtered to upload_ids: {sourceUploadIds.join(', ')}
+        </div>
+      ) : null}
 
       <ProductMetadataCards rows={rows} options={options} />
       <MappingTabs

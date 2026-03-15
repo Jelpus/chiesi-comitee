@@ -88,6 +88,15 @@ async function reconcileStaleUploads() {
         )
     `,
   });
+
+  await client.query({
+    query: `
+      UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\` u
+      SET status = 'raw_loaded'
+      WHERE u.status = 'normalizing'
+        AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), u.uploaded_at, MINUTE) >= 5
+    `,
+  });
 }
 
 export async function getUploadsPageData(limit = 50): Promise<UploadListRow[]> {
