@@ -24,7 +24,7 @@ export default async function ExecutivePage({
   });
 
   return (
-    <section className="grid h-full min-h-0 grid-rows-[auto_1fr] gap-3 overflow-hidden lg:gap-2 xl:gap-3 2xl:gap-4">
+    <section className="space-y-4 lg:grid lg:h-full lg:min-h-0 lg:grid-rows-[auto_1fr] lg:gap-2 lg:overflow-hidden xl:gap-3 2xl:gap-4">
       <SectionHeader
         eyebrow="Executive"
         title="Executive Home"
@@ -46,7 +46,7 @@ export default async function ExecutivePage({
         }
       />
 
-      <div className="grid min-h-0 auto-rows-fr gap-3 md:grid-cols-2 lg:grid-cols-4 lg:grid-rows-2 lg:gap-2 xl:gap-3 2xl:gap-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:min-h-0 lg:auto-rows-fr lg:grid-cols-4 lg:grid-rows-2 lg:gap-2 xl:gap-3 2xl:gap-4">
         {data.cards.map((item) => (
           <ExecutiveKpiCard key={`${item.module}-${item.kpi}`} item={item} />
         ))}
