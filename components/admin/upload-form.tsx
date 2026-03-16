@@ -15,6 +15,7 @@ type ModuleAreaCode =
   | 'business_excellence'
   | 'commercial_operations'
   | 'human_resources'
+  | 'opex'
   | 'other';
 
 function detectModuleArea(moduleCode: string, moduleLabel?: string): ModuleAreaCode {
@@ -28,6 +29,7 @@ function detectModuleArea(moduleCode: string, moduleLabel?: string): ModuleAreaC
   if (code.startsWith('commercial_operations') || joined.includes('commercial operations'))
     return 'commercial_operations';
   if (code.startsWith('human_resources') || joined.includes('human resources')) return 'human_resources';
+  if (code.startsWith('opex') || joined.includes('opex')) return 'opex';
   return 'other';
 }
 
@@ -41,6 +43,8 @@ function moduleAreaLabel(area: ModuleAreaCode) {
       return 'Commercial Operations';
     case 'human_resources':
       return 'Human Resources';
+    case 'opex':
+      return 'OPEX';
     default:
       return 'Other';
   }
@@ -56,6 +60,8 @@ function moduleAreaOrder(area: ModuleAreaCode) {
       return 3;
     case 'human_resources':
       return 4;
+    case 'opex':
+      return 5;
     default:
       return 99;
   }
@@ -266,6 +272,7 @@ export function UploadForm({ options }: UploadFormProps) {
   function inspectWorkbook(file: File) {
     const inspectFormData = new FormData();
     inspectFormData.append('file', file);
+    inspectFormData.append('moduleCode', moduleCode);
     setInspectMessage('Inspecting file...');
     setUiStage('inspecting');
 

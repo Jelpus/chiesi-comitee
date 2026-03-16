@@ -5,6 +5,8 @@ import { SectionHeader } from '@/components/ui/section-header';
 import {
   getCloseupProductMappings,
   getCloseupUnmappedProducts,
+  getContractsProductMappings,
+  getContractsUnmappedProducts,
   getDimProductOptions,
   getSharedMarketGroups,
   getGob360ProductMappings,
@@ -62,6 +64,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     sellOutMappings,
     stocksUnmappedRows,
     stocksMappings,
+    contractsUnmappedRows,
+    contractsMappings,
     gob360UnmappedClaves,
     gob360Mappings,
   ] = await Promise.all([
@@ -76,6 +80,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     getSellOutProductMappings(700),
     getStocksUnmappedProducts(300),
     getStocksProductMappings(700),
+    getContractsUnmappedProducts(300),
+    getContractsProductMappings(700),
     getGob360UnmappedClaves(300),
     getGob360ProductMappings(700),
   ]);
@@ -95,6 +101,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   const stocksMappedKeys = new Set(
     stocksMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
   );
+  const contractsMappedKeys = new Set(
+    contractsMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
+  );
   const gob360MappedKeys = new Set(gob360Mappings.map((row) => row.sourceClaveNormalized));
 
   const filteredCloseupUnmappedRows = unmappedCloseupRows.filter(
@@ -108,6 +117,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   );
   const filteredStocksUnmappedRows = stocksUnmappedRows.filter(
     (row) => !stocksMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
+  );
+  const filteredContractsUnmappedRows = contractsUnmappedRows.filter(
+    (row) => !contractsMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
   );
   const filteredGob360UnmappedRows = gob360UnmappedClaves.filter(
     (row) => !gob360MappedKeys.has(row.sourceClaveNormalized),
@@ -178,6 +190,10 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         stocks={{
           unmappedRows: filteredStocksUnmappedRows,
           mappedRows: stocksMappings,
+        }}
+        contracts={{
+          unmappedRows: filteredContractsUnmappedRows,
+          mappedRows: contractsMappings,
         }}
       />
       <Gob360ConnectionTest />

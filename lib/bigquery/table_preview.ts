@@ -15,6 +15,8 @@ export const previewTables = {
   commercial_operations: {
     dso: 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_dso_enriched',
     stocks: 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_stocks_enriched',
+    government_contract_progress:
+      'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_government_contract_progress_enriched',
   },
   sales_internal: {
     sales: 'chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_active',

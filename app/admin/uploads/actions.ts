@@ -1218,6 +1218,7 @@ export async function createUploadRecord(formData: FormData) {
 
 export async function inspectUploadWorkbook(formData: FormData) {
   const file = formData.get('file');
+  const moduleCode = String(formData.get('moduleCode') ?? '').trim();
   if (!(file instanceof File) || file.size === 0) {
     throw new Error('You must select a source file (.xlsx, .xls, .csv).');
   }
@@ -1233,10 +1234,43 @@ export async function inspectUploadWorkbook(formData: FormData) {
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const sheetNames = inspectExcelWorkbook(fileBuffer);
 
+  let suggestedSheetName = sheetNames[0] ?? '';
+  let suggestedHeaderRow = 1;
+
+  if (moduleCode) {
+    const client = getBigQueryClient();
+    const [rows] = await client.query({
+      query: `
+        SELECT
+          selected_sheet_name,
+          selected_header_row
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+        WHERE module_code = @moduleCode
+          AND selected_sheet_name IS NOT NULL
+        ORDER BY uploaded_at DESC
+        LIMIT 1
+      `,
+      params: { moduleCode },
+    });
+    const latest = (rows as Array<Record<string, unknown>>)[0];
+    const lastSheet = latest?.selected_sheet_name
+      ? String(latest.selected_sheet_name)
+      : '';
+    const lastHeaderRow = Number(latest?.selected_header_row ?? 1);
+
+    if (lastSheet && sheetNames.includes(lastSheet)) {
+      suggestedSheetName = lastSheet;
+      suggestedHeaderRow =
+        Number.isFinite(lastHeaderRow) && lastHeaderRow > 0
+          ? Math.trunc(lastHeaderRow)
+          : 1;
+    }
+  }
+
   return {
     sheetNames,
-    suggestedSheetName: sheetNames[0] ?? '',
-    suggestedHeaderRow: 1,
+    suggestedSheetName,
+    suggestedHeaderRow,
   };
 }
 

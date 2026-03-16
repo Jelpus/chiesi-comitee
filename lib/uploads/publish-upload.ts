@@ -994,6 +994,223 @@ async function publishCommercialOperationsStocksUpload(context: UploadPublishCon
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
+async function publishCommercialOperationsGovernmentContractProgressUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+  const summaryModuleCode = 'commercial_operations_government_contract_progress';
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      WITH latest_period AS (
+        SELECT MAX(period_month) AS period_month
+        FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+        WHERE upload_id = @uploadId
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        'contracts_progress_rows',
+        'Government Contract Progress - Loaded Rows',
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+        AND s.period_month = (SELECT period_month FROM latest_period)
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
+async function publishCommercialOperationsDeliveryOrdersUpload(
+  context: UploadPublishContext,
+  orderScope: 'government' | 'private',
+) {
+  const client = getBigQueryClient();
+  const summaryModuleCode =
+    orderScope === 'private'
+      ? 'commercial_operations_private_orders'
+      : 'commercial_operations_government_orders';
+  const kpiCode = orderScope === 'private' ? 'private_orders_total_rows' : 'government_orders_total_rows';
+  const kpiName = orderScope === 'private' ? 'Private Orders - Loaded Rows' : 'Government Orders - Loaded Rows';
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        @kpiCode,
+        @kpiName,
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+      kpiCode,
+      kpiName,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
+async function publishOpexMasterCatalogUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+  const summaryModuleCode = 'opex_by_cc';
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        'opex_master_rows',
+        'OPEX Master Catalog - Loaded Rows',
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_opex_master_catalog\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: summaryModuleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_opex_master_catalog\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
 export async function publishUploadToMart(uploadId: string) {
   const context = await getPublishContext(uploadId);
 
@@ -1047,8 +1264,31 @@ export async function publishUploadToMart(uploadId: string) {
   ) {
     return publishCommercialOperationsDsoUpload(context);
   }
+  if (
+    context.moduleCode === 'commercial_operations_government_orders' ||
+    context.moduleCode === 'government_orders'
+  ) {
+    return publishCommercialOperationsDeliveryOrdersUpload(context, 'government');
+  }
+  if (
+    context.moduleCode === 'commercial_operations_private_orders' ||
+    context.moduleCode === 'private_orders'
+  ) {
+    return publishCommercialOperationsDeliveryOrdersUpload(context, 'private');
+  }
   if (context.moduleCode === 'commercial_operations_stocks' || context.moduleCode === 'stocks') {
     return publishCommercialOperationsStocksUpload(context);
+  }
+  if (
+    context.moduleCode === 'commercial_operations_government_contract_progress' ||
+    context.moduleCode === 'government_contract_progress' ||
+    context.moduleCode === 'contract_progress' ||
+    context.moduleCode === 'pcfp'
+  ) {
+    return publishCommercialOperationsGovernmentContractProgressUpload(context);
+  }
+  if (context.moduleCode === 'opex_by_cc' || context.moduleCode === 'opex_master_catalog') {
+    return publishOpexMasterCatalogUpload(context);
   }
 
   throw new Error(`No publisher configured for module "${context.moduleCode}".`);

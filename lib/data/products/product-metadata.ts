@@ -1364,6 +1364,24 @@ export async function getSellOutUnmappedProducts(
         AND s.source_product_raw IS NOT NULL
         AND TRIM(s.source_product_raw) != ''
       GROUP BY source_product_name, source_product_name_normalized
+      UNION ALL
+      SELECT
+        s.source_product_raw AS source_product_name,
+        LOWER(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(NORMALIZE(s.source_product_raw, NFD), r'\\pM', ''), r'[^a-zA-Z0-9]+', ' '))) AS source_product_name_normalized,
+        CAST(MAX(u.uploaded_at) AS STRING) AS last_seen_at,
+        COUNT(1) AS occurrences
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\` s
+      JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        ON u.upload_id = s.upload_id
+      WHERE LOWER(TRIM(u.module_code)) IN (
+          'commercial_operations_government_contract_progress',
+          'government_contract_progress',
+          'contract_progress',
+          'pcfp'
+        )
+        AND s.source_product_raw IS NOT NULL
+        AND TRIM(s.source_product_raw) != ''
+      GROUP BY source_product_name, source_product_name_normalized
     ),
     source_agg AS (
       SELECT
@@ -1426,6 +1444,118 @@ export async function getStocksUnmappedProducts(
       JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
         ON u.upload_id = s.upload_id
       WHERE LOWER(TRIM(u.module_code)) IN ('commercial_operations_stocks', 'stocks')
+        AND s.source_product_raw IS NOT NULL
+        AND TRIM(s.source_product_raw) != ''
+      GROUP BY source_product_name, source_product_name_normalized
+    )
+    SELECT
+      s.source_product_name,
+      s.source_product_name_normalized,
+      s.occurrences,
+      s.last_seen_at
+    FROM source_columns s
+    LEFT JOIN normalized_mapping m
+      ON m.source_product_name_normalized = s.source_product_name_normalized
+      AND m.is_active = TRUE
+      AND (
+        (m.product_id IS NOT NULL AND TRIM(m.product_id) != '')
+        OR (m.market_group IS NOT NULL AND TRIM(m.market_group) != '')
+      )
+    WHERE m.source_product_name_normalized IS NULL
+      AND NOT REGEXP_CONTAINS(s.source_product_name_normalized, r'^(date|fecha|period|periodo)(\\s|$)')
+    ORDER BY s.source_product_name ASC
+    LIMIT @limit
+  `;
+
+  const [rows] = await client.query({ query, params: { limit } });
+  return (rows as Record<string, unknown>[]).map((row) => ({
+    sourceProductName: String(row.source_product_name ?? ''),
+    sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),
+    occurrences: Number(row.occurrences ?? 0),
+    lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
+  }));
+}
+
+export async function getContractsProductMappings(limit = 1000): Promise<SellOutProductMappingRow[]> {
+  await ensureSellOutProductMappingTable();
+  const client = getBigQueryClient();
+  const query = `
+    WITH source_keys AS (
+      SELECT DISTINCT
+        LOWER(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(NORMALIZE(source_product_raw, NFD), r'\\pM', ''), r'[^a-zA-Z0-9]+', ' '))) AS source_product_name_normalized
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      WHERE source_product_raw IS NOT NULL
+        AND TRIM(source_product_raw) != ''
+    )
+    SELECT
+      m.source_product_name,
+      m.source_product_name_normalized,
+      m.product_id,
+      d.canonical_product_code,
+      d.canonical_product_name,
+      m.market_group,
+      m.is_active,
+      CAST(m.updated_at AS STRING) AS updated_at
+    FROM \`chiesi-committee.chiesi_committee_admin.sell_out_product_mapping\` m
+    JOIN source_keys s
+      ON s.source_product_name_normalized = m.source_product_name_normalized
+    LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_product\` d
+      ON d.product_id = m.product_id
+    WHERE m.is_active = TRUE
+      AND (
+        (m.product_id IS NOT NULL AND TRIM(m.product_id) != '')
+        OR (m.market_group IS NOT NULL AND TRIM(m.market_group) != '')
+      )
+    ORDER BY m.source_product_name ASC
+    LIMIT @limit
+  `;
+
+  try {
+    const [rows] = await client.query({ query, params: { limit } });
+    return (rows as Record<string, unknown>[]).map((row) => ({
+      sourceProductName: String(row.source_product_name ?? ''),
+      sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),
+      productId: row.product_id ? String(row.product_id) : null,
+      canonicalProductCode: row.canonical_product_code ? String(row.canonical_product_code) : null,
+      canonicalProductName: row.canonical_product_name ? String(row.canonical_product_name) : null,
+      marketGroup: row.market_group ? String(row.market_group) : null,
+      isActive: Boolean(row.is_active ?? true),
+      updatedAt: row.updated_at ? String(row.updated_at) : null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getContractsUnmappedProducts(
+  limit = 200,
+): Promise<SellOutUnmappedProductRow[]> {
+  await ensureSellOutProductMappingTable();
+  const client = getBigQueryClient();
+  const query = `
+    WITH normalized_mapping AS (
+      SELECT
+        LOWER(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(NORMALIZE(source_product_name, NFD), r'\\pM', ''), r'[^a-zA-Z0-9]+', ' '))) AS source_product_name_normalized,
+        product_id,
+        market_group,
+        is_active
+      FROM \`chiesi-committee.chiesi_committee_admin.sell_out_product_mapping\`
+    ),
+    source_columns AS (
+      SELECT
+        s.source_product_raw AS source_product_name,
+        LOWER(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(NORMALIZE(s.source_product_raw, NFD), r'\\pM', ''), r'[^a-zA-Z0-9]+', ' '))) AS source_product_name_normalized,
+        CAST(MAX(u.uploaded_at) AS STRING) AS last_seen_at,
+        COUNT(1) AS occurrences
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\` s
+      JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        ON u.upload_id = s.upload_id
+      WHERE LOWER(TRIM(u.module_code)) IN (
+          'commercial_operations_government_contract_progress',
+          'government_contract_progress',
+          'contract_progress',
+          'pcfp'
+        )
         AND s.source_product_raw IS NOT NULL
         AND TRIM(s.source_product_raw) != ''
       GROUP BY source_product_name, source_product_name_normalized

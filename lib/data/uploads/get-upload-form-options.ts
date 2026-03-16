@@ -17,16 +17,21 @@ const businessExcellenceSourceModules = [
   { value: 'human_resources_training', label: 'Human Resources - Training' },
   { value: 'commercial_operations_dso', label: 'Commercial Operations - DSO' },
   { value: 'commercial_operations_government_orders', label: 'Commercial Operations - Government Orders' },
+  { value: 'commercial_operations_private_orders', label: 'Commercial Operations - Private Orders' },
   {
     value: 'commercial_operations_government_contract_progress',
     label: 'Commercial Operations - Government Contract Progress',
   },
   { value: 'commercial_operations_stocks', label: 'Commercial Operations - Stocks' },
   { value: 'commercial_operations_sanctions', label: 'Commercial Operations - Sanctions' },
+  { value: 'opex_by_cc', label: 'OPEX - Opex by CC' },
 ];
 
 export async function getUploadFormOptions(): Promise<UploadFormOptions> {
   const client = getBigQueryClient();
+  const hiddenLegacyModuleCodes = new Set([
+    'opex_master_catalog',
+  ]);
 
   const modulesQuery = `
     SELECT
@@ -58,10 +63,12 @@ export async function getUploadFormOptions(): Promise<UploadFormOptions> {
     version_name: string;
   }>;
 
-  const modulesFromCore = typedModuleRows.map((row) => ({
-    value: row.module_code,
-    label: row.module_name,
-  }));
+  const modulesFromCore = typedModuleRows
+    .filter((row) => !hiddenLegacyModuleCodes.has(row.module_code))
+    .map((row) => ({
+      value: row.module_code,
+      label: row.module_name,
+    }));
 
   const moduleMap = new Map<string, { value: string; label: string }>();
   for (const moduleItem of [...modulesFromCore, ...businessExcellenceSourceModules]) {

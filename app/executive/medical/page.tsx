@@ -1,5 +1,13 @@
-import { ComingSoonModulePage } from '@/app/executive/_coming-soon-module-page';
+import { MedicalView } from './_medical-view';
 
-export default function MedicalPage() {
-  return <ComingSoonModulePage moduleName="Medical" />;
+export const dynamic = 'force-dynamic';
+
+type MedicalPageProps = {
+  searchParams: Promise<{
+    version?: string;
+  }>;
+};
+
+export default async function MedicalPage({ searchParams }: MedicalPageProps) {
+  return <MedicalView viewMode="insights" searchParams={await searchParams} />;
 }

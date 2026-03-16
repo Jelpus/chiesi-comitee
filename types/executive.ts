@@ -7,6 +7,11 @@ export type ExecutiveCardItem = {
   target: string;
   variance: string;
   status: SemanticStatus;
+  kpiSignals?: Array<{
+    label: string;
+    coveragePct: number | null;
+    tone: 'green' | 'light-green' | 'yellow' | 'red' | 'neutral';
+  }>;
   detailHref: string | null;
 };
 

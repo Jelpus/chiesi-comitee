@@ -94,7 +94,9 @@ function parseCsvRows(
     const cells = parseCsvLine(line, delimiter);
     const payload: Record<string, unknown> = {};
     headers.forEach((header, colIndex) => {
-      payload[header] = normalizeCellValue(cells[colIndex] ?? null);
+      const normalizedValue = normalizeCellValue(cells[colIndex] ?? null);
+      payload[header] = normalizedValue;
+      payload[`column_${colIndex + 1}`] = normalizedValue;
     });
 
     rows.push({
@@ -234,7 +236,9 @@ export function parseExcelRows(buffer: Buffer, options?: ParseExcelOptions): Par
     const payload: Record<string, unknown> = {};
 
     headers.forEach((header, colIndex) => {
-      payload[header] = normalizeCellValue(cells[colIndex]);
+      const normalizedValue = normalizeCellValue(cells[colIndex]);
+      payload[header] = normalizedValue;
+      payload[`column_${colIndex + 1}`] = normalizedValue;
     });
 
     rows.push({

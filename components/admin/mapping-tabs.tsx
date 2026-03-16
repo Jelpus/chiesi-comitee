@@ -40,9 +40,13 @@ type MappingTabsProps = {
     unmappedRows: SellOutUnmappedProductRow[];
     mappedRows: SellOutProductMappingRow[];
   };
+  contracts: {
+    unmappedRows: SellOutUnmappedProductRow[];
+    mappedRows: SellOutProductMappingRow[];
+  };
 };
 
-type TabKey = 'ddd' | 'closeup' | 'gob360' | 'sellout' | 'stocks';
+type TabKey = 'ddd' | 'closeup' | 'gob360' | 'sellout' | 'stocks' | 'contracts';
 
 export function MappingTabs({
   productOptions,
@@ -52,6 +56,7 @@ export function MappingTabs({
   gob360,
   sellOut,
   stocks,
+  contracts,
 }: MappingTabsProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('ddd');
 
@@ -114,6 +119,17 @@ export function MappingTabs({
           >
             Stocks
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('contracts')}
+            className={`rounded-full px-4 py-2 text-xs font-medium uppercase tracking-[0.14em] transition ${
+              activeTab === 'contracts'
+                ? 'bg-slate-900 text-white'
+                : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            Contratos
+          </button>
         </div>
       </div>
 
@@ -161,6 +177,16 @@ export function MappingTabs({
           productOptions={productOptions}
           marketGroupOptions={marketGroupOptions}
           label="Stocks"
+        />
+      ) : null}
+
+      {activeTab === 'contracts' ? (
+        <SellOutProductMapping
+          unmappedRows={contracts.unmappedRows}
+          mappedRows={contracts.mappedRows}
+          productOptions={productOptions}
+          marketGroupOptions={marketGroupOptions}
+          label="Contratos"
         />
       ) : null}
     </section>

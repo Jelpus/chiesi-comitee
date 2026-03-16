@@ -16,6 +16,7 @@ type DsoComparisonBarChartProps = {
   target: number | null;
   mMinus1: number | null;
   current: number | null;
+  targetPosition?: 'default' | 'last';
   metricLabel?: string;
   pyAvgLabel?: string;
   targetLabel?: string;
@@ -33,18 +34,23 @@ export function DsoComparisonBarChart({
   target,
   mMinus1,
   current,
+  targetPosition = 'default',
   metricLabel = 'DSO',
   pyAvgLabel = 'Average PY',
   targetLabel = 'Current Target',
   mMinus1Label = 'Previous Month',
   currentLabel = 'Current Month',
 }: DsoComparisonBarChartProps) {
-  const rows = [
+  const baseRows = [
     { label: pyAvgLabel, value: pyAvg, color: '#94a3b8' },
-    { label: targetLabel, value: target, color: '#f59e0b' },
     { label: mMinus1Label, value: mMinus1, color: '#86efac' },
     { label: currentLabel, value: current, color: '#16a34a' },
   ];
+  const targetRow = { label: targetLabel, value: target, color: '#f59e0b' };
+  const rows =
+    targetPosition === 'last'
+      ? [...baseRows, targetRow]
+      : [baseRows[0], targetRow, baseRows[1], baseRows[2]];
 
   const hasAny = rows.some((row) => row.value != null);
   if (!hasAny) {

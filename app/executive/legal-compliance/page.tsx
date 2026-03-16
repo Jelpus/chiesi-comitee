@@ -1,5 +1,13 @@
-import { ComingSoonModulePage } from '@/app/executive/_coming-soon-module-page';
+import { LegalComplianceView } from './_legal-compliance-view';
 
-export default function LegalCompliancePage() {
-  return <ComingSoonModulePage moduleName="Legal & Compliance" />;
+export const dynamic = 'force-dynamic';
+
+type LegalCompliancePageProps = {
+  searchParams: Promise<{
+    version?: string;
+  }>;
+};
+
+export default async function LegalCompliancePage({ searchParams }: LegalCompliancePageProps) {
+  return <LegalComplianceView viewMode="insights" searchParams={await searchParams} />;
 }

@@ -165,7 +165,7 @@ export function TargetsManager({
         </div>
 
         {isAddOpen ? (
-          <form action={submitCreate} className="mt-5 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-5">
+          <form action={submitCreate} className="mt-5 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-6">
             <input type="hidden" name="reportingVersionId" value={selectedReportingVersionId} />
             <input type="hidden" name="periodMonth" value={selectedPeriodMonth} />
             <select
@@ -181,7 +181,13 @@ export function TargetsManager({
             </select>
             <input
               name="kpiName"
-              placeholder="KPI name"
+              placeholder="KPI code/name (stable)"
+              className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950"
+              required
+            />
+            <input
+              name="kpiLabel"
+              placeholder="KPI label (display)"
               className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 lg:col-span-2"
               required
             />
@@ -200,7 +206,7 @@ export function TargetsManager({
             <button
               type="submit"
               disabled={isPending}
-              className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 lg:col-span-5 lg:justify-self-start"
+              className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 lg:col-span-6 lg:justify-self-start"
             >
               {isPending ? (
                 <span className="inline-flex items-center gap-2">
@@ -221,7 +227,8 @@ export function TargetsManager({
             <thead className="bg-slate-50">
               <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
                 <th className="px-4 py-3">Area</th>
-                <th className="px-4 py-3">KPI</th>
+                <th className="px-4 py-3">KPI Name</th>
+                <th className="px-4 py-3">KPI Label</th>
                 <th className="px-4 py-3">Unit</th>
                 <th className="px-4 py-3">Target</th>
                 <th className="px-4 py-3">Status</th>
@@ -251,7 +258,16 @@ export function TargetsManager({
                       name="kpiName"
                       form={`target-edit-${row.targetId}`}
                       defaultValue={row.kpiName}
-                      className="w-[360px] rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                      className="w-[280px] rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                      required
+                    />
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    <input
+                      name="kpiLabel"
+                      form={`target-edit-${row.targetId}`}
+                      defaultValue={row.kpiLabel ?? row.kpiName}
+                      className="w-[320px] rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
                       required
                     />
                   </td>

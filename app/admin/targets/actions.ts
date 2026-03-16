@@ -99,6 +99,7 @@ export async function saveAdminTarget(formData: FormData) {
   const periodMonth = String(formData.get('periodMonth') ?? '').trim();
   const area = String(formData.get('area') ?? '').trim().toLowerCase();
   const kpiName = String(formData.get('kpiName') ?? '').trim();
+  const kpiLabel = String(formData.get('kpiLabel') ?? '').trim();
   const qtyUnit = String(formData.get('qtyUnit') ?? '').trim();
   const targetValueText = String(formData.get('targetValue') ?? '').trim();
   const isActive = String(formData.get('isActive') ?? 'true') === 'true';
@@ -114,6 +115,7 @@ export async function saveAdminTarget(formData: FormData) {
     periodMonth,
     area,
     kpiName,
+    kpiLabel: kpiLabel || null,
     qtyUnit,
     targetValueText,
     targetValueNumeric: parseNumericTarget(targetValueText),
@@ -138,6 +140,7 @@ export async function seedDefaultAdminTargets(formData: FormData) {
       periodMonth,
       area: item.area,
       kpiName: item.kpiName,
+      kpiLabel: item.kpiName,
       qtyUnit: item.qtyUnit,
       targetValueText: item.targetValue,
       targetValueNumeric: parseNumericTarget(item.targetValue),

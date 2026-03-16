@@ -33,6 +33,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
   const router = useRouter();
   const iconByHref: Record<string, ComponentType<{ className?: string }>> = {
     '/': Gauge,
+    '/forms': FolderUp,
     '/admin': Settings,
     '/admin/periods': Calendar,
     '/admin/versions': Layers,
@@ -63,10 +64,15 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
   const sectionItems = appNavigation.filter((item) => {
     if (currentSection === 'admin') return item.href.startsWith('/admin/') && item.href !== '/admin';
     if (currentSection === 'executive') return item.href.startsWith('/executive');
-    return false;
+    return item.href === '/' || item.href === '/forms';
   });
 
   function handleSectionChange(nextSection: string) {
+    if (nextSection === 'home') {
+      router.push('/forms');
+      onNavigate?.();
+      return;
+    }
     if (nextSection === 'admin') {
       router.push('/admin');
       onNavigate?.();
@@ -87,7 +93,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
               ? 'Admin Section'
               : currentSection === 'executive'
                 ? 'Executive Section'
-                : 'Select Section'}
+                : 'Forms Section'}
           </p>
         ) : null}
       </div>
@@ -162,7 +168,11 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
             {!collapsed ? <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Navigation</span> : null}
           </div>
           <select
-            value={currentSection === 'admin' || currentSection === 'executive' ? currentSection : ''}
+            value={
+              currentSection === 'home' || currentSection === 'admin' || currentSection === 'executive'
+                ? currentSection
+                : ''
+            }
             onChange={(e) => handleSectionChange(e.target.value)}
             className="w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-semibold text-slate-100 outline-none focus:border-slate-500"
             aria-label="Select section"
@@ -170,6 +180,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
             <option value="" disabled>
               {collapsed ? 'Go' : 'Select...'}
             </option>
+            <option value="home">Forms</option>
             <option value="admin">Admin</option>
             <option value="executive">Executive</option>
           </select>

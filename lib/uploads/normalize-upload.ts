@@ -209,6 +209,124 @@ type CommercialOperationsStocksNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type CommercialOperationsDeliveryOrdersNormalizedRow = {
+  rowNumber: number;
+  orderScope: 'government' | 'private';
+  businessType: string | null;
+  market: string | null;
+  businessUnit: string | null;
+  unidadNegocioChiesi?: string | null;
+  clientInstitution: string | null;
+  orderType: string | null;
+  documentNumber?: string | null;
+  contractNumber?: string | null;
+  customerOrderNumber?: string | null;
+  salesDocument?: string | null;
+  salesDocumentPosition?: string | null;
+  sku?: string | null;
+  ccb?: string | null;
+  laboratory?: string | null;
+  status?: string | null;
+  orderStatus?: string | null;
+  rejectionReason?: string | null;
+  deliveryId?: string | null;
+  deliveryPoint?: string | null;
+  recipient?: string | null;
+  clues?: string | null;
+  fechaPedidoSapMonth?: string | null;
+  fechaPedidoMonth?: string | null;
+  fechaCreacionDeliveryMonth?: string | null;
+  fechaSalidaMercanciaMonth?: string | null;
+  fechaMaximaEntregaMonth?: string | null;
+  fechaConfirmacionEntregaMonth?: string | null;
+  tiempoEntregaDiasNaturales?: number | null;
+  entregaVsVencimientoDiasNaturales?: number | null;
+  precioUnitario?: number | null;
+  importe?: number | null;
+  cantidadTotalPedido?: number | null;
+  confirmadas?: number | null;
+  cantidadSuministrada?: number | null;
+  cantidadEntregada?: number | null;
+  cantidadFacturada?: number | null;
+  sancion?: string | null;
+  montoSancion?: number | null;
+  facturadoChiesi?: string | null;
+  cuentaDias?: number | null;
+  precioReal?: number | null;
+  cantidadFacturadaChiesi?: number | null;
+  montoFacturadoChiesi?: number | null;
+  tipoEntrega?: string | null;
+  cpm?: string | null;
+  posiblesCanjes?: number | null;
+  sourceProductRaw: string;
+  sourceProductNormalized: string;
+  periodMonth: string;
+  orderValue: number | null;
+  payload: Record<string, unknown>;
+};
+
+type CommercialOperationsGovernmentContractProgressNormalizedRow = {
+  rowNumber: number;
+  contractKey: string | null;
+  contractType: string | null;
+  vigencia: string | null;
+  category: string | null;
+  responsible: string | null;
+  cbCode: string | null;
+  sourceProductRaw: string;
+  sourceProductNormalized: string;
+  tenderNumber: string | null;
+  contractNumber: string | null;
+  eventType: string | null;
+  centralizedOpd: string | null;
+  centralInstitution: string | null;
+  institution: string | null;
+  assignedTo: string | null;
+  businessModel: string | null;
+  assignmentStatus: string | null;
+  businessUnit: string | null;
+  periodMonth: string;
+  deliveredQuantity: number;
+  maxQuantity2025: number | null;
+  maxQuantity2026: number | null;
+  total2025: number | null;
+  total2026: number | null;
+  total2025_2026: number | null;
+  progressPctTotal: number | null;
+  progressPct2025: number | null;
+  progressPct2026: number | null;
+  maxContractQuantity: number | null;
+  contractTotalQuantity: number | null;
+  payload: Record<string, unknown>;
+};
+
+type OpexMasterCatalogNormalizedRow = {
+  rowNumber: number;
+  key1: string;
+  key2: string | null;
+  account: string | null;
+  plGroup: string | null;
+  area: string | null;
+  ceco: string | null;
+  cecoName: string | null;
+  costElement: string | null;
+  element: string | null;
+  businessUnit: string | null;
+  owner: string | null;
+  responsible: string | null;
+  payload: Record<string, unknown>;
+};
+
+type OpexMovementNormalizedRow = {
+  rowNumber: number;
+  key1: string;
+  key2: string | null;
+  periodMonth: string;
+  metricName: 'actuals_2025' | 'budget_2026' | 'actuals_2026';
+  amountValue: number;
+  payload: Record<string, unknown>;
+};
+
 let ensureCloseupStagingSchemaPromise: Promise<void> | null = null;
 
 function chunkItems<T>(items: T[], size: number) {
@@ -216,6 +334,37 @@ function chunkItems<T>(items: T[], size: number) {
   for (let i = 0; i < items.length; i += size) {
     chunks.push(items.slice(i, i + size));
   }
+  return chunks;
+}
+
+function chunkItemsByApproxBytes<T>(
+  items: T[],
+  options: {
+    maxBytesPerChunk: number;
+    maxItemsPerChunk: number;
+    estimateBytes: (item: T) => number;
+  },
+) {
+  const chunks: T[][] = [];
+  let currentChunk: T[] = [];
+  let currentBytes = 0;
+
+  for (const item of items) {
+    const itemBytes = Math.max(1, options.estimateBytes(item));
+    const exceedsItems = currentChunk.length >= options.maxItemsPerChunk;
+    const exceedsBytes = currentBytes + itemBytes > options.maxBytesPerChunk;
+
+    if (currentChunk.length > 0 && (exceedsItems || exceedsBytes)) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentBytes = 0;
+    }
+
+    currentChunk.push(item);
+    currentBytes += itemBytes;
+  }
+
+  if (currentChunk.length > 0) chunks.push(currentChunk);
   return chunks;
 }
 
@@ -253,9 +402,18 @@ function isConcurrentUpdateError(error: unknown) {
   );
 }
 
+function isTableUpdateQuotaError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('exceeded quota for table update operations') ||
+    message.includes('job exceeded rate limits')
+  );
+}
+
 async function runQueryWithRetryOnConcurrentUpdate<T>(
   fn: () => Promise<T>,
-  retries = 4,
+  retries = 10,
 ) {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -266,7 +424,11 @@ async function runQueryWithRetryOnConcurrentUpdate<T>(
       if (!isConcurrentUpdateError(error) || attempt === retries) {
         break;
       }
-      const waitMs = 300 * Math.pow(2, attempt);
+      const baseMs = isTableUpdateQuotaError(error) ? 5000 : 1000;
+      const maxMs = isTableUpdateQuotaError(error) ? 120000 : 30000;
+      const exponential = baseMs * Math.pow(2, attempt);
+      const jitter = Math.floor(Math.random() * (isTableUpdateQuotaError(error) ? 2000 : 500));
+      const waitMs = Math.min(maxMs, exponential + jitter);
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   }
@@ -487,6 +649,31 @@ function asNullableNumber(value: unknown) {
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
+function asNullableQuantityNumber(value: unknown) {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const compact = raw
+    .replace(/\s/g, '')
+    .replace(/[$â‚¬Â£]/g, '')
+    .replace(/[^\d,.\-]/g, '');
+  if (!compact) return null;
+
+  // Pattern like 1.234 or 12.345.678 => thousands separators.
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(compact)) {
+    const parsed = Number(compact.replace(/\./g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // Pattern like 1,234 or 12,345,678 => thousands separators.
+  if (/^-?\d{1,3}(,\d{3})+$/.test(compact)) {
+    const parsed = Number(compact.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return asNullableNumber(value);
+}
+
 function normalizeText(value: string) {
   return value
     .normalize('NFD')
@@ -561,6 +748,31 @@ function pickValue(index: Map<string, unknown>, aliases: string[]) {
   return null;
 }
 
+function pickPayloadValueByExactNormalizedHeader(
+  payload: Record<string, unknown>,
+  normalizedHeader: string,
+) {
+  for (const [key, value] of Object.entries(payload)) {
+    if (normalizeText(key) === normalizedHeader) return value;
+  }
+  return null;
+}
+
+function pickPayloadContractQuantityByYear(
+  payload: Record<string, unknown>,
+  year: 2025 | 2026,
+) {
+  const include = new RegExp(`\\bcantidad\\b.*\\bmaxima\\b.*\\b${year}\\b`);
+  const exclude = /\bmaypo\b|\bminima\b|\btotal\b/;
+  for (const [key, value] of Object.entries(payload)) {
+    const normalized = normalizeText(key);
+    if (!include.test(normalized)) continue;
+    if (exclude.test(normalized)) continue;
+    return value;
+  }
+  return null;
+}
+
 function parseMonthHeader(header: string): string | null {
   const cleanHeader = header
     .trim()
@@ -596,6 +808,31 @@ function parseMonthHeaderFlexible(header: string): string | null {
   return `${year}-${month}-01`;
 }
 
+function parseMonthHeaderWithExcelSerial(header: string): string | null {
+  const fromText = parseMonthHeaderFlexible(header);
+  if (fromText) return fromText;
+  const clean = header.trim();
+  // For header parsing, only treat literal date-like strings as dates.
+  // Avoid coercing plain year tokens like "2023" into Excel serial dates (1905-xx).
+  const looksLikeDateLiteral =
+    /^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}(?:\s|$)/.test(clean) ||
+    /^\d{4}-\d{2}-\d{2}T/.test(clean) ||
+    /^(?:[A-Za-z]{3}\s+)?[A-Za-z]{3,}\s+\d{1,2}\s+\d{4}\b/.test(clean);
+  if (looksLikeDateLiteral) {
+    const fromDateField = parseDateField(clean);
+    if (fromDateField) return fromDateField;
+  }
+  // Only accept pure Excel serial-like headers (e.g. "45658", "45658.0"),
+  // not numbers embedded in descriptive headers (e.g. "TOTAL 2025").
+  const serialOnly = clean.match(/^-?\d{4,6}(?:\.\d+)?$/);
+  if (!serialOnly) return null;
+  const serial = Number(serialOnly[0]);
+  if (!Number.isFinite(serial)) return null;
+  // Guardrails to avoid interpreting year-like values (2025, 2026) as Excel dates.
+  if (serial < 30000 || serial > 70000) return null;
+  return parseExcelSerialDate(serial);
+}
+
 function toMonthStartFromDate(date: Date) {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -619,11 +856,29 @@ function parseDateField(value: unknown): string | null {
   }
 
   if (typeof value === 'number') {
-    return parseExcelSerialDate(value);
+    if (value >= 30000 && value <= 70000) {
+      return parseExcelSerialDate(value);
+    }
+    return null;
   }
 
   const raw = String(value).trim();
   if (!raw) return null;
+
+  // Headers coming from Excel-to-JSON can look like:
+  // "Sun Feb 01 2026 00:00:44 GMT+0100 (...)"
+  // If parsed as UTC Date, month can shift backwards (e.g. Jan 31 UTC).
+  // Prefer extracting month/year directly from the textual header.
+  const weekdayMonthYear = raw.match(
+    /^(?:[A-Za-z]{3}\s+)?([A-Za-z]{3,})\s+\d{1,2}\s+(\d{4})\b/,
+  );
+  if (weekdayMonthYear) {
+    const month = parseMonthToken(weekdayMonthYear[1]);
+    const year = parseYearToken(weekdayMonthYear[2]);
+    if (month && year) {
+      return `${year}-${month}-01`;
+    }
+  }
 
   const isoUtc = raw.match(
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/,
@@ -643,6 +898,7 @@ function parseDateField(value: unknown): string | null {
 
   const numericValue = Number(raw);
   if (Number.isFinite(numericValue) && /^\d+(\.\d+)?$/.test(raw)) {
+    if (numericValue < 30000 || numericValue > 70000) return null;
     const fromExcel = parseExcelSerialDate(numericValue);
     if (fromExcel) return fromExcel;
   }
@@ -842,6 +1098,440 @@ function hasBusinessContent(payload: Record<string, unknown>) {
   });
 }
 
+function isOpexSummaryValue(value: string | null) {
+  if (!value) return false;
+  const normalized = normalizeText(value);
+  if (!normalized) return false;
+  return (
+    normalized === 'total' ||
+    normalized === 'totales' ||
+    normalized === 'subtotal' ||
+    normalized === 'sub total' ||
+    normalized === 'grand total' ||
+    normalized.startsWith('total ') ||
+    normalized.startsWith('subtotal ')
+  );
+}
+
+function normalizeOpexByCcMasterCatalog(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: OpexMasterCatalogNormalizedRow[] = [];
+  const dedup = new Set<string>();
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+
+    const key1 = asNullableString(pickValue(index, ['Key1', 'Key 1', 'Llave 1']));
+    if (!key1) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: Key1 is empty (master catalog boundary).'],
+      });
+      continue;
+    }
+    const key2 = asNullableString(pickValue(index, ['Key2', 'Key 2', 'Llave 2']));
+    if (!key2) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: Key2 is empty (detail row required).'],
+      });
+      continue;
+    }
+    const account = asNullableString(pickValue(index, ['Account', 'Cuenta']));
+    if (isOpexSummaryValue(key1) || isOpexSummaryValue(key2) || isOpexSummaryValue(account)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: summary/total row in OPEX catalog.'],
+      });
+      continue;
+    }
+
+    const normalizedRow: OpexMasterCatalogNormalizedRow = {
+      rowNumber: row.row_number,
+      key1,
+      key2,
+      account,
+      plGroup: asNullableString(pickValue(index, ['P&L Group', 'P L Group', 'PL Group'])),
+      area: asNullableString(pickValue(index, ['Area', 'Área'])),
+      ceco: asNullableString(pickValue(index, ['CeCo', 'CECO', 'Centro de Costo'])),
+      cecoName: asNullableString(pickValue(index, ['CeCo Name', 'CECO Name', 'Nombre CeCo', 'Nombre CECO'])),
+      costElement: asNullableString(pickValue(index, ['Cost Element', 'Elemento de Costo'])),
+      element: asNullableString(pickValue(index, ['Element', 'Elemento'])),
+      businessUnit: asNullableString(pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio'])),
+      owner: asNullableString(pickValue(index, ['Owner', 'Dueño'])),
+      responsible: asNullableString(pickValue(index, ['Responsible', 'Responsable'])),
+      payload,
+    };
+
+    const dedupKey = [
+      normalizeText(normalizedRow.key1),
+      normalizeText(normalizedRow.key2 ?? ''),
+      normalizeText(normalizedRow.account ?? ''),
+      normalizeText(normalizedRow.ceco ?? ''),
+      normalizeText(normalizedRow.costElement ?? ''),
+    ].join('|');
+
+    if (dedup.has(dedupKey)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: duplicated master catalog row.'],
+      });
+      continue;
+    }
+
+    dedup.add(dedupKey);
+    normalizedRows.push(normalizedRow);
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: 'valid',
+      errors: [],
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+function normalizeOpexByCcMovements(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: OpexMovementNormalizedRow[] = [];
+  const dedup = new Set<string>();
+  const resolved2025MonthColumns: Array<{
+    periodMonth: string;
+    payloadKey: string;
+    columnIndex: number | null;
+  }> = Array.from({ length: 12 }, (_, index) => ({
+    periodMonth: `2025-${String(index + 1).padStart(2, '0')}-01`,
+    payloadKey: `column_${14 + index}`, // O:Z when B is column_1
+    columnIndex: 14 + index,
+  }));
+  let resolved2026BudgetMonthColumns:
+    | Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }>
+    | null = null;
+  let resolved2026ActualMonthColumns:
+    | Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }>
+    | null = null;
+
+  function parseColumnIndexFromPayloadKey(payloadKey: string): number | null {
+    const match = payloadKey.match(/^column_(\d+)$/i);
+    if (!match) return null;
+    const parsed = Number(match[1]);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  function resolveYearMonthColumns(
+    payload: Record<string, unknown>,
+    year: 2025 | 2026,
+    preferredMarkers: string[],
+    minColumnIndexExclusive?: number,
+  ) {
+    const monthCandidates = new Map<
+      string,
+      {
+        payloadKey: string;
+        columnIndex: number | null;
+        hasPreferredMarker: boolean;
+        keyLength: number;
+      }
+    >();
+
+    for (const key of Object.keys(payload)) {
+      const parsedPeriod =
+        parseMonthHeaderWithExcelSerial(key) ?? parseMonthHeaderFlexible(key);
+      if (!parsedPeriod || !parsedPeriod.startsWith(`${year}-`)) continue;
+
+      const normalizedHeader = normalizeText(key);
+      const hasPreferredMarker = preferredMarkers.some((marker) =>
+        normalizedHeader.includes(marker),
+      );
+      const columnIndex = parseColumnIndexFromPayloadKey(key);
+      if (
+        minColumnIndexExclusive != null &&
+        columnIndex != null &&
+        columnIndex <= minColumnIndexExclusive
+      ) {
+        continue;
+      }
+
+      const current = monthCandidates.get(parsedPeriod);
+      if (
+        !current ||
+        (hasPreferredMarker && !current.hasPreferredMarker) ||
+        (hasPreferredMarker === current.hasPreferredMarker &&
+          (columnIndex ?? Number.MAX_SAFE_INTEGER) <
+            (current.columnIndex ?? Number.MAX_SAFE_INTEGER)) ||
+        (hasPreferredMarker === current.hasPreferredMarker &&
+          columnIndex === current.columnIndex &&
+          key.length < current.keyLength)
+      ) {
+        monthCandidates.set(parsedPeriod, {
+          payloadKey: key,
+          columnIndex,
+          hasPreferredMarker,
+          keyLength: key.length,
+        });
+      }
+    }
+
+    const dynamicColumns = Array.from(monthCandidates.entries())
+      .map(([periodMonth, meta]) => ({
+        periodMonth,
+        payloadKey: meta.payloadKey,
+        columnIndex: meta.columnIndex,
+      }))
+      .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
+
+    if (dynamicColumns.length > 0) return dynamicColumns;
+
+    // Fallbacks by block:
+    // 2025 actuals: O:Z => column_15:column_26
+    // 2025 actuals: O:Z => column_14:column_25 (B is column_1)
+    // 2026 budget: AC:AN => column_28:column_39 (B is column_1)
+    if (year === 2025) {
+      return Array.from({ length: 12 }, (_, index) => ({
+        periodMonth: `2025-${String(index + 1).padStart(2, '0')}-01`,
+        payloadKey: `column_${14 + index}`,
+        columnIndex: 14 + index,
+      }));
+    }
+
+    return Array.from({ length: 12 }, (_, index) => ({
+      periodMonth: `2026-${String(index + 1).padStart(2, '0')}-01`,
+      payloadKey: `column_${28 + index}`,
+      columnIndex: 28 + index,
+    }));
+  }
+
+  function resolveContiguousYearBlockFromJan(
+    payload: Record<string, unknown>,
+    year: 2025 | 2026,
+    options?: {
+      preferredMarkers?: string[];
+      minColumnIndexExclusive?: number;
+    },
+  ): Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }> | null {
+    const janCandidates: Array<{ payloadKey: string; columnIndex: number; hasMarker: boolean }> = [];
+    for (const key of Object.keys(payload)) {
+      const parsedPeriod = parseMonthHeaderWithExcelSerial(key) ?? parseMonthHeaderFlexible(key);
+      if (parsedPeriod !== `${year}-01-01`) continue;
+      const columnIndex = parseColumnIndexFromPayloadKey(key);
+      if (!columnIndex) continue;
+      if (
+        options?.minColumnIndexExclusive != null &&
+        columnIndex <= options.minColumnIndexExclusive
+      ) {
+        continue;
+      }
+      const normalizedHeader = normalizeText(key);
+      const hasMarker =
+        (options?.preferredMarkers ?? []).some((marker) => normalizedHeader.includes(marker));
+      janCandidates.push({ payloadKey: key, columnIndex, hasMarker });
+    }
+
+    if (janCandidates.length === 0) return null;
+    janCandidates.sort((a, b) => {
+      if (a.hasMarker !== b.hasMarker) return a.hasMarker ? -1 : 1;
+      return a.columnIndex - b.columnIndex;
+    });
+    const chosen = janCandidates[0];
+    if (!chosen) return null;
+
+    const block = Array.from({ length: 12 }, (_, offset) => {
+      const month = String(offset + 1).padStart(2, '0');
+      const columnIndex = chosen.columnIndex + offset;
+      return {
+        periodMonth: `${year}-${month}-01`,
+        payloadKey: `column_${columnIndex}`,
+        columnIndex,
+      };
+    });
+    return block;
+  }
+
+  function resolveActuals2026ByFourthMonthOccurrence(
+    payload: Record<string, unknown>,
+  ): Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }> | null {
+    const monthKeyBuckets = new Map<string, Array<{ payloadKey: string; columnIndex: number | null }>>();
+
+    for (const key of Object.keys(payload)) {
+      const parsedPeriod = parseMonthHeaderWithExcelSerial(key) ?? parseMonthHeaderFlexible(key);
+      if (!parsedPeriod || !parsedPeriod.startsWith('2026-')) continue;
+      if (!monthKeyBuckets.has(parsedPeriod)) monthKeyBuckets.set(parsedPeriod, []);
+      monthKeyBuckets.get(parsedPeriod)?.push({
+        payloadKey: key,
+        columnIndex: parseColumnIndexFromPayloadKey(key),
+      });
+    }
+
+    const periodMonths = Array.from({ length: 12 }, (_, idx) => `2026-${String(idx + 1).padStart(2, '0')}-01`);
+    // Need the 4th Jan/Ene/01 occurrence equivalent for all months.
+    for (const periodMonth of periodMonths) {
+      const bucket = monthKeyBuckets.get(periodMonth) ?? [];
+      if (bucket.length < 4) return null;
+      bucket.sort((a, b) => (a.columnIndex ?? Number.MAX_SAFE_INTEGER) - (b.columnIndex ?? Number.MAX_SAFE_INTEGER));
+    }
+
+    const resolved = periodMonths.map((periodMonth) => {
+      const bucket = monthKeyBuckets.get(periodMonth)!;
+      return bucket[3];
+    });
+
+    const janHeaderNormalized = normalizeText(resolved[0].payloadKey);
+    const hasActualMarker =
+      janHeaderNormalized.includes('actual') ||
+      janHeaderNormalized.includes('act') ||
+      janHeaderNormalized.includes('real') ||
+      janHeaderNormalized.includes('current');
+    if (!hasActualMarker) return null;
+
+    return resolved.map((item, idx) => ({
+      periodMonth: `2026-${String(idx + 1).padStart(2, '0')}-01`,
+      payloadKey: item.payloadKey,
+      columnIndex: item.columnIndex,
+    }));
+  }
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+
+    const key1 = asNullableString(pickValue(index, ['Key1', 'Key 1', 'Llave 1']));
+    if (!key1) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: Key1 is empty (movement boundary).'],
+      });
+      continue;
+    }
+
+    const key2 = asNullableString(pickValue(index, ['Key2', 'Key 2', 'Llave 2']));
+    if (!key2) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: Key2 is empty (detail row required).'],
+      });
+      continue;
+    }
+    const account = asNullableString(pickValue(index, ['Account', 'Cuenta']));
+    if (isOpexSummaryValue(key1) || isOpexSummaryValue(key2) || isOpexSummaryValue(account)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: summary/total row in OPEX movements.'],
+      });
+      continue;
+    }
+    let movementCount = 0;
+
+    if (!resolved2026BudgetMonthColumns) {
+      const maxActual2025ColumnIndex = resolved2025MonthColumns.reduce(
+        (max, item) =>
+          item.columnIndex != null && item.columnIndex > max ? item.columnIndex : max,
+        0,
+      );
+      resolved2026BudgetMonthColumns =
+        resolveContiguousYearBlockFromJan(payload, 2026, {
+          preferredMarkers: ['budget', 'presupuesto', 'plan', 'target', 'bud'],
+          minColumnIndexExclusive: maxActual2025ColumnIndex,
+        }) ??
+        resolveYearMonthColumns(
+          payload,
+          2026,
+          ['budget', 'presupuesto', 'plan', 'target', 'bud'],
+          maxActual2025ColumnIndex,
+        );
+    }
+    if (!resolved2026ActualMonthColumns) {
+      resolved2026ActualMonthColumns =
+        resolveActuals2026ByFourthMonthOccurrence(payload) ??
+        // Fallback fixed block BE:BP => column_56:column_67 => Jan..Dec 2026 (B is column_1)
+        Array.from({ length: 12 }, (_, index) => ({
+          periodMonth: `2026-${String(index + 1).padStart(2, '0')}-01`,
+          payloadKey: `column_${56 + index}`,
+          columnIndex: 56 + index,
+        }));
+    }
+
+    for (const monthColumn of resolved2025MonthColumns) {
+      const amountValue = asNullableNumber(payload[monthColumn.payloadKey]);
+      if (amountValue == null) continue;
+
+      const periodMonth = monthColumn.periodMonth;
+      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|actuals_2025`;
+      if (dedup.has(dedupKey)) continue;
+      dedup.add(dedupKey);
+
+      normalizedRows.push({
+        rowNumber: row.row_number,
+        key1,
+        key2,
+        periodMonth,
+        metricName: 'actuals_2025',
+        amountValue,
+        payload: {},
+      });
+      movementCount += 1;
+    }
+    for (const monthColumn of resolved2026BudgetMonthColumns) {
+      const amountValue = asNullableNumber(payload[monthColumn.payloadKey]);
+      if (amountValue == null) continue;
+
+      const periodMonth = monthColumn.periodMonth;
+      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|budget_2026`;
+      if (dedup.has(dedupKey)) continue;
+      dedup.add(dedupKey);
+
+      normalizedRows.push({
+        rowNumber: row.row_number,
+        key1,
+        key2,
+        periodMonth,
+        metricName: 'budget_2026',
+        amountValue,
+        payload: {},
+      });
+      movementCount += 1;
+    }
+    for (const monthColumn of resolved2026ActualMonthColumns) {
+      const amountValue = asNullableNumber(payload[monthColumn.payloadKey]);
+      if (amountValue == null) continue;
+
+      const periodMonth = monthColumn.periodMonth;
+      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|actuals_2026`;
+      if (dedup.has(dedupKey)) continue;
+      dedup.add(dedupKey);
+
+      normalizedRows.push({
+        rowNumber: row.row_number,
+        key1,
+        key2,
+        periodMonth,
+        metricName: 'actuals_2026',
+        amountValue,
+        payload: {},
+      });
+      movementCount += 1;
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: movementCount > 0 ? 'valid' : 'skipped',
+      errors:
+        movementCount > 0
+          ? []
+          : ['Skipped: no monthly values found for 2025 ACT/Actual, 2026 Budget, or 2026 Actuals blocks.'],
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
 async function getRawRows(uploadId: string): Promise<RawUploadRow[]> {
   const client = getBigQueryClient();
   const query = `
@@ -916,7 +1606,7 @@ async function updateRawValidationStatus(uploadId: string, validations: RowValid
       AND target.row_number = source.row_number
   `;
 
-  const chunks = chunkItems(validations, 2000);
+  const chunks = chunkItems(validations, 5000);
   for (const chunk of chunks) {
     await runQueryWithRetryOnConcurrentUpdate(() =>
       client.query({
@@ -1016,7 +1706,7 @@ async function loadSalesInternalStaging(uploadId: string, rows: SalesInternalNor
       row.distribution_channel_name,
       DATE(row.period_month),
       SAFE_CAST(row.amount_value AS FLOAT64),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -1136,7 +1826,18 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
     FROM UNNEST(@rows) AS row
   `;
 
-  const chunks = chunkItems(rows, 1500);
+  const chunks = chunkItemsByApproxBytes(rows, {
+    maxBytesPerChunk: 2_000_000,
+    maxItemsPerChunk: 1000,
+    estimateBytes: (row) =>
+      String(row.key1 ?? '').length +
+      String(row.key2 ?? '').length +
+      String(row.account ?? '').length +
+      String(row.ceco ?? '').length +
+      String(row.costElement ?? '').length +
+      JSON.stringify(row.payload).length +
+      256,
+  });
   await runChunksInParallel(
     chunks,
     async (chunk) => {
@@ -1403,7 +2104,7 @@ async function loadSellOutStaging(uploadId: string, rows: SellOutNormalizedRow[]
       DATE(row.period_month),
       row.sales_group,
       SAFE_CAST(row.amount_value AS NUMERIC),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -2196,7 +2897,7 @@ async function loadWeeklyTrackingStaging(uploadId: string, rows: WeeklyTrackingN
       NULLIF(row.market_code, ''),
       row.sales_group,
       SAFE_CAST(row.amount_value AS NUMERIC),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -2529,7 +3230,7 @@ async function loadCommercialOperationsDsoStaging(
       NULLIF(row.group_name, ''),
       DATE(row.period_month),
       SAFE_CAST(row.dso_value AS NUMERIC),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -2743,7 +3444,7 @@ async function loadCommercialOperationsStocksStaging(
       row.source_product_normalized,
       DATE(row.period_month),
       SAFE_CAST(row.stock_value AS NUMERIC),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -2768,6 +3469,1045 @@ async function loadCommercialOperationsStocksStaging(
               source_product_normalized: row.sourceProductNormalized,
               period_month: row.periodMonth,
               stock_value: String(row.stockValue),
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
+  );
+}
+
+function normalizeCommercialOperationsDeliveryOrders(
+  rows: RawUploadRow[],
+  moduleCode: string,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsDeliveryOrdersNormalizedRow[] = [];
+  const dedup = new Map<string, CommercialOperationsDeliveryOrdersNormalizedRow>();
+  const orderScope: 'government' | 'private' =
+    moduleCode === 'commercial_operations_private_orders' || moduleCode === 'private_orders'
+      ? 'private'
+      : 'government';
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+    const sourceProductRaw = asNullableString(
+      pickValue(index, ['Producto', 'product', 'producto']),
+    );
+    if (!sourceProductRaw) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: missing product name in "Producto" column.'],
+      });
+      continue;
+    }
+
+    const sourceProductNormalized = normalizeText(sourceProductRaw);
+    if (['total', 'subtotal', 'totales'].includes(sourceProductNormalized)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: total/subtotal row.'],
+      });
+      continue;
+    }
+
+    const businessType = asNullableString(pickValue(index, ['Tipo Neg', 'Tipo Negocio', 'tipo_neg']));
+    const market = asNullableString(pickValue(index, ['Mercado', 'market']));
+    const businessUnit = asNullableString(pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio']));
+    const clientInstitution = asNullableString(
+      pickValue(index, ['Cliente / Institucion', 'Cliente / InstituciÃ³n', 'Cliente', 'Institucion']),
+    );
+    const orderType = asNullableString(pickValue(index, ['Tipo', 'Type']));
+
+    let valueCount = 0;
+    for (const [key, rawValue] of Object.entries(payload)) {
+      if (key.toLowerCase().startsWith('column_')) continue;
+      const periodMonth = parseMonthHeaderFlexible(key);
+      if (!periodMonth) continue;
+      const orderValue = asNullableNumber(rawValue);
+      if (orderValue == null) continue;
+
+      valueCount += 1;
+      const normalizedRow: CommercialOperationsDeliveryOrdersNormalizedRow = {
+        rowNumber: row.row_number,
+        orderScope,
+        businessType,
+        market,
+        businessUnit,
+        clientInstitution,
+        orderType,
+        sourceProductRaw,
+        sourceProductNormalized,
+        periodMonth,
+        orderValue,
+        payload,
+      };
+
+      const dedupKey = [
+        orderScope,
+        periodMonth,
+        normalizeText(businessType ?? ''),
+        normalizeText(market ?? ''),
+        normalizeText(businessUnit ?? ''),
+        normalizeText(clientInstitution ?? ''),
+        normalizeText(orderType ?? ''),
+        sourceProductNormalized,
+      ].join('|');
+      if (!dedup.has(dedupKey)) dedup.set(dedupKey, normalizedRow);
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: valueCount > 0 ? 'valid' : 'skipped',
+      errors: valueCount > 0 ? [] : ['Skipped: no monthly order values found in month columns.'],
+    });
+  }
+
+  normalizedRows.push(...dedup.values());
+  return { validations, normalizedRows };
+}
+
+function normalizeCommercialOperationsDeliveryOrdersV2(
+  rows: RawUploadRow[],
+  moduleCode: string,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsDeliveryOrdersNormalizedRow[] = [];
+  const dedup = new Map<string, CommercialOperationsDeliveryOrdersNormalizedRow>();
+  const orderScope: 'government' | 'private' =
+    moduleCode === 'commercial_operations_private_orders' || moduleCode === 'private_orders'
+      ? 'private'
+      : 'government';
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+    const sourceProductRaw = asNullableString(
+      pickValue(index, ['MEDICAMENTO', 'Producto', 'product', 'producto']),
+    );
+    if (!sourceProductRaw) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: missing product in MEDICAMENTO/PRODUCTO column.'],
+      });
+      continue;
+    }
+
+    const sourceProductNormalized = normalizeText(sourceProductRaw);
+    if (['total', 'subtotal', 'totales'].includes(sourceProductNormalized)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: total/subtotal row.'],
+      });
+      continue;
+    }
+
+    const fechaPedidoSapMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['FECHA PEDIDO SAP', 'Fecha Pedido SAP']),
+    );
+    const fechaPedidoMonth = parseDateFieldMonthFirst(
+      pickValue(index, ['FECHA DE PEDIDO', 'Fecha de Pedido']),
+    );
+    const periodMonth = fechaPedidoSapMonth ?? fechaPedidoMonth;
+    if (!periodMonth) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: missing FECHA PEDIDO SAP / FECHA DE PEDIDO.'],
+      });
+      continue;
+    }
+
+    const cantidadTotalPedido = asNullableQuantityNumber(pickValue(index, ['CANTIDAD TOTAL DEL PEDIDO']));
+    const confirmadas = asNullableQuantityNumber(pickValue(index, ['CONFIRMADAS']));
+    const cantidadSuministrada = asNullableQuantityNumber(pickValue(index, ['CANTIDAD SUMINISTRADA']));
+    const cantidadEntregada = asNullableQuantityNumber(pickValue(index, ['CANTIDAD ENTREGADA']));
+    const cantidadFacturada = asNullableQuantityNumber(pickValue(index, ['CANTIDAD FACTURADA']));
+    const orderValue =
+      cantidadEntregada ??
+      cantidadSuministrada ??
+      confirmadas ??
+      cantidadTotalPedido ??
+      cantidadFacturada;
+
+    const normalizedRow: CommercialOperationsDeliveryOrdersNormalizedRow = {
+      rowNumber: row.row_number,
+      orderScope,
+      businessType: asNullableString(pickValue(index, ['Tipo Neg', 'Tipo Negocio', 'tipo_neg'])),
+      market: asNullableString(pickValue(index, ['MERCADO', 'Mercado', 'market'])),
+      businessUnit: asNullableString(pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio'])),
+      unidadNegocioChiesi: asNullableString(
+        pickValue(index, ['Unidad de Negocio CHIESI', 'UNIDAD DE NEGOCIO CHIESI']),
+      ),
+      clientInstitution: asNullableString(
+        pickValue(index, ['Cliente / Institucion', 'Cliente / Institución', 'Cliente', 'Institucion', 'Solicitante']),
+      ),
+      orderType: asNullableString(pickValue(index, ['Tipo', 'Type', 'TIPO DE ENTREGA'])),
+      documentNumber: asNullableString(pickValue(index, ['DOCUMENTO'])),
+      contractNumber: asNullableString(pickValue(index, ['CONTRATO'])),
+      customerOrderNumber: asNullableString(
+        pickValue(index, ['PEDIDO CLIENTE ORDEN REPOSICIÓN', 'PEDIDO CLIENTE ORDEN REPOSICION']),
+      ),
+      salesDocument: asNullableString(pickValue(index, ['DOCUMENTO DE VENTA'])),
+      salesDocumentPosition: asNullableString(
+        pickValue(index, ['POSICIÓN DOCUMENTO VENTA', 'POSICION DOCUMENTO VENTA']),
+      ),
+      sku: asNullableString(pickValue(index, ['SKU'])),
+      ccb: asNullableString(pickValue(index, ['CCB'])),
+      laboratory: asNullableString(pickValue(index, ['LABORATORIO'])),
+      status: asNullableString(pickValue(index, ['STATUS'])),
+      orderStatus: asNullableString(pickValue(index, ['Estado Pedido', 'ESTADO PEDIDO'])),
+      rejectionReason: asNullableString(pickValue(index, ['MOTIVO DE RECHAZO'])),
+      deliveryId: asNullableString(pickValue(index, ['ID DELIVERY'])),
+      deliveryPoint: asNullableString(pickValue(index, ['PUNTO DE ENTREGA'])),
+      recipient: asNullableString(pickValue(index, ['DESTINATARIO'])),
+      clues: asNullableString(pickValue(index, ['CLUES'])),
+      fechaPedidoSapMonth,
+      fechaPedidoMonth,
+      fechaCreacionDeliveryMonth: parseDateFieldMonthFirst(
+        pickValue(index, ['FECHA CREACIÓN DELIVERY', 'FECHA CREACION DELIVERY']),
+      ),
+      fechaSalidaMercanciaMonth: parseDateFieldMonthFirst(
+        pickValue(index, ['FECHA SALIDA DE MERCANCIA']),
+      ),
+      fechaMaximaEntregaMonth: parseDateFieldMonthFirst(
+        pickValue(index, ['FECHA MÁXIMA DE ENTREGA', 'FECHA MAXIMA DE ENTREGA']),
+      ),
+      fechaConfirmacionEntregaMonth: parseDateFieldMonthFirst(
+        pickValue(index, ['FECHA CONFIRMACIÓN ENTREGA', 'FECHA CONFIRMACION ENTREGA', 'FECHA ENTREGA MCIA.']),
+      ),
+      tiempoEntregaDiasNaturales: asNullableNumber(
+        pickValue(index, ['TIEMPO ENTREGA DÍAS NATURALES', 'TIEMPO ENTREGA DIAS NATURALES']),
+      ),
+      entregaVsVencimientoDiasNaturales: asNullableNumber(
+        pickValue(index, ['ENTREGA VS VENCIMIENTO DÍAS NATURALES', 'ENTREGA VS VENCIMIENTO DIAS NATURALES']),
+      ),
+      precioUnitario: asNullableNumber(pickValue(index, ['PRECIO UNITARIO'])),
+      importe: asNullableNumber(pickValue(index, ['IMPORTE'])),
+      cantidadTotalPedido,
+      confirmadas,
+      cantidadSuministrada,
+      cantidadEntregada,
+      cantidadFacturada,
+      sancion: asNullableString(pickValue(index, ['SANCIÓN', 'SANCION'])),
+      montoSancion: asNullableNumber(pickValue(index, ['MONTO SANCIÓN', 'MONTO SANCION'])),
+      facturadoChiesi: asNullableString(pickValue(index, ['FACTURADO CHIESI'])),
+      cuentaDias: asNullableNumber(pickValue(index, ['CUENTA DÍAS', 'CUENTA DIAS'])),
+      precioReal: asNullableNumber(pickValue(index, ['PRECIO REAL'])),
+      cantidadFacturadaChiesi: asNullableNumber(pickValue(index, ['CANTIDAD FACTURADA CHIESI'])),
+      montoFacturadoChiesi: asNullableNumber(pickValue(index, ['MONTO FACTURADO CHIESI'])),
+      tipoEntrega: asNullableString(pickValue(index, ['TIPO DE ENTREGA'])),
+      cpm: asNullableString(pickValue(index, ['CPM'])),
+      posiblesCanjes: asNullableNumber(pickValue(index, ['POSIBLES CANJES'])),
+      sourceProductRaw,
+      sourceProductNormalized,
+      periodMonth,
+      orderValue,
+      payload,
+    };
+
+    const dedupKey = [
+      orderScope,
+      periodMonth,
+      normalizeText(normalizedRow.documentNumber ?? ''),
+      normalizeText(normalizedRow.contractNumber ?? ''),
+      normalizeText(normalizedRow.customerOrderNumber ?? ''),
+      normalizeText(normalizedRow.deliveryId ?? ''),
+      normalizeText(normalizedRow.salesDocument ?? ''),
+      normalizeText(normalizedRow.salesDocumentPosition ?? ''),
+      sourceProductNormalized,
+      normalizeText(normalizedRow.sku ?? ''),
+      normalizeText(normalizedRow.clientInstitution ?? ''),
+    ].join('|');
+    if (!dedup.has(dedupKey)) dedup.set(dedupKey, normalizedRow);
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: 'valid',
+      errors: [],
+    });
+  }
+
+  normalizedRows.push(...dedup.values());
+  return { validations, normalizedRows };
+}
+
+async function loadCommercialOperationsDeliveryOrdersStaging(
+  uploadId: string,
+  rows: CommercialOperationsDeliveryOrdersNormalizedRow[],
+  moduleCode: string,
+) {
+  const client = getBigQueryClient();
+  const moduleCodesToReplace =
+    moduleCode === 'commercial_operations_private_orders' || moduleCode === 'private_orders'
+      ? ['commercial_operations_private_orders', 'private_orders']
+      : ['commercial_operations_government_orders', 'government_orders'];
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\` (
+        upload_id STRING,
+        row_number INT64,
+        order_scope STRING,
+        business_type STRING,
+        market STRING,
+        business_unit STRING,
+        unidad_negocio_chiesi STRING,
+        client_institution STRING,
+        order_type STRING,
+        document_number STRING,
+        contract_number STRING,
+        customer_order_number STRING,
+        sales_document STRING,
+        sales_document_position STRING,
+        sku STRING,
+        ccb STRING,
+        laboratory STRING,
+        status STRING,
+        order_status STRING,
+        rejection_reason STRING,
+        delivery_id STRING,
+        delivery_point STRING,
+        recipient STRING,
+        clues STRING,
+        fecha_pedido_sap_month DATE,
+        fecha_pedido_month DATE,
+        fecha_creacion_delivery_month DATE,
+        fecha_salida_mercancia_month DATE,
+        fecha_maxima_entrega_month DATE,
+        fecha_confirmacion_entrega_month DATE,
+        tiempo_entrega_dias_naturales NUMERIC,
+        entrega_vs_vencimiento_dias_naturales NUMERIC,
+        precio_unitario NUMERIC,
+        importe NUMERIC,
+        cantidad_total_pedido NUMERIC,
+        confirmadas NUMERIC,
+        cantidad_suministrada NUMERIC,
+        cantidad_entregada NUMERIC,
+        cantidad_facturada NUMERIC,
+        sancion STRING,
+        monto_sancion NUMERIC,
+        facturado_chiesi STRING,
+        cuenta_dias NUMERIC,
+        precio_real NUMERIC,
+        cantidad_facturada_chiesi NUMERIC,
+        monto_facturado_chiesi NUMERIC,
+        tipo_entrega STRING,
+        cpm STRING,
+        posibles_canjes NUMERIC,
+        source_product_raw STRING,
+        source_product_normalized STRING,
+        period_month DATE,
+        order_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      ADD COLUMN IF NOT EXISTS unidad_negocio_chiesi STRING
+    `,
+    }),
+  );
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      ADD COLUMN IF NOT EXISTS fecha_pedido_sap_month DATE
+    `,
+    }),
+  );
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      ADD COLUMN IF NOT EXISTS cantidad_entregada NUMERIC
+    `,
+    }),
+  );
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      ADD COLUMN IF NOT EXISTS cantidad_facturada NUMERIC
+    `,
+    }),
+  );
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      ADD COLUMN IF NOT EXISTS tiempo_entrega_dias_naturales NUMERIC
+    `,
+    }),
+  );
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      ADD COLUMN IF NOT EXISTS entrega_vs_vencimiento_dias_naturales NUMERIC
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) IN UNNEST(@moduleCodes)
+          AND u.upload_id != @uploadId
+      )
+    `,
+      params: { uploadId, moduleCodes: moduleCodesToReplace },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\`
+    (
+      upload_id,
+      row_number,
+      order_scope,
+      business_type,
+      market,
+      business_unit,
+      unidad_negocio_chiesi,
+      client_institution,
+      order_type,
+      document_number,
+      contract_number,
+      customer_order_number,
+      sales_document,
+      sales_document_position,
+      sku,
+      ccb,
+      laboratory,
+      status,
+      order_status,
+      rejection_reason,
+      delivery_id,
+      delivery_point,
+      recipient,
+      clues,
+      fecha_pedido_sap_month,
+      fecha_pedido_month,
+      fecha_creacion_delivery_month,
+      fecha_salida_mercancia_month,
+      fecha_maxima_entrega_month,
+      fecha_confirmacion_entrega_month,
+      tiempo_entrega_dias_naturales,
+      entrega_vs_vencimiento_dias_naturales,
+      precio_unitario,
+      importe,
+      cantidad_total_pedido,
+      confirmadas,
+      cantidad_suministrada,
+      cantidad_entregada,
+      cantidad_facturada,
+      sancion,
+      monto_sancion,
+      facturado_chiesi,
+      cuenta_dias,
+      precio_real,
+      cantidad_facturada_chiesi,
+      monto_facturado_chiesi,
+      tipo_entrega,
+      cpm,
+      posibles_canjes,
+      source_product_raw,
+      source_product_normalized,
+      period_month,
+      order_value,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.order_scope,
+      NULLIF(row.business_type, ''),
+      NULLIF(row.market, ''),
+      NULLIF(row.business_unit, ''),
+      NULLIF(row.unidad_negocio_chiesi, ''),
+      NULLIF(row.client_institution, ''),
+      NULLIF(row.order_type, ''),
+      NULLIF(row.document_number, ''),
+      NULLIF(row.contract_number, ''),
+      NULLIF(row.customer_order_number, ''),
+      NULLIF(row.sales_document, ''),
+      NULLIF(row.sales_document_position, ''),
+      NULLIF(row.sku, ''),
+      NULLIF(row.ccb, ''),
+      NULLIF(row.laboratory, ''),
+      NULLIF(row.status, ''),
+      NULLIF(row.order_status, ''),
+      NULLIF(row.rejection_reason, ''),
+      NULLIF(row.delivery_id, ''),
+      NULLIF(row.delivery_point, ''),
+      NULLIF(row.recipient, ''),
+      NULLIF(row.clues, ''),
+      IF(row.fecha_pedido_sap_month = '', NULL, DATE(row.fecha_pedido_sap_month)),
+      IF(row.fecha_pedido_month = '', NULL, DATE(row.fecha_pedido_month)),
+      IF(row.fecha_creacion_delivery_month = '', NULL, DATE(row.fecha_creacion_delivery_month)),
+      IF(row.fecha_salida_mercancia_month = '', NULL, DATE(row.fecha_salida_mercancia_month)),
+      IF(row.fecha_maxima_entrega_month = '', NULL, DATE(row.fecha_maxima_entrega_month)),
+      IF(row.fecha_confirmacion_entrega_month = '', NULL, DATE(row.fecha_confirmacion_entrega_month)),
+      SAFE_CAST(row.tiempo_entrega_dias_naturales AS NUMERIC),
+      SAFE_CAST(row.entrega_vs_vencimiento_dias_naturales AS NUMERIC),
+      SAFE_CAST(row.precio_unitario AS NUMERIC),
+      SAFE_CAST(row.importe AS NUMERIC),
+      SAFE_CAST(row.cantidad_total_pedido AS NUMERIC),
+      SAFE_CAST(row.confirmadas AS NUMERIC),
+      SAFE_CAST(row.cantidad_suministrada AS NUMERIC),
+      SAFE_CAST(row.cantidad_entregada AS NUMERIC),
+      SAFE_CAST(row.cantidad_facturada AS NUMERIC),
+      NULLIF(row.sancion, ''),
+      SAFE_CAST(row.monto_sancion AS NUMERIC),
+      NULLIF(row.facturado_chiesi, ''),
+      SAFE_CAST(row.cuenta_dias AS NUMERIC),
+      SAFE_CAST(row.precio_real AS NUMERIC),
+      SAFE_CAST(row.cantidad_facturada_chiesi AS NUMERIC),
+      SAFE_CAST(row.monto_facturado_chiesi AS NUMERIC),
+      NULLIF(row.tipo_entrega, ''),
+      NULLIF(row.cpm, ''),
+      SAFE_CAST(row.posibles_canjes AS NUMERIC),
+      row.source_product_raw,
+      row.source_product_normalized,
+      DATE(row.period_month),
+      SAFE_CAST(row.order_value AS NUMERIC),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1800);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              order_scope: row.orderScope,
+              business_type: row.businessType ?? '',
+              market: row.market ?? '',
+              business_unit: row.businessUnit ?? '',
+              unidad_negocio_chiesi: row.unidadNegocioChiesi ?? '',
+              client_institution: row.clientInstitution ?? '',
+              order_type: row.orderType ?? '',
+              document_number: row.documentNumber ?? '',
+              contract_number: row.contractNumber ?? '',
+              customer_order_number: row.customerOrderNumber ?? '',
+              sales_document: row.salesDocument ?? '',
+              sales_document_position: row.salesDocumentPosition ?? '',
+              sku: row.sku ?? '',
+              ccb: row.ccb ?? '',
+              laboratory: row.laboratory ?? '',
+              status: row.status ?? '',
+              order_status: row.orderStatus ?? '',
+              rejection_reason: row.rejectionReason ?? '',
+              delivery_id: row.deliveryId ?? '',
+              delivery_point: row.deliveryPoint ?? '',
+              recipient: row.recipient ?? '',
+              clues: row.clues ?? '',
+              fecha_pedido_sap_month: row.fechaPedidoSapMonth ?? '',
+              fecha_pedido_month: row.fechaPedidoMonth ?? '',
+              fecha_creacion_delivery_month: row.fechaCreacionDeliveryMonth ?? '',
+              fecha_salida_mercancia_month: row.fechaSalidaMercanciaMonth ?? '',
+              fecha_maxima_entrega_month: row.fechaMaximaEntregaMonth ?? '',
+              fecha_confirmacion_entrega_month: row.fechaConfirmacionEntregaMonth ?? '',
+              tiempo_entrega_dias_naturales:
+                row.tiempoEntregaDiasNaturales == null ? '' : String(row.tiempoEntregaDiasNaturales),
+              entrega_vs_vencimiento_dias_naturales:
+                row.entregaVsVencimientoDiasNaturales == null ? '' : String(row.entregaVsVencimientoDiasNaturales),
+              precio_unitario: row.precioUnitario == null ? '' : String(row.precioUnitario),
+              importe: row.importe == null ? '' : String(row.importe),
+              cantidad_total_pedido: row.cantidadTotalPedido == null ? '' : String(row.cantidadTotalPedido),
+              confirmadas: row.confirmadas == null ? '' : String(row.confirmadas),
+              cantidad_suministrada: row.cantidadSuministrada == null ? '' : String(row.cantidadSuministrada),
+              cantidad_entregada: row.cantidadEntregada == null ? '' : String(row.cantidadEntregada),
+              cantidad_facturada: row.cantidadFacturada == null ? '' : String(row.cantidadFacturada),
+              sancion: row.sancion ?? '',
+              monto_sancion: row.montoSancion == null ? '' : String(row.montoSancion),
+              facturado_chiesi: row.facturadoChiesi ?? '',
+              cuenta_dias: row.cuentaDias == null ? '' : String(row.cuentaDias),
+              precio_real: row.precioReal == null ? '' : String(row.precioReal),
+              cantidad_facturada_chiesi:
+                row.cantidadFacturadaChiesi == null ? '' : String(row.cantidadFacturadaChiesi),
+              monto_facturado_chiesi:
+                row.montoFacturadoChiesi == null ? '' : String(row.montoFacturadoChiesi),
+              tipo_entrega: row.tipoEntrega ?? '',
+              cpm: row.cpm ?? '',
+              posibles_canjes: row.posiblesCanjes == null ? '' : String(row.posiblesCanjes),
+              source_product_raw: row.sourceProductRaw,
+              source_product_normalized: row.sourceProductNormalized,
+              period_month: row.periodMonth,
+              order_value: row.orderValue == null ? '' : String(row.orderValue),
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
+  );
+}
+
+function normalizeCommercialOperationsGovernmentContractProgress(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsGovernmentContractProgressNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+    const sourceProductRaw = asNullableString(
+      pickValue(index, ['PRODUCTO', 'Producto', 'product', 'producto']),
+    );
+    if (!sourceProductRaw) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: missing product in "PRODUCTO" column.'],
+      });
+      continue;
+    }
+
+    const sourceProductNormalized = normalizeText(sourceProductRaw);
+    if (['total', 'subtotal', 'totales'].includes(sourceProductNormalized)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: total/subtotal row.'],
+      });
+      continue;
+    }
+
+    const contractKey = asNullableString(pickValue(index, ['LLAVE', 'Llave', 'Key']));
+    const contractType = asNullableString(pickValue(index, ['TIPO DE CONTRATO', 'Tipo de Contrato']));
+    const vigencia = asNullableString(pickValue(index, ['VIGENCIA', 'Vigencia']));
+    const category = asNullableString(pickValue(index, ['CATEGORIA', 'Categoría', 'Categoria']));
+    const responsible = asNullableString(pickValue(index, ['RESPONSABLE', 'Responsable']));
+    const cbCode = asNullableString(pickValue(index, ['CLAVE DE CB', 'Clave de CB']));
+    const tenderNumber = asNullableString(
+      pickValue(index, ['NO DE LICITACIÓN/PROCEDIMIENTO', 'NO DE LICITACION/PROCEDIMIENTO']),
+    );
+    const contractNumber = asNullableString(pickValue(index, ['NUMERO DE CONTRATO', 'NÚMERO DE CONTRATO']));
+    const eventType = asNullableString(pickValue(index, ['TIPO DE EVENTO', 'Tipo de Evento']));
+    const centralizedOpd = asNullableString(pickValue(index, ['CENTRALIZADO / OPD', 'CENTRALIZADO/OPD']));
+    const centralInstitution = asNullableString(pickValue(index, ['INSTITUCIÓN CENTRAL', 'INSTITUCION CENTRAL']));
+    const institution = asNullableString(pickValue(index, ['INSTITUCIÓN', 'INSTITUCION']));
+    const assignedTo = asNullableString(pickValue(index, ['CONTRATO ASIGNADO A', 'Contrato Asignado A']));
+    const businessModel = asNullableString(pickValue(index, ['MODELO DE NEGOCIO', 'Modelo de Negocio']));
+    const assignmentStatus = asNullableString(pickValue(index, ['Estatus de Asignacion', 'Estatus de Asignación']));
+    const businessUnit = asNullableString(pickValue(index, ['UNIDAD DE NEGOCIO', 'Unidad de Negocio', 'BU']));
+    const total2025 = asNullableQuantityNumber(pickValue(index, ['TOTAL 2025']));
+    const total2026 = asNullableQuantityNumber(pickValue(index, ['TOTAL 2026']));
+    const maxQuantity2025 = asNullableQuantityNumber(
+      pickValue(index, ['CANTIDAD MÁXIMA 2025', 'CANTIDAD MAXIMA 2025']),
+    );
+    const maxQuantity2026 = asNullableQuantityNumber(
+      pickValue(index, ['CANTIDAD MÁXIMA 2026', 'CANTIDAD MAXIMA 2026']),
+    );
+    const total2025_2026 = asNullableQuantityNumber(pickValue(index, ['TOTAL 2025-2026']));
+    const progressPctTotal = asNullableNumber(
+      pickValue(index, ['PORCENTAJE DE AVANCE TOTAL DEL CONTRATO']),
+    );
+    const progressPct2025 = asNullableNumber(pickValue(index, ['PORCENTAJE DE AVANCE 2025']));
+    const progressPct2026 = asNullableNumber(pickValue(index, ['PORCENTAJE DE AVANCE 2026']));
+    const contractTotalQuantity = asNullableQuantityNumber(
+      pickValue(index, ['CANTIDAD TOTAL DEL CONTRATO']),
+    );
+    const maxQuantity2025ByHeader = asNullableQuantityNumber(
+      pickPayloadContractQuantityByYear(payload, 2025) ??
+      pickPayloadValueByExactNormalizedHeader(payload, 'cantidad maxima 2025'),
+    );
+    const maxQuantity2026ByHeader = asNullableQuantityNumber(
+      pickPayloadContractQuantityByYear(payload, 2026) ??
+      pickPayloadValueByExactNormalizedHeader(payload, 'cantidad maxima 2026'),
+    );
+    const total2025_2026ByHeader = asNullableQuantityNumber(
+      pickPayloadValueByExactNormalizedHeader(payload, 'total 2025 2026'),
+    );
+    const contractTotalByHeader = asNullableQuantityNumber(
+      pickPayloadValueByExactNormalizedHeader(payload, 'cantidad total del contrato'),
+    );
+
+    const resolvedMaxQuantity2025 = maxQuantity2025ByHeader ?? maxQuantity2025;
+    const resolvedMaxQuantity2026 = maxQuantity2026ByHeader ?? maxQuantity2026;
+    const resolvedTotal2025_2026 = total2025_2026ByHeader ?? total2025_2026;
+    const resolvedMaxContractQuantity = contractTotalByHeader ?? contractTotalQuantity;
+
+    const periodValues = new Map<string, number>();
+    for (const [key, rawValue] of Object.entries(payload)) {
+      if (key.toLowerCase().startsWith('column_')) continue;
+      const periodMonth = parseMonthHeaderWithExcelSerial(key);
+      if (!periodMonth) continue;
+      const deliveredQuantity = asNullableQuantityNumber(rawValue);
+      if (deliveredQuantity == null) continue;
+      const existing = periodValues.get(periodMonth);
+      if (existing == null) {
+        periodValues.set(periodMonth, deliveredQuantity);
+      } else {
+        // If the same month appears twice in one row (different header renderings),
+        // keep a single value and prefer the one with larger magnitude.
+        if (Math.abs(deliveredQuantity) > Math.abs(existing)) {
+          periodValues.set(periodMonth, deliveredQuantity);
+        }
+      }
+    }
+
+    for (const [periodMonth, deliveredQuantity] of periodValues.entries()) {
+      const normalizedRow: CommercialOperationsGovernmentContractProgressNormalizedRow = {
+        rowNumber: row.row_number,
+        contractKey,
+        contractType,
+        vigencia,
+        category,
+        responsible,
+        cbCode,
+        sourceProductRaw,
+        sourceProductNormalized,
+        tenderNumber,
+        contractNumber,
+        eventType,
+        centralizedOpd,
+        centralInstitution,
+        institution,
+        assignedTo,
+        businessModel,
+        assignmentStatus,
+        businessUnit,
+        periodMonth,
+        deliveredQuantity,
+        maxQuantity2025: resolvedMaxQuantity2025,
+        maxQuantity2026: resolvedMaxQuantity2026,
+        total2025,
+        total2026,
+        total2025_2026: resolvedTotal2025_2026,
+        progressPctTotal,
+        progressPct2025,
+        progressPct2026,
+        maxContractQuantity: resolvedMaxContractQuantity,
+        contractTotalQuantity: resolvedMaxContractQuantity ?? contractTotalQuantity,
+        payload,
+      };
+      normalizedRows.push(normalizedRow);
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: periodValues.size > 0 ? 'valid' : 'skipped',
+      errors:
+        periodValues.size > 0
+          ? []
+          : ['Skipped: no monthly delivered values were found in period columns.'],
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadCommercialOperationsGovernmentContractProgressStaging(
+  uploadId: string,
+  rows: CommercialOperationsGovernmentContractProgressNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\` (
+        upload_id STRING,
+        row_number INT64,
+        contract_key STRING,
+        contract_type STRING,
+        vigencia STRING,
+        category STRING,
+        responsible STRING,
+        cb_code STRING,
+        source_product_raw STRING,
+        source_product_normalized STRING,
+        tender_number STRING,
+        contract_number STRING,
+        event_type STRING,
+        centralized_opd STRING,
+        central_institution STRING,
+        institution STRING,
+        assigned_to STRING,
+        business_model STRING,
+        assignment_status STRING,
+        business_unit STRING,
+        period_month DATE,
+        delivered_quantity NUMERIC,
+        max_quantity_2025 NUMERIC,
+        max_quantity_2026 NUMERIC,
+        total_2025 NUMERIC,
+        total_2026 NUMERIC,
+        total_2025_2026 NUMERIC,
+        progress_pct_total NUMERIC,
+        progress_pct_2025 NUMERIC,
+        progress_pct_2026 NUMERIC,
+        max_contract_quantity NUMERIC,
+        contract_total_quantity NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      ADD COLUMN IF NOT EXISTS max_quantity_2025 NUMERIC
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      ADD COLUMN IF NOT EXISTS max_quantity_2026 NUMERIC
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      ADD COLUMN IF NOT EXISTS max_contract_quantity NUMERIC
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) IN (
+          'commercial_operations_government_contract_progress',
+          'government_contract_progress',
+          'contract_progress',
+          'pcfp'
+        )
+          AND u.upload_id != @uploadId
+      )
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_government_contract_progress\`
+    (
+      upload_id,
+      row_number,
+      contract_key,
+      contract_type,
+      vigencia,
+      category,
+      responsible,
+      cb_code,
+      source_product_raw,
+      source_product_normalized,
+      tender_number,
+      contract_number,
+      event_type,
+      centralized_opd,
+      central_institution,
+      institution,
+      assigned_to,
+      business_model,
+      assignment_status,
+      business_unit,
+      period_month,
+      delivered_quantity,
+      max_quantity_2025,
+      max_quantity_2026,
+      total_2025,
+      total_2026,
+      total_2025_2026,
+      progress_pct_total,
+      progress_pct_2025,
+      progress_pct_2026,
+      max_contract_quantity,
+      contract_total_quantity,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      NULLIF(row.contract_key, ''),
+      NULLIF(row.contract_type, ''),
+      NULLIF(row.vigencia, ''),
+      NULLIF(row.category, ''),
+      NULLIF(row.responsible, ''),
+      NULLIF(row.cb_code, ''),
+      row.source_product_raw,
+      row.source_product_normalized,
+      NULLIF(row.tender_number, ''),
+      NULLIF(row.contract_number, ''),
+      NULLIF(row.event_type, ''),
+      NULLIF(row.centralized_opd, ''),
+      NULLIF(row.central_institution, ''),
+      NULLIF(row.institution, ''),
+      NULLIF(row.assigned_to, ''),
+      NULLIF(row.business_model, ''),
+      NULLIF(row.assignment_status, ''),
+      NULLIF(row.business_unit, ''),
+      DATE(row.period_month),
+      SAFE_CAST(row.delivered_quantity AS NUMERIC),
+      SAFE_CAST(row.max_quantity_2025 AS NUMERIC),
+      SAFE_CAST(row.max_quantity_2026 AS NUMERIC),
+      SAFE_CAST(row.total_2025 AS NUMERIC),
+      SAFE_CAST(row.total_2026 AS NUMERIC),
+      SAFE_CAST(row.total_2025_2026 AS NUMERIC),
+      SAFE_CAST(row.progress_pct_total AS NUMERIC),
+      SAFE_CAST(row.progress_pct_2025 AS NUMERIC),
+      SAFE_CAST(row.progress_pct_2026 AS NUMERIC),
+      SAFE_CAST(row.max_contract_quantity AS NUMERIC),
+      SAFE_CAST(row.contract_total_quantity AS NUMERIC),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1500);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              contract_key: row.contractKey ?? '',
+              contract_type: row.contractType ?? '',
+              vigencia: row.vigencia ?? '',
+              category: row.category ?? '',
+              responsible: row.responsible ?? '',
+              cb_code: row.cbCode ?? '',
+              source_product_raw: row.sourceProductRaw,
+              source_product_normalized: row.sourceProductNormalized,
+              tender_number: row.tenderNumber ?? '',
+              contract_number: row.contractNumber ?? '',
+              event_type: row.eventType ?? '',
+              centralized_opd: row.centralizedOpd ?? '',
+              central_institution: row.centralInstitution ?? '',
+              institution: row.institution ?? '',
+              assigned_to: row.assignedTo ?? '',
+              business_model: row.businessModel ?? '',
+              assignment_status: row.assignmentStatus ?? '',
+              business_unit: row.businessUnit ?? '',
+              period_month: row.periodMonth,
+              delivered_quantity: String(row.deliveredQuantity),
+              max_quantity_2025: row.maxQuantity2025 == null ? '' : String(row.maxQuantity2025),
+              max_quantity_2026: row.maxQuantity2026 == null ? '' : String(row.maxQuantity2026),
+              total_2025: row.total2025 == null ? '' : String(row.total2025),
+              total_2026: row.total2026 == null ? '' : String(row.total2026),
+              total_2025_2026: row.total2025_2026 == null ? '' : String(row.total2025_2026),
+              progress_pct_total: row.progressPctTotal == null ? '' : String(row.progressPctTotal),
+              progress_pct_2025: row.progressPct2025 == null ? '' : String(row.progressPct2025),
+              progress_pct_2026: row.progressPct2026 == null ? '' : String(row.progressPct2026),
+              max_contract_quantity: row.maxContractQuantity == null ? '' : String(row.maxContractQuantity),
+              contract_total_quantity: row.contractTotalQuantity == null ? '' : String(row.contractTotalQuantity),
               source_payload_json: JSON.stringify(row.payload),
             })),
           },
@@ -2923,7 +4663,7 @@ async function loadHumanResourcesMetricStaging(uploadId: string, rows: HumanReso
       NULLIF(row.area, ''),
       DATE(row.period_month),
       SAFE_CAST(row.metric_value AS NUMERIC),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -3130,7 +4870,7 @@ async function loadHumanResourcesTurnoverStaging(
       NULLIF(row.gender, ''),
       NULLIF(row.grade, ''),
       NULLIF(row.termination_ad_rationale, ''),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -3386,7 +5126,7 @@ async function loadHumanResourcesTrainingStaging(
       IF(row.last_update_time_month = '', NULL, DATE(row.last_update_time_month)),
       NULLIF(row.e_signature_meaning_code, ''),
       NULLIF(row.comments, ''),
-      PARSE_JSON(row.source_payload_json),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
       CURRENT_TIMESTAMP()
     FROM UNNEST(@rows) AS row
   `;
@@ -3437,6 +5177,197 @@ async function loadHumanResourcesTrainingStaging(
       });
     },
     4,
+  );
+}
+
+async function loadOpexMasterCatalogStaging(
+  uploadId: string,
+  rows: OpexMasterCatalogNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_opex_master_catalog\` (
+        upload_id STRING,
+        row_number INT64,
+        key1 STRING,
+        key2 STRING,
+        account STRING,
+        pl_group STRING,
+        area STRING,
+        ceco STRING,
+        ceco_name STRING,
+        cost_element STRING,
+        element STRING,
+        business_unit STRING,
+        owner STRING,
+        responsible STRING,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_opex_master_catalog\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_opex_master_catalog\`
+    (
+      upload_id, row_number, key1, key2, account, pl_group, area, ceco, ceco_name,
+      cost_element, element, business_unit, owner, responsible, source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.key1,
+      NULLIF(row.key2, ''),
+      NULLIF(row.account, ''),
+      NULLIF(row.pl_group, ''),
+      NULLIF(row.area, ''),
+      NULLIF(row.ceco, ''),
+      NULLIF(row.ceco_name, ''),
+      NULLIF(row.cost_element, ''),
+      NULLIF(row.element, ''),
+      NULLIF(row.business_unit, ''),
+      NULLIF(row.owner, ''),
+      NULLIF(row.responsible, ''),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItemsByApproxBytes(rows, {
+    maxBytesPerChunk: 2_000_000,
+    maxItemsPerChunk: 2000,
+    estimateBytes: (row) =>
+      String(row.key1 ?? '').length +
+      String(row.key2 ?? '').length +
+      String(row.periodMonth ?? '').length +
+      String(row.metricName ?? '').length +
+      128,
+  });
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              key1: row.key1,
+              key2: row.key2 ?? '',
+              account: row.account ?? '',
+              pl_group: row.plGroup ?? '',
+              area: row.area ?? '',
+              ceco: row.ceco ?? '',
+              ceco_name: row.cecoName ?? '',
+              cost_element: row.costElement ?? '',
+              element: row.element ?? '',
+              business_unit: row.businessUnit ?? '',
+              owner: row.owner ?? '',
+              responsible: row.responsible ?? '',
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
+  );
+}
+
+async function loadOpexMovementsStaging(
+  uploadId: string,
+  rows: OpexMovementNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_opex_movements\` (
+        upload_id STRING,
+        row_number INT64,
+        key1 STRING,
+        key2 STRING,
+        period_month DATE,
+        metric_name STRING,
+        amount_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_opex_movements\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_opex_movements\`
+    (
+      upload_id, row_number, key1, key2, period_month, metric_name, amount_value, source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.key1,
+      NULLIF(row.key2, ''),
+      DATE(row.period_month),
+      row.metric_name,
+      SAFE_CAST(row.amount_value AS NUMERIC),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 5000);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              key1: row.key1,
+              key2: row.key2 ?? '',
+              period_month: row.periodMonth,
+              metric_name: row.metricName,
+              amount_value: String(row.amountValue),
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
   );
 }
 
@@ -3540,11 +5471,47 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
+  if (
+    moduleCode === 'commercial_operations_government_orders' ||
+    moduleCode === 'government_orders' ||
+    moduleCode === 'commercial_operations_private_orders' ||
+    moduleCode === 'private_orders'
+  ) {
+    const { validations, normalizedRows } = normalizeCommercialOperationsDeliveryOrdersV2(rows, moduleCode);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsDeliveryOrdersStaging(uploadId, normalizedRows, moduleCode);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
   if (moduleCode === 'commercial_operations_stocks' || moduleCode === 'stocks') {
     const { validations, normalizedRows } = normalizeCommercialOperationsStocks(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadCommercialOperationsStocksStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (
+    moduleCode === 'commercial_operations_government_contract_progress' ||
+    moduleCode === 'government_contract_progress' ||
+    moduleCode === 'contract_progress' ||
+    moduleCode === 'pcfp'
+  ) {
+    const { validations, normalizedRows } = normalizeCommercialOperationsGovernmentContractProgress(rows);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsGovernmentContractProgressStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'opex_by_cc' || moduleCode === 'opex_master_catalog') {
+    const master = normalizeOpexByCcMasterCatalog(rows);
+    const movements = normalizeOpexByCcMovements(rows);
+    await updateRawValidationStatus(uploadId, master.validations);
+    await loadOpexMasterCatalogStaging(uploadId, master.normalizedRows);
+    await loadOpexMovementsStaging(uploadId, movements.normalizedRows);
+    return buildNormalizeUploadResult(
+      master.validations,
+      master.normalizedRows.length + movements.normalizedRows.length,
+    );
   }
 
   throw new Error(`No normalizer configured for module "${moduleCode}".`);

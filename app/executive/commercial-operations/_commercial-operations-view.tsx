@@ -4,8 +4,10 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 import {
   getCommercialOperationsAuditSources,
+  getCommercialOperationsDeliveryOrderRows,
   getCommercialOperationsDsoOverview,
   getCommercialOperationsDsoTrend,
+  getCommercialOperationsGovernmentContractProgressRows,
   getCommercialOperationsStocksRows,
 } from '@/lib/data/commercial-operations';
 import { getAdminTargets } from '@/lib/data/targets';
@@ -57,8 +59,11 @@ function formatSigned(value: number | null | undefined) {
 
 function tagMetricLine(text: string) {
   const isDoh = text.startsWith('[DOH] ');
+  const isGcp = text.startsWith('[GCP] ');
+  const isDso = !isDoh && !isGcp;
   const cleanText = isDoh ? text.replace('[DOH] ', '') : text;
-  return `${isDoh ? 'DOH' : 'DSO'}|||${cleanText}`;
+  const cleanText2 = isGcp ? cleanText.replace('[GCP] ', '') : cleanText;
+  return `${isDoh ? 'DOH' : isGcp ? 'GCP' : isDso ? 'DSO' : 'DSO'}|||${cleanText2}`;
 }
 
 function getDsoTargetByGroup(
@@ -100,6 +105,27 @@ function getCommercialOperationsStockTargets(
     totalDays: total,
     privateDays: privateTarget,
     publicDays,
+  };
+}
+
+function getCommercialOperationsDeliveryTargets(
+  targetRows: Awaited<ReturnType<typeof getAdminTargets>>,
+) {
+  const normalizeLabel = (value: string) => value.toLowerCase().trim().replace(/\s+/g, ' ');
+  const rows = targetRows.filter((item) => item.isActive);
+  const findTarget = (pattern: RegExp) =>
+    rows.find((item) => pattern.test(normalizeLabel(item.kpiName ?? ''))) ?? null;
+
+  const fillRateGovernment = findTarget(/^fill\s*rate\s+gobierno$/i)?.targetValueNumeric ?? null;
+  const fillRatePrivate = findTarget(/^fill\s*rate\s+privado$/i)?.targetValueNumeric ?? null;
+  const leadTimeGovernment = findTarget(/^lead\s*time\s+gobierno$/i)?.targetValueNumeric ?? null;
+  const leadTimePrivate = findTarget(/^lead\s*time\s+privado$/i)?.targetValueNumeric ?? null;
+
+  return {
+    fillRateGovernment,
+    fillRatePrivate,
+    leadTimeGovernment,
+    leadTimePrivate,
   };
 }
 
@@ -281,6 +307,11 @@ function formatOneDecimal(value: number | null | undefined) {
   return value.toFixed(1);
 }
 
+function formatInteger(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+
 function ChannelBadge({ channel }: { channel: 'Private' | 'Public' }) {
   const classes =
     channel === 'Private'
@@ -308,6 +339,22 @@ type StockChannelSummary = {
   targetDoh: number | null;
   variance: number | null;
   momDelta: number | null;
+};
+
+type GovernmentContractsSummary = {
+  progress2026Pct: number | null;
+  target2026Pct: number | null;
+  variancePp: number | null;
+};
+
+type DeliveryGlobalSummary = {
+  scopeLabel: string;
+  fillRatePct: number | null;
+  fillRateTargetPct: number | null;
+  fillRateVariancePp: number | null;
+  leadTimeDays: number | null;
+  leadTimeTargetDays: number | null;
+  leadTimeVarianceDays: number | null;
 };
 
 function buildStockTotalSummary(
@@ -405,11 +452,143 @@ function buildStockChannelSummaries(
   return [aggregateScope('total'), aggregateScope('private'), aggregateScope('public')];
 }
 
-function DsoGlobalCards({ rows, stockTotalSummary }: { rows: DsoScorecardRow[]; stockTotalSummary: StockTotalSummary }) {
+function normalizeGovernmentStage(value: string | null | undefined): 'ordenado' | 'entregado' | 'facturado' | 'other' {
+  const text = (value ?? '').toLowerCase().trim();
+  if (!text) return 'other';
+  if (text.includes('orden')) return 'ordenado';
+  if (text.includes('entreg')) return 'entregado';
+  if (text.includes('factur')) return 'facturado';
+  return 'other';
+}
+
+function buildGovernmentContractsSummary(
+  rows: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>,
+): GovernmentContractsSummary {
+  let scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'ordenado');
+  if (scopedRows.length === 0) scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'entregado');
+  if (scopedRows.length === 0) scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'facturado');
+  if (scopedRows.length === 0) {
+    return { progress2026Pct: null, target2026Pct: null, variancePp: null };
+  }
+
+  const currentYear = (() => {
+    const anchor =
+      scopedRows.map((row) => row.reportPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ??
+      scopedRows.map((row) => row.latestPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ??
+      null;
+    if (!anchor) return null;
+    const parsed = new Date(`${anchor}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return String(parsed.getUTCFullYear());
+  })();
+  const yearPrefix = currentYear ? `${currentYear}-` : null;
+
+  const delivered2026 = scopedRows
+    .filter((row) => row.isYtd && (!yearPrefix || row.periodMonth.startsWith(yearPrefix)))
+    .reduce((sum, row) => sum + row.deliveredQuantity, 0);
+
+  const denominatorSnapshotMonth =
+    scopedRows
+      .map((row) => row.periodMonth)
+      .filter((value) => Boolean(value))
+      .sort()
+      .at(0) ?? null;
+  const max2026 = denominatorSnapshotMonth
+    ? scopedRows
+        .filter((row) => row.periodMonth === denominatorSnapshotMonth)
+        .reduce((sum, row) => sum + (row.maxQuantity2026Safe ?? row.maxQuantity2026 ?? 0), 0)
+    : 0;
+  const progress2026Pct = max2026 > 0 ? (delivered2026 / max2026) * 100 : null;
+
+  const ytdMonths = new Set(
+    scopedRows
+      .filter((row) => row.isYtd && (!yearPrefix || row.periodMonth.startsWith(yearPrefix)))
+      .map((row) => row.periodMonth),
+  ).size;
+  const target2026Pct = ytdMonths > 0 ? (ytdMonths / 12) * 100 : null;
+
+  return {
+    progress2026Pct,
+    target2026Pct,
+    variancePp:
+      progress2026Pct != null && target2026Pct != null ? progress2026Pct - target2026Pct : null,
+  };
+}
+
+function buildDeliveryGlobalSummary(
+  rows: Awaited<ReturnType<typeof getCommercialOperationsDeliveryOrderRows>>,
+  targets: ReturnType<typeof getCommercialOperationsDeliveryTargets>,
+): DeliveryGlobalSummary {
+  const availableScopes = new Set(
+    rows.map((row) => (row.orderScope ?? '').toLowerCase().trim()).filter((scope) => scope === 'government' || scope === 'private'),
+  );
+  const hasGovernment = availableScopes.has('government');
+  const hasPrivate = availableScopes.has('private');
+  const scope: 'government' | 'private' | 'total' =
+    hasGovernment && hasPrivate ? 'total' : hasPrivate ? 'private' : 'government';
+
+  const scopedRows = rows.filter((row) => {
+    const rowScope = (row.orderScope ?? '').toLowerCase().trim();
+    if (scope === 'total') return rowScope === 'government' || rowScope === 'private';
+    return rowScope === scope;
+  });
+  const sourceAsOf = scopedRows
+    .map((row) => row.sourceAsOfMonth)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1);
+  const boundedRows = sourceAsOf
+    ? scopedRows.filter((row) => row.periodMonth <= sourceAsOf)
+    : scopedRows;
+  const ytdRows = boundedRows.filter((row) => row.isYtd);
+  const requested = ytdRows.reduce((sum, row) => sum + row.cantidadTotalPedido, 0);
+  const delivered = ytdRows.reduce((sum, row) => sum + row.cantidadEntregada, 0);
+  const leadRows = ytdRows
+    .map((row) => row.leadTimeDays)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  const fillRatePct = requested > 0 ? (delivered / requested) * 100 : null;
+  const leadTimeDays =
+    leadRows.length > 0 ? leadRows.reduce((a, b) => a + b, 0) / leadRows.length : null;
+
+  const fillRateTargetPct =
+    scope === 'government'
+      ? targets.fillRateGovernment
+      : scope === 'private'
+        ? targets.fillRatePrivate
+        : null;
+  const leadTimeTargetDays =
+    scope === 'government'
+      ? targets.leadTimeGovernment
+      : scope === 'private'
+        ? targets.leadTimePrivate
+        : null;
+
+  return {
+    scopeLabel: scope === 'government' ? 'Government' : scope === 'private' ? 'Private' : 'Total',
+    fillRatePct,
+    fillRateTargetPct,
+    fillRateVariancePp:
+      fillRatePct != null && fillRateTargetPct != null ? fillRatePct - fillRateTargetPct : null,
+    leadTimeDays,
+    leadTimeTargetDays,
+    leadTimeVarianceDays:
+      leadTimeDays != null && leadTimeTargetDays != null ? leadTimeDays - leadTimeTargetDays : null,
+  };
+}
+
+function DsoGlobalCards({
+  rows,
+  stockTotalSummary,
+  governmentContractsSummary,
+  deliveryGlobalSummary,
+}: {
+  rows: DsoScorecardRow[];
+  stockTotalSummary: StockTotalSummary;
+  governmentContractsSummary: GovernmentContractsSummary;
+  deliveryGlobalSummary: DeliveryGlobalSummary;
+}) {
   const normalizeLabel = (value: string) => value.toLowerCase().trim().replace(/\s+/g, ' ');
   const annualGeneral = rows.find((row) => normalizeLabel(row.groupName) === normalizeLabel('Anual / General')) ?? null;
-  const trackedGroups = rows.filter((row) => row.target != null).length;
-  const onTrackGroups = rows.filter((row) => row.variance != null && row.variance <= 0).length;
   const totalCurrent = stockTotalSummary.currentDoh;
   const totalTarget = stockTotalSummary.targetDoh;
   const totalVariance = stockTotalSummary.variance;
@@ -432,12 +611,44 @@ function DsoGlobalCards({ rows, stockTotalSummary }: { rows: DsoScorecardRow[]; 
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Tracked vs Target</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{trackedGroups}</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Government Contracts</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+          {governmentContractsSummary.progress2026Pct == null
+            ? 'N/A'
+            : `${governmentContractsSummary.progress2026Pct.toFixed(1)}%`}
+        </p>
+        <p
+          className={`mt-2 text-sm ${
+            governmentContractsSummary.variancePp == null
+              ? 'text-slate-600'
+              : governmentContractsSummary.variancePp >= 0
+                ? 'text-emerald-700'
+                : 'text-rose-700'
+          }`}
+        >
+          Target:{' '}
+          {governmentContractsSummary.target2026Pct == null
+            ? 'N/A'
+            : `${governmentContractsSummary.target2026Pct.toFixed(1)}%`}{' '}
+          | Variance:{' '}
+          {governmentContractsSummary.variancePp == null
+            ? 'N/A'
+            : `${governmentContractsSummary.variancePp > 0 ? '+' : ''}${governmentContractsSummary.variancePp.toFixed(1)}pp`}
+        </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">On Track (MTH)</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{onTrackGroups}</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Fill Rate &amp; Lead Time</p>
+        <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+          FR {deliveryGlobalSummary.fillRatePct == null ? 'N/A' : `${deliveryGlobalSummary.fillRatePct.toFixed(1)}%`} | LT{' '}
+          {deliveryGlobalSummary.leadTimeDays == null ? 'N/A' : `${deliveryGlobalSummary.leadTimeDays.toFixed(1)}d`}
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          {deliveryGlobalSummary.scopeLabel} available data
+        </p>
+        <p className="text-xs text-slate-600">
+          Target FR {deliveryGlobalSummary.fillRateTargetPct == null ? 'N/A' : `${deliveryGlobalSummary.fillRateTargetPct.toFixed(1)}%`} | LT{' '}
+          {deliveryGlobalSummary.leadTimeTargetDays == null ? 'N/A' : `${deliveryGlobalSummary.leadTimeTargetDays.toFixed(1)}d`}
+        </p>
       </article>
     </div>
   );
@@ -447,10 +658,14 @@ function DsoInsightsPanel({
   rows,
   channelBrandSignals,
   stockChannelSummaries,
+  governmentContractRows,
+  deliveryGlobalSummary,
 }: {
   rows: DsoScorecardRow[];
   channelBrandSignals: ChannelBrandSignal[];
   stockChannelSummaries: StockChannelSummary[];
+  governmentContractRows: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>;
+  deliveryGlobalSummary: DeliveryGlobalSummary;
 }) {
   const normalizeLabel = (value: string) => value.toLowerCase().trim();
   const annualGeneral = rows.find((row) => normalizeLabel(row.groupName) === 'anual / general') ?? null;
@@ -568,6 +783,210 @@ function DsoInsightsPanel({
     dohNarrative.push('No conclusive DOH signal was detected at total/channel level in this cut.');
   }
 
+  const governmentCurrentYear = (() => {
+    const anchor =
+      governmentContractRows
+        .map((row) => row.reportPeriodMonth)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1) ??
+      governmentContractRows
+        .map((row) => row.latestPeriodMonth)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1) ??
+      null;
+    if (!anchor) return null;
+    const parsed = new Date(`${anchor}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.getUTCFullYear();
+  })();
+  const governmentPreviousYear = governmentCurrentYear != null ? governmentCurrentYear - 1 : null;
+  const governmentYearPrefix = governmentCurrentYear != null ? `${governmentCurrentYear}-` : null;
+
+  const buildProgressByBU = (stage: 'ordenado' | 'entregado' | 'facturado') => {
+    const stageRows = governmentContractRows.filter((row) => normalizeGovernmentStage(row.category) === stage);
+    if (stageRows.length === 0) return [] as Array<{
+      bu: string;
+      deliveredYtd: number;
+      maxCy: number;
+      progressPct: number | null;
+      targetPct: number | null;
+      variancePp: number | null;
+    }>;
+    const denominatorSnapshotMonth =
+      stageRows
+        .map((row) => row.periodMonth)
+        .filter((value) => Boolean(value))
+        .sort()
+        .at(0) ?? null;
+    const ytdRows = stageRows.filter(
+      (row) => row.isYtd && (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)),
+    );
+    const targetPct = (() => {
+      const months = new Set(ytdRows.map((row) => row.periodMonth)).size;
+      return months > 0 ? (months / 12) * 100 : null;
+    })();
+    const deliveredByBu = new Map<string, number>();
+    for (const row of ytdRows) {
+      const bu = (row.businessUnit ?? 'Unassigned').trim() || 'Unassigned';
+      deliveredByBu.set(bu, (deliveredByBu.get(bu) ?? 0) + row.deliveredQuantity);
+    }
+    const maxByBu = new Map<string, number>();
+    for (const row of denominatorSnapshotMonth ? stageRows.filter((item) => item.periodMonth === denominatorSnapshotMonth) : []) {
+      const bu = (row.businessUnit ?? 'Unassigned').trim() || 'Unassigned';
+      const maxCy = row.maxQuantity2026Safe ?? row.maxQuantity2026 ?? 0;
+      maxByBu.set(bu, (maxByBu.get(bu) ?? 0) + maxCy);
+    }
+    const bus = new Set<string>([...deliveredByBu.keys(), ...maxByBu.keys()]);
+    return [...bus]
+      .map((bu) => {
+        const deliveredYtd = deliveredByBu.get(bu) ?? 0;
+        const maxCy = maxByBu.get(bu) ?? 0;
+        const progressPct = maxCy > 0 ? (deliveredYtd / maxCy) * 100 : null;
+        return {
+          bu,
+          deliveredYtd,
+          maxCy,
+          progressPct,
+          targetPct,
+          variancePp: progressPct != null && targetPct != null ? progressPct - targetPct : null,
+        };
+      })
+      .sort((a, b) => (b.progressPct ?? -Infinity) - (a.progressPct ?? -Infinity));
+  };
+
+  const deliveredByBu = buildProgressByBU('entregado');
+  const orderedByBu = buildProgressByBU('ordenado');
+  const invoicedByBu = buildProgressByBU('facturado');
+  const bestBu = [...deliveredByBu]
+    .filter((row) => row.variancePp != null)
+    .sort((a, b) => (b.variancePp ?? -Infinity) - (a.variancePp ?? -Infinity))[0] ?? null;
+  const worstBu = [...deliveredByBu]
+    .filter((row) => row.variancePp != null)
+    .sort((a, b) => (a.variancePp ?? Infinity) - (b.variancePp ?? Infinity))[0] ?? null;
+
+  const topDeliveredBrandInBu = (bu: string) => {
+    const rows = governmentContractRows.filter(
+      (row) =>
+        normalizeGovernmentStage(row.category) === 'entregado' &&
+        (row.businessUnit ?? 'Unassigned').trim() === bu &&
+        row.isYtd &&
+        (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)),
+    );
+    const byBrand = new Map<string, number>();
+    rows.forEach((row) => {
+      const brand = (row.brandName ?? row.canonicalProductName ?? row.sourceProductRaw ?? 'Unassigned').trim() || 'Unassigned';
+      byBrand.set(brand, (byBrand.get(brand) ?? 0) + row.deliveredQuantity);
+    });
+    const top = [...byBrand.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
+    return top ? { brand: top[0], qty: top[1] } : null;
+  };
+
+  const paymentGapByInstitution = (() => {
+    const delivered = new Map<string, number>();
+    const invoiced = new Map<string, number>();
+    governmentContractRows
+      .filter((row) => row.isYtd && (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)))
+      .forEach((row) => {
+        const institution = (row.institution ?? 'Unassigned').trim() || 'Unassigned';
+        if (normalizeGovernmentStage(row.category) === 'entregado') {
+          delivered.set(institution, (delivered.get(institution) ?? 0) + row.deliveredQuantity);
+        }
+        if (normalizeGovernmentStage(row.category) === 'facturado') {
+          invoiced.set(institution, (invoiced.get(institution) ?? 0) + row.deliveredQuantity);
+        }
+      });
+    return [...new Set([...delivered.keys(), ...invoiced.keys()])]
+      .map((institution) => {
+        const d = delivered.get(institution) ?? 0;
+        const f = invoiced.get(institution) ?? 0;
+        return { institution, delivered: d, invoiced: f, gap: d - f };
+      })
+      .filter((row) => row.gap > 0)
+      .sort((a, b) => b.gap - a.gap)[0] ?? null;
+  })();
+
+  const governmentNarrative: string[] = [];
+  const funnelRow = (rowsByBu: Array<{ progressPct: number | null }>) =>
+    rowsByBu.length > 0
+      ? rowsByBu
+          .map((row) => row.progressPct)
+          .filter((v): v is number => v != null && !Number.isNaN(v))
+          .reduce((a, b, _, arr) => a + b / arr.length, 0)
+      : null;
+  const orderedProgress = funnelRow(orderedByBu);
+  const deliveredProgress = funnelRow(deliveredByBu);
+  const invoicedProgress = funnelRow(invoicedByBu);
+  if (orderedProgress != null || deliveredProgress != null || invoicedProgress != null) {
+    governmentNarrative.push(
+      `Funnel ${governmentPreviousYear ?? 'PY'}-${governmentCurrentYear ?? 'CY'}: Ordered ${orderedProgress == null ? 'N/A' : `${orderedProgress.toFixed(1)}%`} -> Delivered ${deliveredProgress == null ? 'N/A' : `${deliveredProgress.toFixed(1)}%`} -> Invoiced ${invoicedProgress == null ? 'N/A' : `${invoicedProgress.toFixed(1)}%`}.`,
+    );
+  }
+  if (bestBu?.variancePp != null) {
+    const topBrand = topDeliveredBrandInBu(bestBu.bu);
+    governmentNarrative.push(
+      `Best BU progression: ${bestBu.bu} at ${bestBu.progressPct?.toFixed(1)}% (${bestBu.variancePp > 0 ? '+' : ''}${bestBu.variancePp.toFixed(1)}pp vs proportional target)${topBrand ? `, led by ${topBrand.brand}` : ''}.`,
+    );
+  }
+  if (worstBu?.variancePp != null) {
+    const topBrand = topDeliveredBrandInBu(worstBu.bu);
+    governmentNarrative.push(
+      `Main BU lag: ${worstBu.bu} at ${worstBu.progressPct?.toFixed(1)}% (${worstBu.variancePp.toFixed(1)}pp vs proportional target)${topBrand ? `, with pressure on ${topBrand.brand}` : ''}.`,
+    );
+  }
+  if (paymentGapByInstitution) {
+    governmentNarrative.push(
+      `Institution follow-up signal: ${paymentGapByInstitution.institution} shows delivered ${formatInteger(paymentGapByInstitution.delivered)} vs invoiced ${formatInteger(paymentGapByInstitution.invoiced)} (gap ${formatInteger(paymentGapByInstitution.gap)}).`,
+    );
+  }
+  if (governmentNarrative.length === 0) {
+    governmentNarrative.push('No conclusive government contract progression signal was detected in this cut.');
+  }
+
+  const deliveryNarrative: string[] = [];
+  if (deliveryGlobalSummary.fillRatePct != null) {
+    deliveryNarrative.push(
+      `Public delivery fill rate is ${deliveryGlobalSummary.fillRatePct.toFixed(1)}% vs target ${
+        deliveryGlobalSummary.fillRateTargetPct == null ? 'N/A' : `${deliveryGlobalSummary.fillRateTargetPct.toFixed(1)}%`
+      } (${
+        deliveryGlobalSummary.fillRateVariancePp == null
+          ? 'N/A'
+          : `${deliveryGlobalSummary.fillRateVariancePp > 0 ? '+' : ''}${deliveryGlobalSummary.fillRateVariancePp.toFixed(1)}pp`
+      }).`,
+    );
+  }
+  if (deliveryGlobalSummary.leadTimeDays != null) {
+    deliveryNarrative.push(
+      `Public lead time is ${deliveryGlobalSummary.leadTimeDays.toFixed(1)} days vs target ${
+        deliveryGlobalSummary.leadTimeTargetDays == null
+          ? 'N/A'
+          : `${deliveryGlobalSummary.leadTimeTargetDays.toFixed(1)} days`
+      } (${
+        deliveryGlobalSummary.leadTimeVarianceDays == null
+          ? 'N/A'
+          : `${deliveryGlobalSummary.leadTimeVarianceDays > 0 ? '+' : ''}${deliveryGlobalSummary.leadTimeVarianceDays.toFixed(1)} days`
+      }).`,
+    );
+  }
+  if (
+    deliveryGlobalSummary.fillRateVariancePp != null &&
+    deliveryGlobalSummary.leadTimeVarianceDays != null
+  ) {
+    const fillOk = deliveryGlobalSummary.fillRateVariancePp >= 0;
+    const leadOk = deliveryGlobalSummary.leadTimeVarianceDays <= 0;
+    if (fillOk && leadOk) {
+      deliveryNarrative.push('Public delivery execution is on-track on both service (fill rate) and responsiveness (lead time).');
+    } else if (!fillOk && !leadOk) {
+      deliveryNarrative.push('Public delivery execution is under pressure on both fill rate and lead time; service recovery should be prioritized.');
+    } else {
+      deliveryNarrative.push('Public delivery execution shows mixed performance between fill rate and lead time; focus on the lagging KPI.');
+    }
+  }
+  if (deliveryNarrative.length === 0) {
+    deliveryNarrative.push('No conclusive public delivery signal was detected in this cut.');
+  }
+
   return (
     <div className="space-y-4">
       <article className="rounded-[24px] border border-indigo-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
@@ -587,6 +1006,24 @@ function DsoInsightsPanel({
           ))}
         </div>
       </article>
+
+      <article className="rounded-[24px] border border-fuchsia-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+        <p className="text-xs uppercase tracking-[0.16em] text-fuchsia-700">Government Progress Narrative</p>
+        <div className="mt-3 space-y-2 text-sm text-slate-700">
+          {governmentNarrative.map((item) => (
+            <p key={`gov-${item}`}>- {item}</p>
+          ))}
+        </div>
+      </article>
+
+      <article className="rounded-[24px] border border-emerald-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+        <p className="text-xs uppercase tracking-[0.16em] text-emerald-700">Delivery Narrative</p>
+        <div className="mt-3 space-y-2 text-sm text-slate-700">
+          {deliveryNarrative.map((item) => (
+            <p key={`del-${item}`}>- {item}</p>
+          ))}
+        </div>
+      </article>
     </div>
   );
 }
@@ -595,10 +1032,12 @@ function DsoScorecardPanel({
   rows,
   sources,
   channelBrandSignals,
+  governmentContractRows,
 }: {
   rows: DsoScorecardRow[];
   sources: Awaited<ReturnType<typeof getCommercialOperationsAuditSources>>;
   channelBrandSignals: ChannelBrandSignal[];
+  governmentContractRows: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>;
 }) {
   const veryDeviated = rows.filter((row) => row.variance != null && row.variance > 20);
   const controlledDeviation = rows.filter((row) => row.variance != null && row.variance > 0 && row.variance <= 20);
@@ -608,6 +1047,185 @@ function DsoScorecardPanel({
   const working: string[] = [];
   const improve: string[] = [];
   const actions: string[] = [];
+
+  const governmentYearPrefix = (() => {
+    const anchor =
+      governmentContractRows
+        .map((row) => row.reportPeriodMonth)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1) ??
+      governmentContractRows
+        .map((row) => row.latestPeriodMonth)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1) ??
+      null;
+    if (!anchor) return null;
+    const parsed = new Date(`${anchor}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return `${parsed.getUTCFullYear()}-`;
+  })();
+
+  const stageSummary = (stage: 'ordenado' | 'entregado' | 'facturado') => {
+    const stageRows = governmentContractRows.filter((row) => normalizeGovernmentStage(row.category) === stage);
+    if (stageRows.length === 0) return null;
+    const denominatorSnapshotMonth =
+      stageRows
+        .map((row) => row.periodMonth)
+        .filter((value) => Boolean(value))
+        .sort()
+        .at(0) ?? null;
+    const denominatorRows = denominatorSnapshotMonth
+      ? stageRows.filter((row) => row.periodMonth === denominatorSnapshotMonth)
+      : [];
+    const deliveredYtd = stageRows
+      .filter((row) => row.isYtd && (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)))
+      .reduce((sum, row) => sum + row.deliveredQuantity, 0);
+    const max2026 = denominatorRows.reduce((sum, row) => sum + (row.maxQuantity2026Safe ?? row.maxQuantity2026 ?? 0), 0);
+    const progress2026Pct = max2026 > 0 ? (deliveredYtd / max2026) * 100 : null;
+    const ytdMonths = new Set(
+      stageRows
+        .filter((row) => row.isYtd && (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)))
+        .map((row) => row.periodMonth),
+    ).size;
+    const target2026Pct = ytdMonths > 0 ? (ytdMonths / 12) * 100 : null;
+    return {
+      stage,
+      deliveredYtd,
+      max2026,
+      progress2026Pct,
+      target2026Pct,
+      variancePp:
+        progress2026Pct != null && target2026Pct != null ? progress2026Pct - target2026Pct : null,
+    };
+  };
+
+  const buildProgressByDimension = (
+    stage: 'ordenado' | 'entregado' | 'facturado',
+    keySelector: (row: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>[number]) => string,
+  ) => {
+    const stageRows = governmentContractRows.filter((row) => normalizeGovernmentStage(row.category) === stage);
+    if (stageRows.length === 0) return [] as Array<{
+      key: string;
+      deliveredYtd: number;
+      max2026: number;
+      progress2026Pct: number | null;
+      target2026Pct: number | null;
+      variancePp: number | null;
+    }>;
+
+    const denominatorSnapshotMonth =
+      stageRows
+        .map((row) => row.periodMonth)
+        .filter((value) => Boolean(value))
+        .sort()
+        .at(0) ?? null;
+    const ytdRows = stageRows.filter(
+      (row) => row.isYtd && (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)),
+    );
+    const target2026Pct = (() => {
+      const months = new Set(ytdRows.map((row) => row.periodMonth)).size;
+      return months > 0 ? (months / 12) * 100 : null;
+    })();
+
+    const deliveredByKey = new Map<string, number>();
+    for (const row of ytdRows) {
+      const key = keySelector(row) || 'Unassigned';
+      deliveredByKey.set(key, (deliveredByKey.get(key) ?? 0) + row.deliveredQuantity);
+    }
+
+    const maxByKey = new Map<string, number>();
+    for (const row of denominatorSnapshotMonth ? stageRows.filter((item) => item.periodMonth === denominatorSnapshotMonth) : []) {
+      const key = keySelector(row) || 'Unassigned';
+      const max2026 = row.maxQuantity2026Safe ?? row.maxQuantity2026 ?? 0;
+      maxByKey.set(key, (maxByKey.get(key) ?? 0) + max2026);
+    }
+
+    const keys = new Set<string>([...deliveredByKey.keys(), ...maxByKey.keys()]);
+    return [...keys].map((key) => {
+      const deliveredYtd = deliveredByKey.get(key) ?? 0;
+      const max2026 = maxByKey.get(key) ?? 0;
+      const progress2026Pct = max2026 > 0 ? (deliveredYtd / max2026) * 100 : null;
+      return {
+        key,
+        deliveredYtd,
+        max2026,
+        progress2026Pct,
+        target2026Pct,
+        variancePp:
+          progress2026Pct != null && target2026Pct != null ? progress2026Pct - target2026Pct : null,
+      };
+    });
+  };
+
+  const orderedSummary = stageSummary('ordenado');
+  const deliveredSummary = stageSummary('entregado');
+  const invoicedSummary = stageSummary('facturado');
+  const deliveredByInstitution = buildProgressByDimension('entregado', (row) => (row.institution ?? '').trim());
+  const deliveredByBrand = buildProgressByDimension(
+    'entregado',
+    (row) => `${(row.marketGroup ?? 'Unassigned').trim()} - ${(row.brandName ?? row.canonicalProductName ?? row.sourceProductRaw ?? 'Unassigned').trim()}`,
+  );
+
+  const institutionGaps = deliveredByInstitution
+    .filter((row) => row.progress2026Pct != null && row.target2026Pct != null)
+    .sort((a, b) => (a.variancePp ?? 0) - (b.variancePp ?? 0));
+  const brandGaps = deliveredByBrand
+    .filter((row) => row.progress2026Pct != null && row.target2026Pct != null)
+    .sort((a, b) => (a.variancePp ?? 0) - (b.variancePp ?? 0));
+  const institutionsAhead = [...institutionGaps].reverse().filter((row) => (row.variancePp ?? -Infinity) >= 0);
+  const institutionsLagging = institutionGaps.filter((row) => (row.variancePp ?? Infinity) < 0);
+  const brandsAhead = [...brandGaps].reverse().filter((row) => (row.variancePp ?? -Infinity) >= 0);
+  const brandsLagging = brandGaps.filter((row) => (row.variancePp ?? Infinity) < 0);
+
+  const ytdQtyByInstitution = (stage: 'entregado' | 'facturado') => {
+    const map = new Map<string, number>();
+    governmentContractRows
+      .filter(
+        (row) =>
+          normalizeGovernmentStage(row.category) === stage &&
+          row.isYtd &&
+          (!governmentYearPrefix || row.periodMonth.startsWith(governmentYearPrefix)),
+      )
+      .forEach((row) => {
+        const key = (row.institution ?? '').trim() || 'Unassigned';
+        map.set(key, (map.get(key) ?? 0) + row.deliveredQuantity);
+      });
+    return map;
+  };
+  const deliveredQtyByInstitution = ytdQtyByInstitution('entregado');
+  const invoicedQtyByInstitution = ytdQtyByInstitution('facturado');
+  const paymentGapByInstitution = [...new Set([...deliveredQtyByInstitution.keys(), ...invoicedQtyByInstitution.keys()])]
+    .map((institution) => {
+      const delivered = deliveredQtyByInstitution.get(institution) ?? 0;
+      const invoiced = invoicedQtyByInstitution.get(institution) ?? 0;
+      return { institution, delivered, invoiced, gap: delivered - invoiced };
+    })
+    .filter((row) => row.gap > 0)
+    .sort((a, b) => b.gap - a.gap);
+
+  const orderedByInstitution = buildProgressByDimension('ordenado', (row) => (row.institution ?? '').trim());
+  const deliveredByInstitutionMap = new Map(deliveredByInstitution.map((item) => [item.key, item]));
+  const orderedDeliveredDelta = orderedByInstitution
+    .map((ordered) => {
+      const delivered = deliveredByInstitutionMap.get(ordered.key);
+      if (ordered.progress2026Pct == null || delivered?.progress2026Pct == null) return null;
+      return {
+        institution: ordered.key,
+        orderedProgress: ordered.progress2026Pct,
+        deliveredProgress: delivered.progress2026Pct,
+        deltaPp: delivered.progress2026Pct - ordered.progress2026Pct,
+      };
+    })
+    .filter((row): row is { institution: string; orderedProgress: number; deliveredProgress: number; deltaPp: number } => Boolean(row));
+  const avgOrderedDeliveredDelta =
+    orderedDeliveredDelta.length > 0
+      ? orderedDeliveredDelta.reduce((sum, row) => sum + row.deltaPp, 0) / orderedDeliveredDelta.length
+      : null;
+  const orderedDeliveredRisks = orderedDeliveredDelta
+    .filter((row) => avgOrderedDeliveredDelta != null && row.deltaPp < avgOrderedDeliveredDelta)
+    .sort((a, b) => a.deltaPp - b.deltaPp);
 
   if (onTrack.length > 0) {
     const best = [...onTrack].sort((a, b) => (a.variance ?? 0) - (b.variance ?? 0))[0];
@@ -637,12 +1255,14 @@ function DsoScorecardPanel({
   }
 
   if (veryDeviated.length > 0) {
-    veryDeviated
+    const topVeryDeviated = veryDeviated
       .sort((a, b) => (b.variance ?? 0) - (a.variance ?? 0))
-      .slice(0, 3)
-      .forEach((row) => {
-        improve.push(`${row.groupName} is very deviated (+${(row.variance ?? 0).toFixed(1)} days vs target).`);
-      });
+      .slice(0, 3);
+    improve.push(
+      `Very deviated groups: ${topVeryDeviated
+        .map((row) => `${row.groupName} (+${(row.variance ?? 0).toFixed(1)} days)`)
+        .join(' | ')} vs target.`,
+    );
   }
 
   if (controlledDeviation.length > 0) {
@@ -719,6 +1339,74 @@ function DsoScorecardPanel({
   if (riskSignals.length > 0) {
     actions.push(
       '[DOH] Prioritize recovery in risk segments by channel (reduce stock exposure and stabilize sell-out cadence in above-target/increasing DOH items).',
+    );
+  }
+
+  if (deliveredSummary?.variancePp != null) {
+    if (deliveredSummary.variancePp >= 0) {
+      working.push(
+        `[GCP] Delivered progress is above proportional target by +${deliveredSummary.variancePp.toFixed(1)}pp (${deliveredSummary.progress2026Pct?.toFixed(1)}% vs target ${deliveredSummary.target2026Pct?.toFixed(1)}%).`,
+      );
+    } else {
+      improve.push(
+        `[GCP] Delivered progress is below proportional target by ${deliveredSummary.variancePp.toFixed(1)}pp (${deliveredSummary.progress2026Pct?.toFixed(1)}% vs target ${deliveredSummary.target2026Pct?.toFixed(1)}%).`,
+      );
+    }
+  }
+  if (institutionsAhead.length > 0) {
+    const leader = institutionsAhead[0];
+    working.push(
+      `[GCP] Institution ahead of target: ${leader.key} (${leader.progress2026Pct?.toFixed(1)}%, ${leader.variancePp != null ? `${leader.variancePp > 0 ? '+' : ''}${leader.variancePp.toFixed(1)}pp` : 'N/A'} vs target).`,
+    );
+  }
+  if (brandsAhead.length > 0) {
+    const leader = brandsAhead[0];
+    working.push(
+      `[GCP] Brand ahead of target: ${leader.key} (${leader.progress2026Pct?.toFixed(1)}%, ${leader.variancePp != null ? `${leader.variancePp > 0 ? '+' : ''}${leader.variancePp.toFixed(1)}pp` : 'N/A'}).`,
+    );
+  }
+  institutionsLagging.slice(0, 2).forEach((row) => {
+    return row;
+  });
+  if (institutionsLagging.length > 0) {
+    const topInstitutionLagging = institutionsLagging.slice(0, 3);
+    improve.push(
+      `[GCP] Institutions lagging target: ${topInstitutionLagging
+        .map((row) => `${row.key} (${row.progress2026Pct?.toFixed(1)}%, ${row.variancePp?.toFixed(1)}pp)`)
+        .join(' | ')}.`,
+    );
+  }
+  if (brandsLagging.length > 0) {
+    const topBrandLagging = brandsLagging.slice(0, 3);
+    improve.push(
+      `[GCP] Brands lagging target: ${topBrandLagging
+        .map((row) => `${row.key} (${row.progress2026Pct?.toFixed(1)}%, ${row.variancePp?.toFixed(1)}pp)`)
+        .join(' | ')}.`,
+    );
+  }
+
+  if (paymentGapByInstitution.length > 0) {
+    const worstGap = paymentGapByInstitution[0];
+    improve.push(
+      `[GCP] Potential pending payment proxy: ${worstGap.institution} has delivered ${formatInteger(worstGap.delivered)} vs invoiced ${formatInteger(worstGap.invoiced)} (gap ${formatInteger(worstGap.gap)}).`,
+    );
+    actions.push(
+      '[GCP] Prioritize collection follow-up where delivered is materially above invoiced to reduce working-capital exposure.',
+    );
+  }
+
+  if (orderedDeliveredRisks.length > 0) {
+    const highestRisk = orderedDeliveredRisks[0];
+    improve.push(
+      `[GCP] Conversion risk: ${highestRisk.institution} shows lower delivered progress than ordered progress (${highestRisk.orderedProgress.toFixed(1)}% -> ${highestRisk.deliveredProgress.toFixed(1)}%).`,
+    );
+    actions.push(
+      '[GCP] Focus execution on contracts where ordered progression materially outpaces delivered progression.',
+    );
+  }
+  if (orderedSummary?.progress2026Pct != null && deliveredSummary?.progress2026Pct != null && invoicedSummary?.progress2026Pct != null) {
+    working.push(
+      `[GCP] Funnel visibility enabled: Ordered ${orderedSummary.progress2026Pct.toFixed(1)}% -> Delivered ${deliveredSummary.progress2026Pct.toFixed(1)}% -> Invoiced ${invoicedSummary.progress2026Pct.toFixed(1)}%.`,
     );
   }
   const workingTagged = working.map(tagMetricLine);
@@ -861,6 +1549,65 @@ function DsoScorecardPanel({
         </div>
       </article>
 
+      <article className="rounded-[24px] border border-fuchsia-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-[0.16em] text-fuchsia-700">Government Contract Funnel</p>
+          <p className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+            ORDENADO → ENTREGADO → FACTURADO
+          </p>
+        </div>
+        <div className="mt-4 grid gap-3 xl:grid-cols-4">
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Ordered Progress 2026</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">
+              {orderedSummary?.progress2026Pct == null ? 'N/A' : `${orderedSummary.progress2026Pct.toFixed(1)}%`}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Target {orderedSummary?.target2026Pct == null ? 'N/A' : `${orderedSummary.target2026Pct.toFixed(1)}%`}
+            </p>
+          </div>
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Delivered Progress 2026</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">
+              {deliveredSummary?.progress2026Pct == null ? 'N/A' : `${deliveredSummary.progress2026Pct.toFixed(1)}%`}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Target {deliveredSummary?.target2026Pct == null ? 'N/A' : `${deliveredSummary.target2026Pct.toFixed(1)}%`}
+            </p>
+          </div>
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Invoiced Progress 2026</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900">
+              {invoicedSummary?.progress2026Pct == null ? 'N/A' : `${invoicedSummary.progress2026Pct.toFixed(1)}%`}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Target {invoicedSummary?.target2026Pct == null ? 'N/A' : `${invoicedSummary.target2026Pct.toFixed(1)}%`}
+            </p>
+          </div>
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Funnel Ratios</p>
+            <p className="mt-2 text-sm text-slate-800">
+              ENT/ORD:{' '}
+              {orderedSummary?.progress2026Pct && deliveredSummary?.progress2026Pct
+                ? `${((deliveredSummary.progress2026Pct / orderedSummary.progress2026Pct) * 100).toFixed(1)}%`
+                : 'N/A'}
+            </p>
+            <p className="mt-1 text-sm text-slate-800">
+              FAC/ENT:{' '}
+              {deliveredSummary?.progress2026Pct && invoicedSummary?.progress2026Pct
+                ? `${((invoicedSummary.progress2026Pct / deliveredSummary.progress2026Pct) * 100).toFixed(1)}%`
+                : 'N/A'}
+            </p>
+            <p className="mt-1 text-sm text-slate-800">
+              FAC/ORD:{' '}
+              {orderedSummary?.progress2026Pct && invoicedSummary?.progress2026Pct
+                ? `${((invoicedSummary.progress2026Pct / orderedSummary.progress2026Pct) * 100).toFixed(1)}%`
+                : 'N/A'}
+            </p>
+          </div>
+        </div>
+      </article>
+
       <ScorecardInsightSections
         working={workingTagged}
         improve={improveTagged}
@@ -933,15 +1680,20 @@ export async function CommercialOperationsView({
   const sourceAsOfMonth = sources.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
   const publishedCount = sources.filter((row) => row.status === 'published').length;
 
-  const [dsoOverviewRows, targetRows, stockRows] = await Promise.all([
+  const [dsoOverviewRows, targetRows, stockRows, governmentContractRows, deliveryOrderRows] = await Promise.all([
     getCommercialOperationsDsoOverview(selectedReportingVersionId || undefined),
     getAdminTargets('commercial_operations', selectedReportingVersionId || undefined, selectedPeriodMonth || undefined),
     getCommercialOperationsStocksRows(selectedReportingVersionId || undefined),
+    getCommercialOperationsGovernmentContractProgressRows(selectedReportingVersionId || undefined),
+    getCommercialOperationsDeliveryOrderRows(selectedReportingVersionId || undefined),
   ]);
   const stockTargets = getCommercialOperationsStockTargets(targetRows);
+  const deliveryTargets = getCommercialOperationsDeliveryTargets(targetRows);
   const channelBrandSignals = buildChannelBrandSignals(stockRows, stockTargets);
   const stockTotalSummary = buildStockTotalSummary(stockRows, stockTargets);
   const stockChannelSummaries = buildStockChannelSummaries(stockRows, stockTargets);
+  const governmentContractsSummary = buildGovernmentContractsSummary(governmentContractRows);
+  const deliveryGlobalSummary = buildDeliveryGlobalSummary(deliveryOrderRows, deliveryTargets);
 
   const dsoTrendRows =
     viewMode === 'dashboard'
@@ -1017,15 +1769,16 @@ export async function CommercialOperationsView({
                 {formatMonth(reportPeriodMonth)}
               </span>
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">
-                <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Source As Of</span>{' '}
-                {formatMonth(sourceAsOfMonth)}
-              </span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5">
                 <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Published Sources</span>{' '}
-                {publishedCount}/5
+                {publishedCount}/{sources.length}
               </span>
             </div>
-            <DsoGlobalCards rows={dsoScoreRows} stockTotalSummary={stockTotalSummary} />
+            <DsoGlobalCards
+              rows={dsoScoreRows}
+              stockTotalSummary={stockTotalSummary}
+              governmentContractsSummary={governmentContractsSummary}
+              deliveryGlobalSummary={deliveryGlobalSummary}
+            />
 
             <DsoDashboardPanel
               overviewRows={dsoOverviewRows}
@@ -1033,7 +1786,14 @@ export async function CommercialOperationsView({
               tableRows={dsoTableRows}
               initialGroup="Anual / General"
               stockRows={stockRows}
+              governmentContractRows={governmentContractRows}
+              deliveryOrderRows={deliveryOrderRows}
               stockTargets={stockTargets}
+              deliveryTargets={deliveryTargets}
+              contractsSourceAsOfMonth={
+                sources.find((row) => row.moduleCode === 'commercial_operations_government_contract_progress')
+                  ?.sourceAsOfMonth ?? null
+              }
             />
           </div>
         ) : viewMode === 'scorecard' ? (
@@ -1048,8 +1808,18 @@ export async function CommercialOperationsView({
                 {formatMonth(sourceAsOfMonth)}
               </span>
             </div>
-            <DsoGlobalCards rows={dsoScoreRows} stockTotalSummary={stockTotalSummary} />
-            <DsoScorecardPanel rows={dsoScoreRows} sources={sources} channelBrandSignals={channelBrandSignals} />
+            <DsoGlobalCards
+              rows={dsoScoreRows}
+              stockTotalSummary={stockTotalSummary}
+              governmentContractsSummary={governmentContractsSummary}
+              deliveryGlobalSummary={deliveryGlobalSummary}
+            />
+            <DsoScorecardPanel
+              rows={dsoScoreRows}
+              sources={sources}
+              channelBrandSignals={channelBrandSignals}
+              governmentContractRows={governmentContractRows}
+            />
           </div>
         ) : viewMode === 'insights' ? (
           <div className="space-y-4">
@@ -1063,11 +1833,18 @@ export async function CommercialOperationsView({
                 {formatMonth(sourceAsOfMonth)}
               </span>
             </div>
-            <DsoGlobalCards rows={dsoScoreRows} stockTotalSummary={stockTotalSummary} />
+            <DsoGlobalCards
+              rows={dsoScoreRows}
+              stockTotalSummary={stockTotalSummary}
+              governmentContractsSummary={governmentContractsSummary}
+              deliveryGlobalSummary={deliveryGlobalSummary}
+            />
             <DsoInsightsPanel
               rows={dsoScoreRows}
               channelBrandSignals={channelBrandSignals}
               stockChannelSummaries={stockChannelSummaries}
+              governmentContractRows={governmentContractRows}
+              deliveryGlobalSummary={deliveryGlobalSummary}
             />
           </div>
         ) : (

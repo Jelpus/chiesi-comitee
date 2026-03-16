@@ -5,6 +5,7 @@ export type AppNavItem = {
 
 export const appNavigation: AppNavItem[] = [
   { href: '/', label: 'Home' },
+  { href: '/forms', label: 'Forms' },
   { href: '/admin', label: 'Admin' },
   { href: '/admin/periods', label: 'Periods' },
   { href: '/admin/versions', label: 'Versions' },
@@ -13,6 +14,7 @@ export const appNavigation: AppNavItem[] = [
   { href: '/admin/tables', label: 'Tables' },
   { href: '/admin/products', label: 'Products' },
   { href: '/admin/targets', label: 'Targets' },
+  { href: '/admin/opex-groups', label: 'Opex Groups' },
   { href: '/executive', label: 'Executive' },
   { href: '/executive/sales-internal', label: 'Sales Internal' },
   { href: '/executive/business-excellence', label: 'Business Excellence' },

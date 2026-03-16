@@ -9,6 +9,7 @@ export type AdminTargetRow = {
   periodMonth: string | null;
   area: string;
   kpiName: string;
+  kpiLabel: string | null;
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
@@ -23,6 +24,7 @@ export type UpsertTargetInput = {
   periodMonth: string;
   area: string;
   kpiName: string;
+  kpiLabel?: string | null;
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
@@ -34,11 +36,45 @@ const TARGETS_TABLE = 'chiesi-committee.chiesi_committee_admin.kpi_targets';
 
 let ensureTargetsTablePromise: Promise<void> | null = null;
 
+function isBigQueryUpdateRateLimitError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('job exceeded rate limits') ||
+    message.includes('table exceeded quota for table update operations') ||
+    message.includes('exceeded quota for table update operations')
+  );
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function queryWithUpdateRateLimitRetry<T>(
+  run: () => Promise<T>,
+  maxAttempts = 7,
+): Promise<T> {
+  let attempt = 0;
+  let delayMs = 1500;
+  while (true) {
+    try {
+      return await run();
+    } catch (error) {
+      attempt += 1;
+      if (!isBigQueryUpdateRateLimitError(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+      await sleep(delayMs);
+      delayMs *= 2;
+    }
+  }
+}
+
 async function ensureTargetsTable() {
   if (!ensureTargetsTablePromise) {
     ensureTargetsTablePromise = (async () => {
       const client = getBigQueryClient();
-      await client.query({
+      await queryWithUpdateRateLimitRetry(() => client.query({
         query: `
           CREATE TABLE IF NOT EXISTS \`${TARGETS_TABLE}\` (
             target_id STRING,
@@ -48,6 +84,7 @@ async function ensureTargetsTable() {
             period_month DATE,
             area STRING,
             kpi_name STRING,
+            kpi_label STRING,
             qty_unit STRING,
             target_value_text STRING,
             target_value_numeric NUMERIC,
@@ -58,31 +95,37 @@ async function ensureTargetsTable() {
             updated_by STRING
           )
         `,
-      });
-      await client.query({
+      }));
+      await queryWithUpdateRateLimitRetry(() => client.query({
+        query: `
+          ALTER TABLE \`${TARGETS_TABLE}\`
+          ADD COLUMN IF NOT EXISTS kpi_label STRING
+        `,
+      }));
+      await queryWithUpdateRateLimitRetry(() => client.query({
         query: `
           ALTER TABLE \`${TARGETS_TABLE}\`
           ADD COLUMN IF NOT EXISTS revision_number INT64
         `,
-      });
-      await client.query({
+      }));
+      await queryWithUpdateRateLimitRetry(() => client.query({
         query: `
           ALTER TABLE \`${TARGETS_TABLE}\`
           ADD COLUMN IF NOT EXISTS is_deleted BOOL
         `,
-      });
-      await client.query({
+      }));
+      await queryWithUpdateRateLimitRetry(() => client.query({
         query: `
           ALTER TABLE \`${TARGETS_TABLE}\`
           ADD COLUMN IF NOT EXISTS reporting_version_id STRING
         `,
-      });
-      await client.query({
+      }));
+      await queryWithUpdateRateLimitRetry(() => client.query({
         query: `
           ALTER TABLE \`${TARGETS_TABLE}\`
           ADD COLUMN IF NOT EXISTS period_month DATE
         `,
-      });
+      }));
     })();
   }
   await ensureTargetsTablePromise;
@@ -120,7 +163,6 @@ export async function getAdminTargets(
   reportingVersionId?: string,
   periodMonth?: string,
 ): Promise<AdminTargetRow[]> {
-  await ensureTargetsTable();
   const client = getBigQueryClient();
   const { whereClauses, params } = buildTargetFilters(area, reportingVersionId, periodMonth);
 
@@ -135,6 +177,7 @@ export async function getAdminTargets(
           period_month,
           area,
           kpi_name,
+          kpi_label,
           qty_unit,
           target_value_text,
           CAST(target_value_numeric AS FLOAT64) AS target_value_numeric,
@@ -157,6 +200,7 @@ export async function getAdminTargets(
           CAST(period_month AS STRING) AS period_month,
           area,
           kpi_name,
+          kpi_label,
           qty_unit,
           target_value_text,
           target_value_numeric,
@@ -181,6 +225,7 @@ export async function getAdminTargets(
         period_month,
         area,
         kpi_name,
+        kpi_label,
         qty_unit,
         target_value_text,
         target_value_numeric,
@@ -201,6 +246,7 @@ export async function getAdminTargets(
     periodMonth: row.period_month == null ? null : String(row.period_month),
     area: String(row.area ?? ''),
     kpiName: String(row.kpi_name ?? ''),
+    kpiLabel: row.kpi_label == null ? null : String(row.kpi_label),
     qtyUnit: String(row.qty_unit ?? ''),
     targetValueText: String(row.target_value_text ?? ''),
     targetValueNumeric: row.target_value_numeric == null ? null : Number(row.target_value_numeric),
@@ -211,7 +257,6 @@ export async function getAdminTargets(
 }
 
 export async function getAdminTargetAreas(reportingVersionId?: string, periodMonth?: string): Promise<string[]> {
-  await ensureTargetsTable();
   const client = getBigQueryClient();
   const { whereClauses, params } = buildTargetFilters(undefined, reportingVersionId, periodMonth);
 
@@ -268,6 +313,7 @@ type LatestTargetRevision = {
   periodMonth: string;
   area: string;
   kpiName: string;
+  kpiLabel: string | null;
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
@@ -287,6 +333,7 @@ async function getLatestTargetRevisionById(targetId: string): Promise<LatestTarg
         CAST(period_month AS STRING) AS period_month,
         area,
         kpi_name,
+        kpi_label,
         qty_unit,
         target_value_text,
         CAST(target_value_numeric AS FLOAT64) AS target_value_numeric,
@@ -310,6 +357,7 @@ async function getLatestTargetRevisionById(targetId: string): Promise<LatestTarg
     periodMonth: String(row.period_month ?? ''),
     area: String(row.area ?? ''),
     kpiName: String(row.kpi_name ?? ''),
+    kpiLabel: row.kpi_label == null ? null : String(row.kpi_label),
     qtyUnit: String(row.qty_unit ?? ''),
     targetValueText: String(row.target_value_text ?? ''),
     targetValueNumeric: row.target_value_numeric == null ? null : Number(row.target_value_numeric),
@@ -332,6 +380,7 @@ async function getLatestTargetRevisionByNaturalKey(input: UpsertTargetInput): Pr
           CAST(period_month AS STRING) AS period_month,
           area,
           kpi_name,
+          kpi_label,
           qty_unit,
           target_value_text,
           CAST(target_value_numeric AS FLOAT64) AS target_value_numeric,
@@ -355,6 +404,7 @@ async function getLatestTargetRevisionByNaturalKey(input: UpsertTargetInput): Pr
         period_month,
         area,
         kpi_name,
+        kpi_label,
         qty_unit,
         target_value_text,
         target_value_numeric,
@@ -383,6 +433,7 @@ async function getLatestTargetRevisionByNaturalKey(input: UpsertTargetInput): Pr
     periodMonth: String(row.period_month ?? ''),
     area: String(row.area ?? ''),
     kpiName: String(row.kpi_name ?? ''),
+    kpiLabel: row.kpi_label == null ? null : String(row.kpi_label),
     qtyUnit: String(row.qty_unit ?? ''),
     targetValueText: String(row.target_value_text ?? ''),
     targetValueNumeric: row.target_value_numeric == null ? null : Number(row.target_value_numeric),
@@ -398,6 +449,7 @@ async function appendTargetRevision(params: {
   periodMonth: string;
   area: string;
   kpiName: string;
+  kpiLabel: string | null;
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
@@ -407,7 +459,7 @@ async function appendTargetRevision(params: {
   updatedBy: string;
 }) {
   const client = getBigQueryClient();
-  await client.query({
+  await queryWithUpdateRateLimitRetry(() => client.query({
     query: `
       INSERT INTO \`${TARGETS_TABLE}\`
       (
@@ -418,6 +470,7 @@ async function appendTargetRevision(params: {
         period_month,
         area,
         kpi_name,
+        kpi_label,
         qty_unit,
         target_value_text,
         target_value_numeric,
@@ -435,6 +488,7 @@ async function appendTargetRevision(params: {
         DATE(@periodMonth),
         @area,
         @kpiName,
+        @kpiLabel,
         @qtyUnit,
         @targetValueText,
         SAFE_CAST(@targetValueNumeric AS NUMERIC),
@@ -445,7 +499,24 @@ async function appendTargetRevision(params: {
         @updatedBy
     `,
     params,
-  });
+    types: {
+      targetId: 'STRING',
+      revisionNumber: 'INT64',
+      isDeleted: 'BOOL',
+      reportingVersionId: 'STRING',
+      periodMonth: 'STRING',
+      area: 'STRING',
+      kpiName: 'STRING',
+      kpiLabel: 'STRING',
+      qtyUnit: 'STRING',
+      targetValueText: 'STRING',
+      targetValueNumeric: 'NUMERIC',
+      isActive: 'BOOL',
+      createdAt: 'STRING',
+      createdBy: 'STRING',
+      updatedBy: 'STRING',
+    },
+  }));
 }
 
 export async function upsertAdminTarget(input: UpsertTargetInput) {
@@ -465,6 +536,7 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
       periodMonth: input.periodMonth,
       area: input.area,
       kpiName: input.kpiName,
+      kpiLabel: input.kpiLabel ?? latest.kpiLabel ?? null,
       qtyUnit: input.qtyUnit,
       targetValueText: input.targetValueText,
       targetValueNumeric: input.targetValueNumeric,
@@ -486,6 +558,7 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
       periodMonth: input.periodMonth,
       area: input.area,
       kpiName: input.kpiName,
+      kpiLabel: input.kpiLabel ?? existing.kpiLabel ?? null,
       qtyUnit: input.qtyUnit,
       targetValueText: input.targetValueText,
       targetValueNumeric: input.targetValueNumeric,
@@ -506,6 +579,7 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
     periodMonth: input.periodMonth,
     area: input.area,
     kpiName: input.kpiName,
+    kpiLabel: input.kpiLabel ?? null,
     qtyUnit: input.qtyUnit,
     targetValueText: input.targetValueText,
     targetValueNumeric: input.targetValueNumeric,
@@ -531,6 +605,7 @@ export async function deleteAdminTarget(targetId: string) {
     periodMonth: latest.periodMonth,
     area: latest.area,
     kpiName: latest.kpiName,
+    kpiLabel: latest.kpiLabel,
     qtyUnit: latest.qtyUnit,
     targetValueText: latest.targetValueText,
     targetValueNumeric: latest.targetValueNumeric,

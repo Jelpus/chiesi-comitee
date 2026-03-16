@@ -1,5 +1,13 @@
-import { ComingSoonModulePage } from '@/app/executive/_coming-soon-module-page';
+import { RaQualityFvView } from './_ra-quality-fv-view';
 
-export default function RaQualityFvPage() {
-  return <ComingSoonModulePage moduleName="RA - Quality - FV" />;
+export const dynamic = 'force-dynamic';
+
+type RaQualityFvPageProps = {
+  searchParams: Promise<{
+    version?: string;
+  }>;
+};
+
+export default async function RaQualityFvPage({ searchParams }: RaQualityFvPageProps) {
+  return <RaQualityFvView viewMode="insights" searchParams={await searchParams} />;
 }
