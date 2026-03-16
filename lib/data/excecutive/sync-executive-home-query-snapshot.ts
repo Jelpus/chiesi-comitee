@@ -5,6 +5,28 @@ import { getExecutiveHomeQueryRows } from './get-executive-home-query';
 
 const SNAPSHOT_TABLE = 'chiesi-committee.chiesi_committee_mart.mart_executive_home_query_snapshot';
 
+const AREA_LABELS: Record<string, string> = {
+  internal_sales: 'Internal Sales',
+  commercial_operations: 'Commercial Operations',
+  business_excellence: 'Business Excellence',
+  medical: 'Medical',
+  opex: 'Opex',
+  human_resources: 'Human Resources',
+  ra_quality_fv: 'RA - Quality - FV',
+  legal_compliance: 'Legal & Compliance',
+};
+
+function toAreaLabel(value: string) {
+  const normalized = value.toLowerCase().trim();
+  const mapped = AREA_LABELS[normalized];
+  if (mapped) return mapped;
+  return normalized
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function isBigQueryUpdateRateLimitError(error: unknown) {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
@@ -48,6 +70,8 @@ async function ensureSnapshotTable() {
               period DATE,
               version STRING,
               area STRING,
+              area_code STRING,
+              area_order INT64,
               main_kpi_value STRING,
               target_value STRING,
               variance_value STRING,
@@ -55,6 +79,16 @@ async function ensureSnapshotTable() {
               updated_at TIMESTAMP
             )
           `,
+        }),
+      );
+      await queryWithRetry(() =>
+        client.query({
+          query: `ALTER TABLE \`${SNAPSHOT_TABLE}\` ADD COLUMN IF NOT EXISTS area_code STRING`,
+        }),
+      );
+      await queryWithRetry(() =>
+        client.query({
+          query: `ALTER TABLE \`${SNAPSHOT_TABLE}\` ADD COLUMN IF NOT EXISTS area_order INT64`,
         }),
       );
     })();
@@ -71,6 +105,13 @@ export async function syncExecutiveHomeQuerySnapshot(reportingVersionId?: string
     return { ok: true as const, upserted: 0 };
   }
 
+  const rowsWithPresentation = rows.map((row, index) => ({
+    ...row,
+    area_code: row.area,
+    area: toAreaLabel(row.area),
+    area_order: index + 1,
+  }));
+
   const versions = [...new Set(rows.map((row) => row.version))];
   await queryWithRetry(() =>
     client.query({
@@ -86,11 +127,13 @@ export async function syncExecutiveHomeQuerySnapshot(reportingVersionId?: string
     client.query({
       query: `
         INSERT INTO \`${SNAPSHOT_TABLE}\`
-        (period, version, area, main_kpi_value, target_value, variance_value, landing_url, updated_at)
+        (period, version, area, area_code, area_order, main_kpi_value, target_value, variance_value, landing_url, updated_at)
         SELECT
           DATE(row.period),
           row.version,
           row.area,
+          row.area_code,
+          row.area_order,
           row.main_kpi_value,
           row.target_value,
           row.variance_value,
@@ -99,10 +142,12 @@ export async function syncExecutiveHomeQuerySnapshot(reportingVersionId?: string
         FROM UNNEST(@rows) AS row
       `,
       params: {
-        rows: rows.map((row) => ({
+        rows: rowsWithPresentation.map((row) => ({
           period: row.period,
           version: row.version,
           area: row.area,
+          area_code: row.area_code,
+          area_order: row.area_order,
           main_kpi_value: row.main_kpi_value,
           target_value: row.target_value,
           variance_value: row.variance_value,
@@ -114,4 +159,3 @@ export async function syncExecutiveHomeQuerySnapshot(reportingVersionId?: string
 
   return { ok: true as const, upserted: rows.length };
 }
-
