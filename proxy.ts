@@ -9,11 +9,6 @@ import {
 
 const ADMIN_COOKIE = 'admin_access';
 
-function isPowerBiReferer(request: NextRequest) {
-  const referer = request.headers.get('referer') ?? '';
-  return referer.toLowerCase().includes('app.powerbi.com');
-}
-
 function hasValidEmbedToken(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('embed_token');
   const expected = process.env.EMBEDED_TOKEN_MODEL ?? '';
@@ -39,7 +34,7 @@ export async function proxy(request: NextRequest) {
       return NextResponse.next();
     }
 
-    if (isPowerBiReferer(request) && hasValidEmbedToken(request)) {
+    if (hasValidEmbedToken(request)) {
       const response = NextResponse.next();
       response.cookies.set({
         name: EXECUTIVE_COOKIE,
