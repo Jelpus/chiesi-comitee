@@ -1523,6 +1523,20 @@ export function DsoDashboardPanel({
 
           <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              {(() => {
+                const selectedFillRate =
+                  deliveryRankingMode === 'ytd'
+                    ? deliverySummary.ytdFillRatePct
+                    : deliverySummary.mthFillRateDeliveredPct;
+                const fillRateToneClass =
+                  deliverySummary.fillRateTarget == null || selectedFillRate == null
+                    ? 'text-slate-600'
+                    : selectedFillRate >= deliverySummary.fillRateTarget
+                      ? 'text-emerald-700'
+                      : 'text-rose-700';
+
+                return (
+                  <>
               <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Fill Rate</p>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {formatPercent(
@@ -1531,24 +1545,28 @@ export function DsoDashboardPanel({
                     : deliverySummary.mthFillRateDeliveredPct,
                 )}
               </p>
-              <p
-                className={`text-xs ${
-                  deliverySummary.fillRateTarget == null ||
-                  (deliveryRankingMode === 'ytd'
-                    ? deliverySummary.ytdFillRatePct == null
-                    : deliverySummary.mthFillRateDeliveredPct == null)
-                    ? 'text-slate-600'
-                    : (deliveryRankingMode === 'ytd'
-                        ? deliverySummary.ytdFillRatePct
-                        : deliverySummary.mthFillRateDeliveredPct) >= deliverySummary.fillRateTarget
-                      ? 'text-emerald-700'
-                      : 'text-rose-700'
-                }`}
-              >
+              <p className={`text-xs ${fillRateToneClass}`}>
                 Target: {formatPercent(deliverySummary.fillRateTarget)}
               </p>
+                  </>
+                );
+              })()}
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              {(() => {
+                const selectedLeadTime =
+                  deliveryRankingMode === 'ytd'
+                    ? deliverySummary.ytdLeadTimeAvg
+                    : deliverySummary.mthLeadTimeAvg;
+                const leadTimeToneClass =
+                  deliverySummary.leadTimeTarget == null || selectedLeadTime == null
+                    ? 'text-slate-600'
+                    : selectedLeadTime <= deliverySummary.leadTimeTarget
+                      ? 'text-emerald-700'
+                      : 'text-rose-700';
+
+                return (
+                  <>
               <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Lead Time</p>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {(deliveryRankingMode === 'ytd'
@@ -1560,22 +1578,12 @@ export function DsoDashboardPanel({
                       : deliverySummary.mthLeadTimeAvg
                     )?.toFixed(1)} days`}
               </p>
-              <p
-                className={`text-xs ${
-                  deliverySummary.leadTimeTarget == null ||
-                  (deliveryRankingMode === 'ytd'
-                    ? deliverySummary.ytdLeadTimeAvg == null
-                    : deliverySummary.mthLeadTimeAvg == null)
-                    ? 'text-slate-600'
-                    : (deliveryRankingMode === 'ytd'
-                        ? deliverySummary.ytdLeadTimeAvg
-                        : deliverySummary.mthLeadTimeAvg) <= deliverySummary.leadTimeTarget
-                      ? 'text-emerald-700'
-                      : 'text-rose-700'
-                }`}
-              >
+              <p className={`text-xs ${leadTimeToneClass}`}>
                 Target: {deliverySummary.leadTimeTarget == null ? 'N/A' : `${deliverySummary.leadTimeTarget.toFixed(1)} days`}
               </p>
+                  </>
+                );
+              })()}
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
               <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Value at Risk</p>
@@ -1633,10 +1641,10 @@ export function DsoDashboardPanel({
 
           <div className="grid gap-3 xl:grid-cols-3">
             {[
-              ['Business Unit', deliveryRankingByBu],
-              ['MarketGroup - Brand', deliveryRankingByMarketBrand],
-              ['Client / Requester', deliveryRankingByClient],
-            ].map(([title, rows]) => (
+              { title: 'Business Unit', rows: deliveryRankingByBu },
+              { title: 'MarketGroup - Brand', rows: deliveryRankingByMarketBrand },
+              { title: 'Client / Requester', rows: deliveryRankingByClient },
+            ].map(({ title, rows }) => (
               <article key={String(title)} className="rounded-[14px] border border-slate-200 bg-slate-50/60 p-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</p>
                 <div className="mt-2 overflow-hidden rounded-[10px] border border-slate-200 bg-white">

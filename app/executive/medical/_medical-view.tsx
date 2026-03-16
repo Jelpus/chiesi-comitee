@@ -103,13 +103,13 @@ function TopCards({
   onTrack,
   watch,
   offTrack,
-  averageCoveragePct,
+  healthScorePct,
 }: {
   totalKpis: number;
   onTrack: number;
   watch: number;
   offTrack: number;
-  averageCoveragePct: number | null;
+  healthScorePct: number | null;
 }) {
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -131,9 +131,9 @@ function TopCards({
         <p className="mt-1 text-xs text-slate-600">Performance gap</p>
       </article>
       <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Average Coverage</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(averageCoveragePct)}</p>
-        <p className="mt-1 text-xs text-slate-600">Vs configured targets</p>
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Health Score</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(healthScorePct)}</p>
+        <p className="mt-1 text-xs text-slate-600">((On Track*1) + (Watch*0.5)) / Total</p>
       </article>
     </div>
   );
@@ -183,7 +183,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
           onTrack={data.summary.onTrack}
           watch={data.summary.watch}
           offTrack={data.summary.offTrack}
-          averageCoveragePct={data.summary.averageCoveragePct}
+          healthScorePct={data.summary.healthScorePct}
         />
 
         {viewMode === 'insights' && hasData ? (
@@ -192,8 +192,8 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
               <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Medical Narrative</p>
               <p className="mt-2 text-sm text-slate-700">
                 Current cut shows <strong>{data.summary.onTrack}</strong> KPIs on track, <strong>{data.summary.watch}</strong> on watch,
-                and <strong>{data.summary.offTrack}</strong> off track, with average coverage at{' '}
-                <strong>{formatPercent(data.summary.averageCoveragePct)}</strong>.
+                and <strong>{data.summary.offTrack}</strong> off track, with health score at{' '}
+                <strong>{formatPercent(data.summary.healthScorePct)}</strong>.
               </p>
               <p className="mt-2 text-sm text-slate-700">
                 Main attention points: {needsImprove.length > 0 ? needsImprove.map((item) => item.kpiLabel).join(', ') : 'no critical KPI in this cut'}.
@@ -359,4 +359,3 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
     </section>
   );
 }
-

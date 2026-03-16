@@ -1,7 +1,7 @@
 import 'server-only';
+import { unstable_cache } from 'next/cache';
 
 import type { ExecutiveCardItem } from '@/types/executive';
-import { getBigQueryClient } from '@/lib/bigquery/client';
 import type { SemanticStatus } from '@/lib/status/status-styles';
 import { getSalesInternalBudgetDualKpis, getSalesInternalDualKpisYoY } from '@/lib/data/sales-internal';
 import { getBusinessExcellenceBusinessUnitChannelRows } from '@/lib/data/business-excellence';
@@ -14,8 +14,7 @@ import { getAdminTargets } from '@/lib/data/targets';
 import { getOpexRows } from '@/lib/data/opex';
 import { getRaQualityFvData } from '@/lib/data/ra-quality-fv';
 import { getLegalComplianceData } from '@/lib/data/legal-compliance';
-import { getMedicalMonthlyInputs } from '@/lib/data/medical-forms';
-import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
+import { getMedicalData } from '@/lib/data/medical';
 
 type ExecutiveModuleKey =
   | 'internal_sales'
@@ -26,23 +25,6 @@ type ExecutiveModuleKey =
   | 'human_resources'
   | 'ra_quality_fv'
   | 'legal_compliance';
-
-function isSalesInternalLabel(moduleName: string, kpiName: string) {
-  const normalized = `${moduleName} ${kpiName}`.toLowerCase();
-  return (
-    normalized.includes('sales internal') ||
-    normalized.includes('venta interna') ||
-    normalized.includes('ventas internas')
-  );
-}
-
-function toSemanticStatus(value: unknown): SemanticStatus {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'green' || normalized === 'yellow' || normalized === 'red') {
-    return normalized;
-  }
-  return 'neutral';
-}
 
 const executiveCardOrder: Array<{
   key: ExecutiveModuleKey;
@@ -99,32 +81,6 @@ const executiveCardOrder: Array<{
     detailHref: '/executive/legal-compliance/insights',
   },
 ];
-
-function detectModuleKey(input: string): ExecutiveModuleKey | null {
-  const normalized = input.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
-
-  if (
-    normalized.includes('sales internal') ||
-    normalized.includes('venta interna') ||
-    normalized.includes('ventas internas')
-  ) {
-    return 'internal_sales';
-  }
-  if (normalized.includes('commercial operations')) return 'commercial_operations';
-  if (normalized.includes('business excellence')) return 'business_excellence';
-  if (normalized.includes('medical')) return 'medical';
-  if (normalized.includes('opex')) return 'opex';
-  if (normalized.includes('human resources') || normalized.includes(' hr ')) return 'human_resources';
-  if (
-    (normalized.includes('ra') && normalized.includes('quality') && normalized.includes('fv')) ||
-    normalized.includes('ra quality fv')
-  ) {
-    return 'ra_quality_fv';
-  }
-  if (normalized.includes('legal') && normalized.includes('compliance')) return 'legal_compliance';
-
-  return null;
-}
 
 function toCurrency(value: number) {
   return new Intl.NumberFormat('en-US', {
@@ -238,61 +194,30 @@ function toneFromCoverage(coveragePct: number | null): 'green' | 'light-green' |
   return 'red';
 }
 
-function parseLooseNumber(value: string | null | undefined): number | null {
-  if (value == null) return null;
-  const normalized = value.trim();
-  if (!normalized) return null;
-  const parsed = Number(normalized.replace(/[$,%\s]/g, '').replace(/,/g, '.'));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 async function getMedicalExecutiveSnapshot(
   reportingVersionId: string,
   periodMonth: string,
   fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
-  const [targetRows, inputRows] = await Promise.all([
-    getAdminTargets('medical', reportingVersionId),
-    getMedicalMonthlyInputs(periodMonth),
-  ]);
-
-  const activeTargets = targetRows.filter(
-    (row) => row.isActive && !row.isDeleted && (row.targetValueNumeric != null || (row.targetValueText ?? '').trim()),
-  );
-  const inputByKpi = new Map(inputRows.map((row) => [row.kpiName.trim().toLowerCase(), row]));
-
-  const coverages = activeTargets.map((targetRow) => {
-    const kpiKey = targetRow.kpiName.trim().toLowerCase();
-    const input = inputByKpi.get(kpiKey);
-    const targetValue = targetRow.targetValueNumeric ?? parseLooseNumber(targetRow.targetValueText);
-    const actualValue =
-      input?.resultValueNumeric ??
-      parseLooseNumber(input?.resultValueText) ??
-      0;
-    if (targetValue == null) return null;
-    if (targetValue === 0) {
-      return actualValue <= 0 ? 100 : 0;
-    }
-    return (actualValue / targetValue) * 100;
-  }).filter((value): value is number => value != null && Number.isFinite(value));
-
-  const averageCoveragePct =
-    coverages.length > 0 ? coverages.reduce((sum, value) => sum + value, 0) / coverages.length : null;
-  const variancePp = averageCoveragePct == null ? null : averageCoveragePct - 100;
-  const status = statusFromCoverage(averageCoveragePct == null ? null : averageCoveragePct / 100);
+  const data = await getMedicalData(reportingVersionId, periodMonth);
+  const total = data.summary.totalKpis;
+  const onTrack = data.summary.onTrack;
+  const offTrack = data.summary.offTrack;
+  const healthScorePct = data.summary.healthScorePct;
+  const status = statusFromCoverage(healthScorePct == null ? null : healthScorePct / 100);
 
   return {
     module: fallback?.module ?? 'Medical',
-    kpi: 'Medical KPI Coverage',
-    actual: averageCoveragePct == null ? 'N/A' : `${averageCoveragePct.toFixed(1)}%`,
-    target: '100.0%',
-    variance: variancePp == null ? 'N/A' : toSignedPp(variancePp),
+    kpi: 'Medical KPIs On Track',
+    actual: total > 0 ? `${onTrack}/${total}` : 'N/A',
+    target: total > 0 ? `${total}/${total}` : 'N/A',
+    variance: total > 0 ? `${offTrack} gaps` : 'N/A',
     status,
     kpiSignals: [
       {
         label: 'MD',
-        coveragePct: averageCoveragePct,
-        tone: toneFromCoverage(averageCoveragePct),
+        coveragePct: healthScorePct,
+        tone: toneFromCoverage(healthScorePct),
       },
     ],
     detailHref: '/executive/medical',
@@ -610,147 +535,88 @@ async function getLegalComplianceExecutiveSnapshot(
   };
 }
 
+const getSalesInternalExecutiveSnapshotCached = unstable_cache(
+  async () => getSalesInternalExecutiveSnapshot({ module: 'Internal Sales' }),
+  ['executive-home', 'snapshot', 'internal-sales'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getBusinessExcellenceExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string) =>
+    getBusinessExcellenceExecutiveSnapshot(reportingVersionId, { module: 'Business Excellence' }),
+  ['executive-home', 'snapshot', 'business-excellence'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getCommercialOperationsExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string) =>
+    getCommercialOperationsExecutiveSnapshot(reportingVersionId, { module: 'Commercial Operations' }),
+  ['executive-home', 'snapshot', 'commercial-operations'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getMedicalExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string, periodMonth: string) =>
+    getMedicalExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Medical' }),
+  ['executive-home', 'snapshot', 'medical'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getOpexExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string) =>
+    getOpexExecutiveSnapshot(reportingVersionId, { module: 'Opex' }),
+  ['executive-home', 'snapshot', 'opex'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getHumanResourcesExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string) =>
+    getHumanResourcesExecutiveSnapshot(reportingVersionId, { module: 'Human Resources' }),
+  ['executive-home', 'snapshot', 'human-resources'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getRaQualityFvExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string, periodMonth: string) =>
+    getRaQualityFvExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'RA - Quality - FV' }),
+  ['executive-home', 'snapshot', 'ra-quality-fv'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
+const getLegalComplianceExecutiveSnapshotCached = unstable_cache(
+  async (reportingVersionId: string, periodMonth: string) =>
+    getLegalComplianceExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Legal & Compliance' }),
+  ['executive-home', 'snapshot', 'legal-compliance'],
+  { revalidate: 120, tags: ['executive-home'] },
+);
+
 export async function getExecutiveCardsFromBigQuery(
-  reportingVersionId: string
+  reportingVersionId: string,
+  selectedPeriodMonth: string,
 ): Promise<ExecutiveCardItem[]> {
-  const client = getBigQueryClient();
-  const versions = await getReportingVersions();
-  const selectedPeriodMonth =
-    versions.find((item) => item.reportingVersionId === reportingVersionId)?.periodMonth ??
-    versions[0]?.periodMonth ??
-    new Date().toISOString().slice(0, 7) + '-01';
-
-  const query = `
-    SELECT
-      module_name,
-      kpi_name,
-      actual_value,
-      target_value,
-      variance_vs_target,
-      status_color,
-      owner_name
-    FROM \`chiesi-committee.chiesi_committee_mart.vw_executive_home\`
-    WHERE reporting_version_id = @reportingVersionId
-    ORDER BY module_name
-  `;
-
-  const [rows] = await client.query({
-    query,
-    params: { reportingVersionId },
-  });
-
-  const cards = (rows as Array<Record<string, unknown>>).map((row) => ({
-    module: String(row.module_name ?? '-'),
-    kpi: String(row.kpi_name ?? '-'),
-    actual: row.actual_value?.toString() ?? '-',
-    target: row.target_value?.toString() ?? '-',
-    variance: row.variance_vs_target?.toString() ?? '-',
-    status: toSemanticStatus(row.status_color),
-    detailHref: null,
-  }));
-
   const cardsByModuleKey = new Map<ExecutiveModuleKey, ExecutiveCardItem>();
   const detailHrefWithVersion = (href: string | null) =>
     href ? `${href}${href.includes('?') ? '&' : '?'}version=${encodeURIComponent(reportingVersionId)}` : null;
-  for (const card of cards) {
-    const key = detectModuleKey(`${card.module} ${card.kpi}`);
-    if (!key) continue;
-    if (!cardsByModuleKey.has(key)) {
-      cardsByModuleKey.set(key, card);
-    }
-  }
+
+  const snapshotPromises: Record<ExecutiveModuleKey, Promise<ExecutiveCardItem> | null> = {
+    internal_sales: getSalesInternalExecutiveSnapshotCached(),
+    commercial_operations: getCommercialOperationsExecutiveSnapshotCached(reportingVersionId),
+    business_excellence: getBusinessExcellenceExecutiveSnapshotCached(reportingVersionId),
+    medical: getMedicalExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
+    opex: getOpexExecutiveSnapshotCached(reportingVersionId),
+    human_resources: getHumanResourcesExecutiveSnapshotCached(reportingVersionId),
+    ra_quality_fv: getRaQualityFvExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
+    legal_compliance: getLegalComplianceExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
+  };
 
   const finalCards: ExecutiveCardItem[] = [];
   for (const spec of executiveCardOrder) {
-    if (spec.key === 'internal_sales') {
-      const fallback = cardsByModuleKey.get(spec.key);
-      finalCards.push(
-        await getSalesInternalExecutiveSnapshot({
-          module: spec.module,
-        }),
-      );
-      continue;
-    }
-
-    if (spec.key === 'business_excellence') {
-      const fallback = cardsByModuleKey.get(spec.key);
-      const snapshot = await getBusinessExcellenceExecutiveSnapshot(reportingVersionId, {
+    const promise = snapshotPromises[spec.key];
+    if (promise) {
+      const snapshot = await promise;
+      finalCards.push({
+        ...snapshot,
         module: spec.module,
-      });
-      finalCards.push({
-        ...snapshot,
-        detailHref: detailHrefWithVersion(spec.detailHref),
-      });
-      continue;
-    }
-
-    if (spec.key === 'commercial_operations') {
-      const snapshot = await getCommercialOperationsExecutiveSnapshot(reportingVersionId, {
-        module: spec.module,
-      });
-      finalCards.push({
-        ...snapshot,
-        detailHref: detailHrefWithVersion(spec.detailHref),
-      });
-      continue;
-    }
-
-    if (spec.key === 'human_resources') {
-      const snapshot = await getHumanResourcesExecutiveSnapshot(reportingVersionId, {
-        module: spec.module,
-      });
-      finalCards.push({
-        ...snapshot,
-        detailHref: detailHrefWithVersion(spec.detailHref),
-      });
-      continue;
-    }
-
-    if (spec.key === 'opex') {
-      const snapshot = await getOpexExecutiveSnapshot(reportingVersionId, {
-        module: spec.module,
-      });
-      finalCards.push({
-        ...snapshot,
-        detailHref: detailHrefWithVersion(spec.detailHref),
-      });
-      continue;
-    }
-
-    if (spec.key === 'medical') {
-      const snapshot = await getMedicalExecutiveSnapshot(
-        reportingVersionId,
-        selectedPeriodMonth,
-        { module: spec.module },
-      );
-      finalCards.push({
-        ...snapshot,
-        detailHref: detailHrefWithVersion(spec.detailHref),
-      });
-      continue;
-    }
-
-    if (spec.key === 'ra_quality_fv') {
-      const snapshot = await getRaQualityFvExecutiveSnapshot(
-        reportingVersionId,
-        selectedPeriodMonth,
-        { module: spec.module },
-      );
-      finalCards.push({
-        ...snapshot,
-        detailHref: detailHrefWithVersion(spec.detailHref),
-      });
-      continue;
-    }
-
-    if (spec.key === 'legal_compliance') {
-      const snapshot = await getLegalComplianceExecutiveSnapshot(
-        reportingVersionId,
-        selectedPeriodMonth,
-        { module: spec.module },
-      );
-      finalCards.push({
-        ...snapshot,
         detailHref: detailHrefWithVersion(spec.detailHref),
       });
       continue;

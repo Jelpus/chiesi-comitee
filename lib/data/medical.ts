@@ -27,7 +27,7 @@ export type MedicalData = {
     onTrack: number;
     watch: number;
     offTrack: number;
-    averageCoveragePct: number | null;
+    healthScorePct: number | null;
   };
 };
 
@@ -60,7 +60,7 @@ export async function getMedicalData(
   ]);
 
   const activeTargets = targets
-    .filter((item) => item.isActive && !item.isDeleted)
+    .filter((item) => item.isActive)
     .sort((a, b) => (a.kpiLabel?.trim() || a.kpiName).localeCompare(b.kpiLabel?.trim() || b.kpiName));
 
   const inputByKpi = new Map(inputs.map((item) => [normalize(item.kpiName), item]));
@@ -106,12 +106,9 @@ export async function getMedicalData(
   const onTrack = scores.filter((item) => item.status === 'on_track').length;
   const watch = scores.filter((item) => item.status === 'watch').length;
   const offTrack = scores.filter((item) => item.status === 'off_track').length;
-  const coverageValues = scores
-    .map((item) => item.coveragePct)
-    .filter((value): value is number => value != null && Number.isFinite(value));
-  const averageCoveragePct =
-    coverageValues.length > 0
-      ? coverageValues.reduce((sum, value) => sum + value, 0) / coverageValues.length
+  const healthScorePct =
+    scores.length > 0
+      ? ((onTrack * 1 + watch * 0.5) / scores.length) * 100
       : null;
 
   return {
@@ -123,8 +120,7 @@ export async function getMedicalData(
       onTrack,
       watch,
       offTrack,
-      averageCoveragePct,
+      healthScorePct,
     },
   };
 }
-

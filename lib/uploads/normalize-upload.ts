@@ -1830,12 +1830,17 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
     maxBytesPerChunk: 2_000_000,
     maxItemsPerChunk: 1000,
     estimateBytes: (row) =>
-      String(row.key1 ?? '').length +
-      String(row.key2 ?? '').length +
-      String(row.account ?? '').length +
-      String(row.ceco ?? '').length +
-      String(row.costElement ?? '').length +
-      JSON.stringify(row.payload).length +
+      String(row.productCloseupRaw ?? '').length +
+      String(row.productCloseupNormalized ?? '').length +
+      String(row.productId ?? '').length +
+      String(row.canonicalProductName ?? '').length +
+      String(row.marketGroup ?? '').length +
+      String(row.specialty ?? '').length +
+      String(row.sourceDateRaw ?? '').length +
+      String(row.sourceDate ?? '').length +
+      String(row.periodRaw ?? '').length +
+      String(row.periodMonth ?? '').length +
+      String(row.visitedSourceRaw ?? '').length +
       256,
   });
   await runChunksInParallel(
@@ -5255,8 +5260,15 @@ async function loadOpexMasterCatalogStaging(
     estimateBytes: (row) =>
       String(row.key1 ?? '').length +
       String(row.key2 ?? '').length +
-      String(row.periodMonth ?? '').length +
-      String(row.metricName ?? '').length +
+      String(row.account ?? '').length +
+      String(row.ceco ?? '').length +
+      String(row.cecoName ?? '').length +
+      String(row.costElement ?? '').length +
+      String(row.element ?? '').length +
+      String(row.businessUnit ?? '').length +
+      String(row.owner ?? '').length +
+      String(row.responsible ?? '').length +
+      JSON.stringify(row.payload ?? {}).length +
       128,
   });
   await runChunksInParallel(

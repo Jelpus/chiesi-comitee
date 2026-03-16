@@ -47,6 +47,7 @@ export async function getExecutivePageData(
 
   const cards = await getExecutiveCardsFromBigQuery(
     selectedVersion.reportingVersionId,
+    selectedVersion.periodMonth,
   );
 
   return {
