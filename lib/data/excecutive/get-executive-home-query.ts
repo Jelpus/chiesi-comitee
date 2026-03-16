@@ -17,6 +17,25 @@ function normalizeAreaLabel(moduleName: string) {
   return moduleName.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
+function cleanBaseUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim().replace(/^['"]|['"]$/g, '');
+  if (!trimmed) return null;
+  return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+}
+
+function toAbsoluteLandingUrl(href: string | null): string | null {
+  if (!href) return null;
+  if (/^https?:\/\//i.test(href)) return href;
+  const baseUrl =
+    cleanBaseUrl(process.env.PUBLIC_URL) ??
+    cleanBaseUrl(process.env.NEXT_PUBLIC_URL) ??
+    cleanBaseUrl(process.env.NEXT_PUBLIC_SITE_URL) ??
+    cleanBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
+  if (!baseUrl) return href;
+  return `${baseUrl}${href.startsWith('/') ? '' : '/'}${href}`;
+}
+
 export async function getExecutiveHomeQueryRows(params?: {
   reportingVersionId?: string;
   area?: string;
@@ -40,11 +59,10 @@ export async function getExecutiveHomeQueryRows(params?: {
     main_kpi_value: card.actual,
     target_value: card.target,
     variance_value: card.variance,
-    landing_url: card.detailHref ?? null,
+    landing_url: toAbsoluteLandingUrl(card.detailHref),
   }));
 
   const areaFilter = (params?.area ?? '').toLowerCase().trim();
   if (!areaFilter) return rows;
   return rows.filter((row) => row.area === areaFilter);
 }
-
