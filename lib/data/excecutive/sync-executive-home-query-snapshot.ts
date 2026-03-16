@@ -123,6 +123,11 @@ export async function syncExecutiveHomeQuerySnapshot(reportingVersionId?: string
     }),
   );
 
+  const token = process.env.EMBEDED_TOKEN_MODEL;
+  if (!token) {
+    throw new Error('EMBEDED_TOKEN_MODEL is not set');
+  }
+
   await queryWithRetry(() =>
     client.query({
       query: `
@@ -151,7 +156,7 @@ export async function syncExecutiveHomeQuerySnapshot(reportingVersionId?: string
           main_kpi_value: row.main_kpi_value,
           target_value: row.target_value,
           variance_value: row.variance_value,
-          landing_url: row.landing_url,
+          landing_url: row.landing_url+`&embed_token=${token}`,
         })),
       },
     }),

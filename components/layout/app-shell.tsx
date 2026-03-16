@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { SidebarNav } from '@/components/layout/sidebar-nav';
 import type { ReactNode } from 'react';
@@ -12,6 +13,12 @@ type AppShellProps = {
 
 export function AppShell({ children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(true);
+  const pathname = usePathname();
+  const hideSidebar = pathname === '/access';
+
+  if (hideSidebar) {
+    return <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">{children}</main>;
+  }
 
   return (
     <div className={`min-h-screen lg:grid ${collapsed ? 'lg:grid-cols-[88px_1fr]' : 'lg:grid-cols-[260px_1fr]'}`}>

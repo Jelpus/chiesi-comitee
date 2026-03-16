@@ -6,6 +6,8 @@ import { AdminStatusBadge } from '@/components/ui/admin-status-badge';
 import { getAdminHomeStatusData } from '@/lib/data/admin-home-status';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 
+export const dynamic = 'force-dynamic';
+
 type AdminPageProps = {
   searchParams: Promise<{
     version?: string;
