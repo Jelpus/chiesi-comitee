@@ -152,7 +152,7 @@ export function LegalComplianceForm({
               )}
               {hasActive ? (
                 <label className="space-y-1">
-                  <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Active Count</span>
+                  <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">On Progress Count</span>
                   <input
                     name={`${key}_active_count`}
                     type="number"
