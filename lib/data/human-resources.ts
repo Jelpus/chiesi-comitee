@@ -169,27 +169,61 @@ export async function getHumanResourcesAuditSources(
   const client = getBigQueryClient();
   const [rows] = await client.query({
     query: `
-      WITH latest_turnover AS (
-        SELECT reporting_version_id, period_month AS report_period_month, source_as_of_month
+      WITH turnover_upload AS (
+        SELECT
+          reporting_version_id,
+          MAX(period_month) AS report_period_month,
+          MAX(source_as_of_month) AS source_as_of_month
         FROM \`${RAW_UPLOADS}\`
         WHERE reporting_version_id = @reportingVersionId
           AND LOWER(TRIM(module_code)) = 'human_resources_turnover'
           AND status IN ('normalized', 'published')
-        ORDER BY uploaded_at DESC
-        LIMIT 1
       ),
-      latest_training AS (
-        SELECT reporting_version_id, period_month AS report_period_month, source_as_of_month
+      training_upload AS (
+        SELECT
+          reporting_version_id,
+          MAX(period_month) AS report_period_month,
+          MAX(source_as_of_month) AS source_as_of_month
         FROM \`${RAW_UPLOADS}\`
         WHERE reporting_version_id = @reportingVersionId
           AND LOWER(TRIM(module_code)) IN ('human_resources_training', 'human_resources_entrenamiento')
           AND status IN ('normalized', 'published')
-        ORDER BY uploaded_at DESC
-        LIMIT 1
+      ),
+      turnover_view AS (
+        SELECT
+          @reportingVersionId AS reporting_version_id,
+          MAX(DATE(report_period_month)) AS report_period_month,
+          MAX(DATE(source_as_of_month)) AS source_as_of_month
+        FROM \`${TURNOVER_VIEW}\`
+        WHERE reporting_version_id = @reportingVersionId
+      ),
+      training_view AS (
+        SELECT
+          @reportingVersionId AS reporting_version_id,
+          MAX(DATE(report_period_month)) AS report_period_month,
+          MAX(DATE(source_as_of_month)) AS source_as_of_month
+        FROM \`${TRAINING_VIEW}\`
+        WHERE reporting_version_id = @reportingVersionId
       )
-      SELECT 'turnover' AS source_key, 'Turnover' AS source_label, * FROM latest_turnover
+      SELECT
+        'turnover' AS source_key,
+        'Turnover' AS source_label,
+        COALESCE(u.reporting_version_id, v.reporting_version_id) AS reporting_version_id,
+        COALESCE(u.report_period_month, v.report_period_month) AS report_period_month,
+        COALESCE(u.source_as_of_month, v.source_as_of_month, u.report_period_month, v.report_period_month) AS source_as_of_month
+      FROM turnover_upload u
+      FULL OUTER JOIN turnover_view v
+        ON u.reporting_version_id = v.reporting_version_id
       UNION ALL
-      SELECT 'training' AS source_key, 'Training' AS source_label, * FROM latest_training
+      SELECT
+        'training' AS source_key,
+        'Training' AS source_label,
+        COALESCE(u.reporting_version_id, v.reporting_version_id) AS reporting_version_id,
+        COALESCE(u.report_period_month, v.report_period_month) AS report_period_month,
+        COALESCE(u.source_as_of_month, v.source_as_of_month, u.report_period_month, v.report_period_month) AS source_as_of_month
+      FROM training_upload u
+      FULL OUTER JOIN training_view v
+        ON u.reporting_version_id = v.reporting_version_id
     `,
     params: { reportingVersionId: resolvedReportingVersionId },
   });
@@ -448,10 +482,10 @@ export async function getHumanResourcesTrainingThemeData(
             COUNT(DISTINCT IF(completion_year = context.current_year AND recommended_valid_completion_flag, user_name, NULL)) AS trained_employees_ytd,
             COUNT(DISTINCT IF(completion_year = context.current_year AND LOWER(COALESCE(active_user, '')) = 'yes', user_name, NULL)) AS active_employees_ytd,
             COUNTIF(completion_year = context.current_year AND recommended_valid_completion_flag) AS completed_events_ytd,
-            COALESCE(SUM(IF(completion_year = context.current_year AND recommended_valid_completion_flag, total_hours, 0)), 0) AS learning_hours_ytd,
+            COALESCE(SUM(IF(completion_year = context.current_year, total_hours, 0)), 0) AS learning_hours_ytd,
             COUNT(DISTINCT IF(completion_year = context.current_year - 1 AND recommended_valid_completion_flag, user_name, NULL)) AS trained_employees_py,
             COUNTIF(completion_year = context.current_year - 1 AND recommended_valid_completion_flag) AS completed_events_py,
-            COALESCE(SUM(IF(completion_year = context.current_year - 1 AND recommended_valid_completion_flag, total_hours, 0)), 0) AS learning_hours_py
+            COALESCE(SUM(IF(completion_year = context.current_year - 1, total_hours, 0)), 0) AS learning_hours_py
           FROM tagged, context
         `,
         params: { reportingVersionId: resolvedReportingVersionId },
@@ -527,8 +561,8 @@ export async function getHumanResourcesTrainingThemeData(
             EXTRACT(MONTH FROM DATE(completion_date_month)) AS month_order,
             COUNTIF(completion_year = context.current_year AND recommended_valid_completion_flag) AS current_year_events,
             COUNTIF(completion_year = context.current_year - 1 AND recommended_valid_completion_flag) AS previous_year_events,
-            COALESCE(SUM(IF(completion_year = context.current_year AND recommended_valid_completion_flag, total_hours, 0)), 0) AS current_year_hours,
-            COALESCE(SUM(IF(completion_year = context.current_year - 1 AND recommended_valid_completion_flag, total_hours, 0)), 0) AS previous_year_hours,
+            COALESCE(SUM(IF(completion_year = context.current_year, total_hours, 0)), 0) AS current_year_hours,
+            COALESCE(SUM(IF(completion_year = context.current_year - 1, total_hours, 0)), 0) AS previous_year_hours,
             COUNT(DISTINCT IF(completion_year = context.current_year AND recommended_valid_completion_flag, user_name, NULL)) AS current_year_employees,
             COUNT(DISTINCT IF(completion_year = context.current_year - 1 AND recommended_valid_completion_flag, user_name, NULL)) AS previous_year_employees
           FROM tagged, context
@@ -834,7 +868,8 @@ export async function getHumanResourcesTrainingRanking(
   const dimensionExprByType: Record<Exclude<HumanResourcesTrainingRankingDimension, 'area'>, string> = {
     entity_title: "COALESCE(NULLIF(TRIM(entity_title), ''), 'Untitled')",
     item_type: "COALESCE(NULLIF(TRIM(item_type), ''), 'Unspecified')",
-    instructor: "COALESCE(NULLIF(TRIM(instructor), ''), 'Unassigned')",
+    instructor:
+      "COALESCE(NULLIF(TRIM(instructor), ''), NULLIF(TRIM(entity_title), ''), 'Unassigned')",
   };
   const labelExpr = dimensionExprByType[dimension];
   const [rows] = await client.query({

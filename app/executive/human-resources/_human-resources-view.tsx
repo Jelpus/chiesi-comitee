@@ -312,7 +312,9 @@ function DashboardPanel({
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
                     <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Learning Hours YTD</p>
-                    <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(trainingThemeData.summary.learningHoursYtd)}</p>
+                    <p className="mt-1 text-xl font-semibold text-slate-900">
+                      {new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(trainingThemeData.summary.learningHoursYtd)}
+                    </p>
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
                     <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Avg Hours / Trained</p>
@@ -1069,7 +1071,7 @@ const getCachedData = unstable_cache(
       trainingThemeFaceToFace,
     };
   },
-  ['human-resources-v3'],
+  ['human-resources-v5'],
   { revalidate: 90 },
 );
 
@@ -1079,7 +1081,7 @@ const getCachedTrainingRanking = unstable_cache(
     trainingScope: HumanResourcesTrainingScope,
     trainingRankingBy: HumanResourcesTrainingRankingDimension,
   ) => getHumanResourcesTrainingRanking(reportingVersionId || undefined, trainingScope, trainingRankingBy, 24),
-  ['human-resources-training-ranking-v1'],
+  ['human-resources-training-ranking-v2'],
   { revalidate: 90 },
 );
 
