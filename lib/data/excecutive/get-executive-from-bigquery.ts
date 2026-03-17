@@ -544,7 +544,7 @@ const getSalesInternalExecutiveSnapshotCached = unstable_cache(
 const getBusinessExcellenceExecutiveSnapshotCached = unstable_cache(
   async (reportingVersionId: string) =>
     getBusinessExcellenceExecutiveSnapshot(reportingVersionId, { module: 'Business Excellence' }),
-  ['executive-home', 'snapshot', 'business-excellence'],
+  ['executive-home', 'snapshot', 'business-excellence-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
