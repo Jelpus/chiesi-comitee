@@ -1,10 +1,11 @@
-import { saveHomeStatusAction } from '@/app/admin/actions';
 import { InfoChip } from '@/components/ui/info-chip';
 import { SectionHeader } from '@/components/ui/section-header';
 import { SelectFilter } from '@/components/ui/select-filter';
 import { AdminStatusBadge } from '@/components/ui/admin-status-badge';
+import { AdminSyncActions } from '@/components/admin/admin-sync-actions';
 import { getAdminHomeStatusData } from '@/lib/data/admin-home-status';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,16 +121,15 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
               Validate module uploads for this cut and store a control snapshot.
             </p>
           </div>
-          <form action={saveHomeStatusAction}>
-            <input type="hidden" name="reportingVersionId" value={selected.reportingVersionId} />
-            <input type="hidden" name="periodMonth" value={selected.periodMonth} />
-            <button
-              type="submit"
-              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-slate-800"
-            >
-              Save Home Status
-            </button>
-          </form>
+          <AdminSyncActions reportingVersionId={selected.reportingVersionId} periodMonth={selected.periodMonth} />
+        </div>
+        <div className="mt-3 flex justify-end">
+          <Link
+            href={`/admin/preread?reportversion=${encodeURIComponent(selected.reportingVersionId)}`}
+            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700 hover:border-slate-400"
+          >
+            Open Pre-Read Preview
+          </Link>
         </div>
 
         <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
