@@ -63,7 +63,7 @@ export function AppShell({ children }: AppShellProps) {
                   />
                   {!collapsed ? (
                     <>
-                      <h1 className="mt-2 text-xxl font-semibold text-[var(--brand-chiesi)]">Executive Committee</h1>
+                      <h1 className="mt-2 text-xxl font-semibold text-[var(--brand-chiesi)]">Operational Committee</h1>
                       <p className="mt-1 text-sm text-slate-400">Cierre mensual y visor ejecutivo</p>
                     </>
                   ) : null}

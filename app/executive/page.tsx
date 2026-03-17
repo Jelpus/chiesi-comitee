@@ -28,7 +28,7 @@ export default async function ExecutivePage({
       <SectionHeader
         eyebrow="Executive"
         title="Executive Home"
-        description="Monthly close summary with key KPIs, major variances, and module status for the Commercial Committee."
+        description="Monthly close summary with key KPIs, major variances, and module status for the Operational Committee."
         actions={
           <>
             <InfoChip label="Period" value={data.context.periodLabel} />

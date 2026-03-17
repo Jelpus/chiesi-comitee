@@ -3,8 +3,19 @@ import type { Metadata } from 'next';
 import { AppShell } from '@/components/layout/app-shell';
 
 export const metadata: Metadata = {
-  title: 'Chiesi Commercial Committee',
+  title: 'Chiesi Operational Committee',
   description: 'Monthly close system and executive viewer',
+  openGraph: {
+    title: 'Chiesi Operational Committee',
+    description: 'Monthly close system and executive viewer',
+    images: ['/chiesi_og.jpg'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Chiesi Operational Committee',
+    description: 'Monthly close system and executive viewer',
+    images: ['/chiesi_og.jpg'],
+  },
 };
 
 export default function RootLayout({
