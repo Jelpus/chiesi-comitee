@@ -2,6 +2,7 @@ import { revalidatePath } from 'next/cache';
 import { NextResponse } from 'next/server';
 import { saveAdminHomeStatusSnapshot } from '@/lib/data/admin-home-status';
 import { syncExecutiveHomeQuerySnapshot } from '@/lib/data/excecutive/sync-executive-home-query-snapshot';
+import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 
 type SyncHomeStatusRequestBody = {
   reportingVersionId?: string;
@@ -24,22 +25,35 @@ export async function POST(request: Request) {
       body = {};
     }
 
-    const reportingVersionId =
+    const inputReportingVersionId =
       asNonEmptyString(body.reportingVersionId) || asNonEmptyString(searchParams.get('reportingVersionId'));
-    const periodMonth =
+    const inputPeriodMonth =
       asNonEmptyString(body.periodMonth) || asNonEmptyString(searchParams.get('periodMonth'));
     const createdBy =
       asNonEmptyString(body.createdBy) || asNonEmptyString(searchParams.get('createdBy')) || 'admin_api';
 
-    if (!reportingVersionId || !periodMonth) {
+    const versions = await getReportingVersions();
+    if (versions.length === 0) {
       return NextResponse.json(
         {
           ok: false,
-          error: 'Missing reportingVersionId or periodMonth.',
+          error: 'No reporting versions available.',
         },
-        { status: 400 },
+        { status: 404 },
       );
     }
+
+    const latest = versions[0];
+    const versionById = inputReportingVersionId
+      ? versions.find((item) => item.reportingVersionId === inputReportingVersionId) ?? null
+      : null;
+    const versionByPeriod = inputPeriodMonth
+      ? versions.find((item) => item.periodMonth === inputPeriodMonth) ?? null
+      : null;
+
+    const resolvedVersion = versionById ?? versionByPeriod ?? latest;
+    const reportingVersionId = resolvedVersion.reportingVersionId;
+    const periodMonth = inputPeriodMonth || resolvedVersion.periodMonth;
 
     const homeStatusResult = await saveAdminHomeStatusSnapshot({
       reportingVersionId,
@@ -55,6 +69,7 @@ export async function POST(request: Request) {
       ok: true,
       reportingVersionId,
       periodMonth,
+      usedLatestVersionFallback: !inputReportingVersionId && !inputPeriodMonth,
       homeStatus: homeStatusResult,
       homeQuery: homeQueryResult,
     });
