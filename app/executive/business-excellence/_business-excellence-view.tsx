@@ -2159,7 +2159,7 @@ function ScorecardInsightsPanel({
 
 const getCachedLatestPeriod = unstable_cache(
   async (reportingVersionId: string) => getBusinessExcellenceLatestPeriod(reportingVersionId),
-  ['business-excellence-latest-period-v1'],
+  ['business-excellence-latest-period-v2'],
   { revalidate: 60 },
 );
 
@@ -2224,19 +2224,19 @@ const getCachedPrivateSellOutData = unstable_cache(
       productRows,
     };
   },
-  ['business-excellence-private-sell-out-v13'],
+  ['business-excellence-private-sell-out-v14'],
   { revalidate: 45 },
 );
 
 const getCachedAuditSources = unstable_cache(
   async (reportingVersionId: string) => getBusinessExcellenceAuditSources(reportingVersionId),
-  ['business-excellence-audit-sources-v1'],
+  ['business-excellence-audit-sources-v2'],
   { revalidate: 45 },
 );
 
 const getCachedPrivatePrescriptionsOverview = unstable_cache(
   async (reportingVersionId: string) => getBusinessExcellencePrivatePrescriptionsOverview(reportingVersionId),
-  ['business-excellence-private-prescriptions-overview-v1'],
+  ['business-excellence-private-prescriptions-overview-v2'],
   { revalidate: 45 },
 );
 
@@ -2271,13 +2271,13 @@ const getCachedPublicMarketData = unstable_cache(
       };
     }
   },
-  ['business-excellence-public-market-v5'],
+  ['business-excellence-public-market-v6'],
   { revalidate: 120 },
 );
 
 const getCachedBusinessUnitChannelRows = unstable_cache(
   async (reportingVersionId: string) => getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId || undefined),
-  ['business-excellence-bu-channel-v1'],
+  ['business-excellence-bu-channel-v2'],
   { revalidate: 120 },
 );
 
