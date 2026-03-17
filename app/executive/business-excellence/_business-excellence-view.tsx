@@ -174,6 +174,12 @@ function resolveHeaderAuditContext(rows: BusinessExcellenceAuditSource[]) {
   return { reportPeriodMonth, sourceAsOfMonth };
 }
 
+function resolveDddSourceAsOfMonth(rows: BusinessExcellenceAuditSource[]) {
+  const dddRow = rows.find((row) => row.sourceKey === 'pmm');
+  if (dddRow?.sourceAsOfMonth) return dddRow.sourceAsOfMonth;
+  return null;
+}
+
 function formatShortPeriod(value: string | null | undefined) {
   if (!value) return 'N/A';
   const date = new Date(`${value}T00:00:00`);
@@ -502,6 +508,7 @@ function AuditSourcesPanel({ rows }: { rows: BusinessExcellenceAuditSource[] }) 
 
 function SellOutPrivadoPanel({
   overview,
+  sourceAsOfMonth,
   martSummary,
   martRows,
   chartPoints,
@@ -511,6 +518,7 @@ function SellOutPrivadoPanel({
   selectedFilters,
 }: {
   overview: BusinessExcellencePrivateSellOutOverview;
+  sourceAsOfMonth: string | null;
   martSummary: BusinessExcellencePrivateSellOutMartSummary | null;
   martRows: BusinessExcellencePrivateSellOutMartRow[];
   chartPoints: BusinessExcellencePrivateMarketChartPoint[];
@@ -532,7 +540,7 @@ function SellOutPrivadoPanel({
         </p>
         <p className="mt-1">
           <span className="font-medium text-slate-900">Source As Of:</span>{' '}
-          {overview.sourceAsOfMonth ? formatPeriod(overview.sourceAsOfMonth) : 'N/A'}
+          {sourceAsOfMonth ? formatPeriod(sourceAsOfMonth) : 'N/A'}
         </p>
       </div>
 
@@ -646,7 +654,37 @@ function PublicPerformancePanel({
         evolutionIndex,
         coveragePct,
       };
-    })
+    });
+  const triplesRows = topProducts.filter(
+    (row) => isTriplesDoseMarketGroup(row.marketGroup) && isTrimbowBrand(row.brandName),
+  );
+  const triplesSyntheticRow =
+    triplesRows.length > 0
+      ? (() => {
+          const units = triplesRows.reduce(
+            (sum, row) => sum + (activeView === 'ytd' ? row.ytdPieces : row.mthPieces),
+            0,
+          );
+          const unitsPy = triplesRows.reduce(
+            (sum, row) => sum + (activeView === 'ytd' ? row.ytdPiecesPy : row.mthPiecesPy),
+            0,
+          );
+          const budgetUnits = triplesRows.reduce(
+            (sum, row) => sum + (activeView === 'ytd' ? row.ytdBudgetUnits : row.mthBudgetUnits),
+            0,
+          );
+          return {
+            label: `${TRIPLES_TOTAL_TRIMBOW_LABEL} - Trimbow`,
+            units,
+            budgetUnits,
+            growthPct: unitsPy > 0 ? ((units - unitsPy) / unitsPy) * 100 : null,
+            msPct: null,
+            evolutionIndex: null,
+            coveragePct: budgetUnits > 0 ? (units / budgetUnits) * 100 : null,
+          };
+        })()
+      : null;
+  const sortedDisplayRows = (triplesSyntheticRow ? [...displayRows, triplesSyntheticRow] : displayRows)
     .sort((a, b) => b.units - a.units);
 
   return (
@@ -744,7 +782,7 @@ function PublicPerformancePanel({
               </tr>
             </thead>
             <tbody>
-              {displayRows.map((row) => (
+              {sortedDisplayRows.map((row) => (
                 <tr key={row.label} className="border-b border-slate-100 last:border-b-0">
                   <td className="py-2.5 text-slate-800">{row.label}</td>
                   <td className="py-2.5 text-right text-slate-900">
@@ -767,7 +805,7 @@ function PublicPerformancePanel({
                   </td>
                 </tr>
               ))}
-              {displayRows.length === 0 ? (
+              {sortedDisplayRows.length === 0 ? (
                 <tr>
                   <td className="py-2 text-slate-500" colSpan={7}>No mapped public-market rows yet.</td>
                 </tr>
@@ -1000,6 +1038,106 @@ function MarketPerformancePanel({
         coveragePct: activeView === 'ytd' ? row.totalYtdCoveragePct : row.totalMthCoveragePct,
       };
     })
+    .sort((a, b) => b.units - a.units);
+
+  const triplesPrivateRows = privateRows.filter(
+    (row) => isTriplesDoseMarketGroup(row.marketGroup) && isTrimbowBrand(row.brandName),
+  );
+  const triplesPublicRows = publicRows.filter(
+    (row) => isTriplesDoseMarketGroup(row.marketGroup) && isTrimbowBrand(row.brandName),
+  );
+  const triplesPrivateYtdUnits = triplesPrivateRows.reduce((sum, row) => sum + row.ytdUnits, 0);
+  const triplesPrivateYtdUnitsPy = triplesPrivateRows.reduce((sum, row) => sum + row.ytdUnitsPy, 0);
+  const triplesPrivateYtdBudgetUnits = triplesPrivateRows.reduce((sum, row) => sum + row.budgetYtdUnits, 0);
+  const triplesPrivateMthUnits = triplesPrivateRows.reduce((sum, row) => sum + row.mthUnits, 0);
+  const triplesPrivateMthUnitsPy = triplesPrivateRows.reduce((sum, row) => sum + row.mthUnitsPy, 0);
+  const triplesPrivateMthBudgetUnits = triplesPrivateRows.reduce((sum, row) => sum + row.budgetMthUnits, 0);
+  const triplesPublicYtdUnits = triplesPublicRows.reduce((sum, row) => sum + row.ytdPieces, 0);
+  const triplesPublicYtdUnitsPy = triplesPublicRows.reduce((sum, row) => sum + row.ytdPiecesPy, 0);
+  const triplesPublicYtdBudgetUnits = triplesPublicRows.reduce((sum, row) => sum + row.ytdBudgetUnits, 0);
+  const triplesPublicMthUnits = triplesPublicRows.reduce((sum, row) => sum + row.mthPieces, 0);
+  const triplesPublicMthUnitsPy = triplesPublicRows.reduce((sum, row) => sum + row.mthPiecesPy, 0);
+  const triplesPublicMthBudgetUnits = triplesPublicRows.reduce((sum, row) => sum + row.mthBudgetUnits, 0);
+
+  const triplesTotalYtdUnits = triplesPrivateYtdUnits + triplesPublicYtdUnits;
+  const triplesTotalYtdUnitsPy = triplesPrivateYtdUnitsPy + triplesPublicYtdUnitsPy;
+  const triplesTotalYtdBudgetUnits = triplesPrivateYtdBudgetUnits + triplesPublicYtdBudgetUnits;
+  const triplesTotalMthUnits = triplesPrivateMthUnits + triplesPublicMthUnits;
+  const triplesTotalMthUnitsPy = triplesPrivateMthUnitsPy + triplesPublicMthUnitsPy;
+  const triplesTotalMthBudgetUnits = triplesPrivateMthBudgetUnits + triplesPublicMthBudgetUnits;
+
+  const triplesPrivateYtdGrowthPct =
+    triplesPrivateYtdUnitsPy > 0 ? ((triplesPrivateYtdUnits - triplesPrivateYtdUnitsPy) / triplesPrivateYtdUnitsPy) * 100 : null;
+  const triplesPrivateMthGrowthPct =
+    triplesPrivateMthUnitsPy > 0 ? ((triplesPrivateMthUnits - triplesPrivateMthUnitsPy) / triplesPrivateMthUnitsPy) * 100 : null;
+  const triplesPublicYtdGrowthPct =
+    triplesPublicYtdUnitsPy > 0 ? ((triplesPublicYtdUnits - triplesPublicYtdUnitsPy) / triplesPublicYtdUnitsPy) * 100 : null;
+  const triplesPublicMthGrowthPct =
+    triplesPublicMthUnitsPy > 0 ? ((triplesPublicMthUnits - triplesPublicMthUnitsPy) / triplesPublicMthUnitsPy) * 100 : null;
+  const triplesTotalYtdGrowthPct =
+    triplesTotalYtdUnitsPy > 0 ? ((triplesTotalYtdUnits - triplesTotalYtdUnitsPy) / triplesTotalYtdUnitsPy) * 100 : null;
+  const triplesTotalMthGrowthPct =
+    triplesTotalMthUnitsPy > 0 ? ((triplesTotalMthUnits - triplesTotalMthUnitsPy) / triplesTotalMthUnitsPy) * 100 : null;
+
+  const triplesSyntheticRow =
+    triplesPrivateRows.length > 0 || triplesPublicRows.length > 0
+      ? {
+          marketGroup: TRIPLES_TOTAL_TRIMBOW_LABEL,
+          referenceBrand: 'Trimbow',
+          units:
+            activeChannel === 'private'
+              ? activeView === 'ytd'
+                ? triplesPrivateYtdUnits
+                : triplesPrivateMthUnits
+              : activeChannel === 'public'
+                ? activeView === 'ytd'
+                  ? triplesPublicYtdUnits
+                  : triplesPublicMthUnits
+                : activeView === 'ytd'
+                  ? triplesTotalYtdUnits
+                  : triplesTotalMthUnits,
+          growthPct:
+            activeChannel === 'private'
+              ? activeView === 'ytd'
+                ? triplesPrivateYtdGrowthPct
+                : triplesPrivateMthGrowthPct
+              : activeChannel === 'public'
+                ? activeView === 'ytd'
+                  ? triplesPublicYtdGrowthPct
+                  : triplesPublicMthGrowthPct
+                : activeView === 'ytd'
+                  ? triplesTotalYtdGrowthPct
+                  : triplesTotalMthGrowthPct,
+          budgetUnits:
+            activeChannel === 'private'
+              ? activeView === 'ytd'
+                ? triplesPrivateYtdBudgetUnits
+                : triplesPrivateMthBudgetUnits
+              : activeChannel === 'public'
+                ? activeView === 'ytd'
+                  ? triplesPublicYtdBudgetUnits
+                  : triplesPublicMthBudgetUnits
+                : activeView === 'ytd'
+                  ? triplesTotalYtdBudgetUnits
+                  : triplesTotalMthBudgetUnits,
+          coveragePct:
+            activeChannel === 'private'
+              ? activeView === 'ytd'
+                ? (triplesPrivateYtdBudgetUnits > 0 ? (triplesPrivateYtdUnits / triplesPrivateYtdBudgetUnits) * 100 : null)
+                : (triplesPrivateMthBudgetUnits > 0 ? (triplesPrivateMthUnits / triplesPrivateMthBudgetUnits) * 100 : null)
+              : activeChannel === 'public'
+                ? activeView === 'ytd'
+                  ? (triplesPublicYtdBudgetUnits > 0 ? (triplesPublicYtdUnits / triplesPublicYtdBudgetUnits) * 100 : null)
+                  : (triplesPublicMthBudgetUnits > 0 ? (triplesPublicMthUnits / triplesPublicMthBudgetUnits) * 100 : null)
+                : activeView === 'ytd'
+                  ? (triplesTotalYtdBudgetUnits > 0 ? (triplesTotalYtdUnits / triplesTotalYtdBudgetUnits) * 100 : null)
+                  : (triplesTotalMthBudgetUnits > 0 ? (triplesTotalMthUnits / triplesTotalMthBudgetUnits) * 100 : null),
+        }
+      : null;
+
+  const topMarketDisplayRows = (triplesSyntheticRow
+    ? [...marketDisplayRows, triplesSyntheticRow]
+    : marketDisplayRows)
     .sort((a, b) => b.units - a.units)
     .slice(0, 12);
 
@@ -1162,7 +1300,7 @@ function MarketPerformancePanel({
               </tr>
             </thead>
             <tbody>
-              {marketDisplayRows.map((row) => (
+              {topMarketDisplayRows.map((row) => (
                 <tr key={`${row.marketGroup}-${row.referenceBrand ?? 'na'}`} className="border-b border-slate-100 last:border-b-0">
                   <td className="py-2.5 text-slate-800">
                     <div className="flex items-center gap-2">
@@ -1257,6 +1395,27 @@ function formatBudgetCoverage(value: number | null) {
 
 function formatRatioText(value: number | null) {
   return value === null ? 'N/A' : `${value.toFixed(1)}%`;
+}
+
+const TRIPLES_TOTAL_TRIMBOW_LABEL = 'Triples - Total Trimbow';
+
+function normalizeMarketText(value: string | null | undefined) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function isTriplesDoseMarketGroup(marketGroup: string | null | undefined) {
+  const normalized = normalizeMarketText(marketGroup);
+  if (!normalized.includes('triples')) return false;
+  return normalized.includes('media dosis') || normalized.includes('dosis alta');
+}
+
+function isTrimbowBrand(brandName: string | null | undefined) {
+  const normalized = normalizeMarketText(brandName);
+  return normalized.includes('trimbow');
 }
 
 type SpecialtySummary = {
@@ -2189,10 +2348,14 @@ export async function BusinessExcellenceView({
     getCachedBusinessUnitChannelRows(selectedReportingVersionId),
   ]);
   const auditHeader = resolveHeaderAuditContext(auditSources);
+  const dddSourceAsOfMonth = resolveDddSourceAsOfMonth(auditSources);
   const headerReportPeriod =
     privateSellOutData.overview?.reportPeriodMonth ?? auditHeader.reportPeriodMonth ?? latestPeriod;
   const headerSourceAsOf =
-    privateSellOutData.overview?.sourceAsOfMonth ?? auditHeader.sourceAsOfMonth ?? latestPeriod;
+    dddSourceAsOfMonth ??
+    privateSellOutData.overview?.sourceAsOfMonth ??
+    auditHeader.sourceAsOfMonth ??
+    latestPeriod;
 
   return (
     <section className="space-y-4 pb-8">
@@ -2228,6 +2391,7 @@ export async function BusinessExcellenceView({
           {activeDashboardTab === 'private' ? (
             <SellOutPrivadoPanel
               overview={privateSellOutData.overview}
+              sourceAsOfMonth={headerSourceAsOf}
               martSummary={privateSellOutData.martSummary}
               martRows={privateSellOutData.martRows}
               chartPoints={privateSellOutData.chartPoints}
@@ -2245,7 +2409,7 @@ export async function BusinessExcellenceView({
               rankingRows={publicMarketData?.rankingRows ?? []}
               error={publicMarketData?.error ?? null}
               reportPeriodMonth={privateSellOutData.overview.reportPeriodMonth}
-              sourceAsOfMonth={privateSellOutData.overview.sourceAsOfMonth}
+              sourceAsOfMonth={headerSourceAsOf}
               activeView={activePublicView}
               params={searchParams}
             />

@@ -1568,6 +1568,8 @@ async function getPublicMarketContext(reportingVersionId?: string) {
         CAST(MAX(source_as_of_month) AS STRING) AS cutoff_date
       FROM \`${RAW_UPLOADS}\`
       WHERE reporting_version_id = @reportingVersionId
+        AND LOWER(TRIM(module_code)) IN ('business_excellence_ddd', 'business_excellence_pmm', 'ddd', 'pmm')
+        AND status IN ('normalized', 'published')
         AND source_as_of_month IS NOT NULL
     `,
     params: { reportingVersionId: resolvedReportingVersionId },
@@ -1578,6 +1580,23 @@ async function getPublicMarketContext(reportingVersionId?: string) {
     return {
       reportingVersionId: resolvedReportingVersionId,
       cutoffDate: String(cutoffFromUploads),
+    };
+  }
+
+  const [pmmRows] = await client.query({
+    query: `
+      SELECT CAST(MAX(source_as_of_month) AS STRING) AS cutoff_date
+      FROM \`${PMM_ENRICHED_TABLE}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND source_as_of_month IS NOT NULL
+    `,
+    params: { reportingVersionId: resolvedReportingVersionId },
+  });
+  const cutoffFromPmm = (pmmRows as Array<Record<string, unknown>>)[0]?.cutoff_date;
+  if (cutoffFromPmm) {
+    return {
+      reportingVersionId: resolvedReportingVersionId,
+      cutoffDate: String(cutoffFromPmm),
     };
   }
 

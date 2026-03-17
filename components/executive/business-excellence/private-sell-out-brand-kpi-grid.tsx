@@ -8,6 +8,26 @@ type PrivateSellOutBrandKpiGridProps = {
   rows: BusinessExcellencePrivateSellOutMartRow[];
 };
 
+const TRIPLES_TOTAL_TRIMBOW_LABEL = 'Triples - Total Trimbow';
+
+function normalizeMarketText(value: string | null | undefined) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function isTriplesDoseMarketGroup(marketGroup: string | null | undefined) {
+  const normalized = normalizeMarketText(marketGroup);
+  if (!normalized.includes('triples')) return false;
+  return normalized.includes('media dosis') || normalized.includes('dosis alta');
+}
+
+function isTrimbowBrand(brandName: string | null | undefined) {
+  return normalizeMarketText(brandName).includes('trimbow');
+}
+
 function formatRatioPercent(value: number | null, digits = 1) {
   if (value === null) return 'N/A';
   const percent = value * 100;
@@ -48,6 +68,85 @@ function eiTone(value: number | null) {
 
 export function PrivateSellOutBrandKpiGrid({ rows }: PrivateSellOutBrandKpiGridProps) {
   const [windowMode, setWindowMode] = useState<'ytd' | 'mth'>('ytd');
+  const triplesRows = rows.filter(
+    (row) => isTriplesDoseMarketGroup(row.marketGroup) && isTrimbowBrand(row.brandName),
+  );
+  const triplesSyntheticRow: BusinessExcellencePrivateSellOutMartRow | null = triplesRows.length
+    ? (() => {
+        const ytdUnits = triplesRows.reduce((sum, row) => sum + row.ytdUnits, 0);
+        const ytdUnitsPy = triplesRows.reduce((sum, row) => sum + row.ytdUnitsPy, 0);
+        const mthUnits = triplesRows.reduce((sum, row) => sum + row.mthUnits, 0);
+        const mthUnitsPy = triplesRows.reduce((sum, row) => sum + row.mthUnitsPy, 0);
+        const ytdNetSales = triplesRows.reduce((sum, row) => sum + row.ytdNetSales, 0);
+        const mthNetSales = triplesRows.reduce((sum, row) => sum + row.mthNetSales, 0);
+        const ytdRx = triplesRows.reduce((sum, row) => sum + row.ytdRx, 0);
+        const mthRx = triplesRows.reduce((sum, row) => sum + row.mthRx, 0);
+        const ytdRxByMg = triplesRows.reduce((sum, row) => sum + row.ytdRxByMg, 0);
+        const mthRxByMg = triplesRows.reduce((sum, row) => sum + row.mthRxByMg, 0);
+        const ytdRxByNeumo = triplesRows.reduce((sum, row) => sum + row.ytdRxByNeumo, 0);
+        const mthRxByNeumo = triplesRows.reduce((sum, row) => sum + row.mthRxByNeumo, 0);
+        const budgetYtdUnits = triplesRows.reduce((sum, row) => sum + row.budgetYtdUnits, 0);
+        const budgetMthUnits = triplesRows.reduce((sum, row) => sum + row.budgetMthUnits, 0);
+        const weightedYtdVisitedUnits = triplesRows.reduce(
+          (sum, row) => sum + ((row.ytdUnitsVisitedRatio ?? 0) * row.ytdUnits),
+          0,
+        );
+        const weightedMthVisitedUnits = triplesRows.reduce(
+          (sum, row) => sum + ((row.mthUnitsVisitedRatio ?? 0) * row.mthUnits),
+          0,
+        );
+        const weightedYtdVisitedRx = triplesRows.reduce(
+          (sum, row) => sum + ((row.ytdRxVisitedRatio ?? 0) * row.ytdRx),
+          0,
+        );
+        const weightedMthVisitedRx = triplesRows.reduce(
+          (sum, row) => sum + ((row.mthRxVisitedRatio ?? 0) * row.mthRx),
+          0,
+        );
+
+        return {
+          reportingVersionId: triplesRows[0].reportingVersionId,
+          marketGroup: TRIPLES_TOTAL_TRIMBOW_LABEL,
+          brandName: 'Trimbow',
+          lastAvailableMonth: triplesRows[0].lastAvailableMonth,
+          ytdUnits,
+          ytdUnitsPy,
+          growthVsPyYtdUnitsPct: ytdUnitsPy > 0 ? (ytdUnits - ytdUnitsPy) / ytdUnitsPy : null,
+          msYtdUnitsPct: null,
+          eiYtdUnits: null,
+          mthUnits,
+          mthUnitsPy,
+          growthVsPyMthUnitsPct: mthUnitsPy > 0 ? (mthUnits - mthUnitsPy) / mthUnitsPy : null,
+          msMthUnitsPct: null,
+          eiMthUnits: null,
+          ytdNetSales,
+          mthNetSales,
+          ytdRx,
+          mthRx,
+          growthVsPyYtdRxPct: null,
+          growthVsPyMthRxPct: null,
+          ytdRxByMg,
+          mthRxByMg,
+          ytdRxByNeumo,
+          mthRxByNeumo,
+          budgetYtdUnits,
+          budgetMthUnits,
+          ytdUnitsVisitedRatio: ytdUnits > 0 ? weightedYtdVisitedUnits / ytdUnits : null,
+          mthUnitsVisitedRatio: mthUnits > 0 ? weightedMthVisitedUnits / mthUnits : null,
+          ytdRxVisitedRatio: ytdRx > 0 ? weightedYtdVisitedRx / ytdRx : null,
+          mthRxVisitedRatio: mthRx > 0 ? weightedMthVisitedRx / mthRx : null,
+          ytdRxMgRatio: ytdRx > 0 ? ytdRxByMg / ytdRx : null,
+          mthRxMgRatio: mthRx > 0 ? mthRxByMg / mthRx : null,
+          ytdRxNeumoRatio: ytdRx > 0 ? ytdRxByNeumo / ytdRx : null,
+          mthRxNeumoRatio: mthRx > 0 ? mthRxByNeumo / mthRx : null,
+          varianceVsBudgetYtdUnitsPct: budgetYtdUnits > 0 ? (ytdUnits - budgetYtdUnits) / budgetYtdUnits : null,
+          varianceVsBudgetYtdNetSalesPct: null,
+          varianceVsBudgetMthUnitsPct: budgetMthUnits > 0 ? (mthUnits - budgetMthUnits) / budgetMthUnits : null,
+          varianceVsBudgetMthNetSalesPct: null,
+        };
+      })()
+    : null;
+  const displayRows = triplesSyntheticRow ? [...rows, triplesSyntheticRow] : rows;
 
   return (
     <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50/50 p-4">
@@ -93,7 +192,7 @@ export function PrivateSellOutBrandKpiGrid({ rows }: PrivateSellOutBrandKpiGridP
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {displayRows.map((row) => {
               const units = windowMode === 'ytd' ? row.ytdUnits : row.mthUnits;
               const unitsGrowth = windowMode === 'ytd' ? row.growthVsPyYtdUnitsPct : row.growthVsPyMthUnitsPct;
               const ms = windowMode === 'ytd' ? row.msYtdUnitsPct : row.msMthUnitsPct;
