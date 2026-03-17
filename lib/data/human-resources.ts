@@ -171,7 +171,7 @@ export async function getHumanResourcesAuditSources(
     query: `
       WITH turnover_upload AS (
         SELECT
-          reporting_version_id,
+          @reportingVersionId AS reporting_version_id,
           MAX(period_month) AS report_period_month,
           MAX(source_as_of_month) AS source_as_of_month
         FROM \`${RAW_UPLOADS}\`
@@ -181,7 +181,7 @@ export async function getHumanResourcesAuditSources(
       ),
       training_upload AS (
         SELECT
-          reporting_version_id,
+          @reportingVersionId AS reporting_version_id,
           MAX(period_month) AS report_period_month,
           MAX(source_as_of_month) AS source_as_of_month
         FROM \`${RAW_UPLOADS}\`
