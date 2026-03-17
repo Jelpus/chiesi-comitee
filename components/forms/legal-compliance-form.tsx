@@ -2,8 +2,12 @@
 
 import { Loader2 } from 'lucide-react';
 import { useFormStatus } from 'react-dom';
-import type { LegalComplianceMonthlyInputRow } from '@/lib/data/legal-compliance-forms-schema';
-import { LEGAL_COMPLIANCE_KPIS } from '@/lib/data/legal-compliance-forms-schema';
+import type {
+  LegalComplianceAnswerField,
+  LegalComplianceKpiName,
+  LegalComplianceMonthlyInputRow,
+} from '@/lib/data/legal-compliance-forms-schema';
+import { LEGAL_COMPLIANCE_KPIS, LEGAL_COMPLIANCE_KPI_FIELDS } from '@/lib/data/legal-compliance-forms-schema';
 import { submitLegalComplianceForm } from '@/app/forms/legal-compliance/actions';
 
 type LegalComplianceFormProps = {
@@ -11,6 +15,7 @@ type LegalComplianceFormProps = {
   defaultSourceAsOfMonth: string;
   reportingVersionId: string;
   objectiveByKpi: Record<string, number | null>;
+  answerFieldsByKpi?: Partial<Record<LegalComplianceKpiName, ReadonlyArray<LegalComplianceAnswerField>>>;
   rows: LegalComplianceMonthlyInputRow[];
 };
 
@@ -61,6 +66,7 @@ export function LegalComplianceForm({
   defaultSourceAsOfMonth,
   reportingVersionId,
   objectiveByKpi,
+  answerFieldsByKpi = {},
   rows,
 }: LegalComplianceFormProps) {
   const byKpi = new Map(rows.map((row) => [row.kpiName.toLowerCase().trim(), row]));
@@ -109,7 +115,12 @@ export function LegalComplianceForm({
         const row = byKpi.get(kpiName.toLowerCase());
         const isLawsuitKpi = kpiName.toLowerCase().includes('juicios');
         const objectiveCount = objectiveByKpi[kpiName] ?? row?.objectiveCount ?? null;
+        const fields = answerFieldsByKpi[kpiName] ?? LEGAL_COMPLIANCE_KPI_FIELDS[kpiName] ?? [];
+        const hasCurrent = fields.includes('current_count');
+        const hasActive = fields.includes('active_count');
+        const hasAdditional = fields.includes('additional_amount_mxn');
         const showAdditional =
+          hasAdditional &&
           isLawsuitKpi &&
           (((row?.currentCount ?? 0) + (row?.activeCount ?? 0) > 0) ||
             (row?.additionalAmountMxn ?? 0) > 0);
@@ -124,31 +135,39 @@ export function LegalComplianceForm({
                   {toInputValue(objectiveCount) || 'N/A'}
                 </p>
               </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Current Count</span>
-                <input
-                  name={`${key}_current_count`}
-                  type="number"
-                  step="1"
-                  defaultValue={toInputValue(row?.currentCount)}
-                  required
-                  className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Active Count</span>
-                <input
-                  name={`${key}_active_count`}
-                  type="number"
-                  step="1"
-                  defaultValue={toInputValue(row?.activeCount)}
-                  required
-                  className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm"
-                />
-              </label>
+              {hasCurrent ? (
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Current Count</span>
+                  <input
+                    name={`${key}_current_count`}
+                    type="number"
+                    step="1"
+                    defaultValue={toInputValue(row?.currentCount)}
+                    required
+                    className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm"
+                  />
+                </label>
+              ) : (
+                <input type="hidden" name={`${key}_current_count`} value="" />
+              )}
+              {hasActive ? (
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Active Count</span>
+                  <input
+                    name={`${key}_active_count`}
+                    type="number"
+                    step="1"
+                    defaultValue={toInputValue(row?.activeCount)}
+                    required
+                    className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm"
+                  />
+                </label>
+              ) : (
+                <input type="hidden" name={`${key}_active_count`} value="" />
+              )}
             </div>
 
-            {isLawsuitKpi ? (
+            {isLawsuitKpi && hasAdditional ? (
               <div className="mt-3 rounded-[10px] border border-slate-200 bg-slate-50 p-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
                   Additional (conditional)

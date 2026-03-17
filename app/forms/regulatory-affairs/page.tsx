@@ -4,6 +4,8 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { getLatestReportingVersion } from '@/lib/data/versions/get-latest-version';
 import { getRaMonthlyInputs } from '@/lib/data/ra-forms';
 import { getAdminTargets } from '@/lib/data/targets';
+import type { RaCountMetric, RaTopicName } from '@/lib/data/ra-forms-schema';
+import { parseRaCountFields, RA_TOPICS, RA_TOPIC_COUNT_FIELDS } from '@/lib/data/ra-forms-schema';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +14,22 @@ function formatMonth(value: string | null | undefined) {
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return 'N/A';
   return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
+}
+
+function normalizeText(value: string | null | undefined) {
+  return (value ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function resolveTopicFromText(value: string | null | undefined) {
+  const key = normalizeText(value);
+  if (!key) return null;
+  if (key.includes('liberaciones')) return 'Liberaciones';
+  if (key.includes('registros')) return 'Registros Sanitarios';
+  if (key.includes('modificaciones')) return 'Modificaciones Regulatorias';
+  if (key.includes('importacion')) return 'Permisos de Importacion';
+  if (key.includes('procedimientos')) return 'Procedimientos';
+  if (key.includes('auditorias')) return 'Auditorias Externas';
+  return null;
 }
 
 type RegulatoryAffairsFormPageProps = {
@@ -28,14 +46,26 @@ export default async function RegulatoryAffairsFormPage({ searchParams }: Regula
   const sourceAsOfMonth = rows[0]?.sourceAsOfMonth || periodMonth;
   const targets = await getAdminTargets('ra_quality_fv', latestVersion.reporting_version_id, periodMonth);
   const targetByTopic = new Map<string, string>();
+  const countFieldsByTopic = new Map<RaTopicName, ReadonlyArray<RaCountMetric>>();
+  const topicByExistingTargetLabel = new Map<string, string>();
+  for (const row of rows) {
+    const labelKey = normalizeText(row.targetLabel);
+    if (!labelKey) continue;
+    if (!RA_TOPICS.includes(row.topic as (typeof RA_TOPICS)[number])) continue;
+    topicByExistingTargetLabel.set(labelKey, row.topic);
+  }
+
   for (const target of targets) {
-    const key = (target.kpiName ?? '').toLowerCase();
-    if (key.includes('liberaciones')) targetByTopic.set('Liberaciones', target.kpiLabel || target.kpiName);
-    if (key.includes('registros')) targetByTopic.set('Registros Sanitarios', target.kpiLabel || target.kpiName);
-    if (key.includes('modificaciones')) targetByTopic.set('Modificaciones Regulatorias', target.kpiLabel || target.kpiName);
-    if (key.includes('importacion')) targetByTopic.set('Permisos de Importacion', target.kpiLabel || target.kpiName);
-    if (key.includes('procedimientos')) targetByTopic.set('Procedimientos', target.kpiLabel || target.kpiName);
-    if (key.includes('auditorias')) targetByTopic.set('Auditorias Externas', target.kpiLabel || target.kpiName);
+    const label = target.kpiLabel || target.kpiName;
+    const topicFromExistingLabel = topicByExistingTargetLabel.get(normalizeText(label));
+    const resolvedTopic = topicFromExistingLabel ?? resolveTopicFromText(target.kpiName) ?? resolveTopicFromText(target.kpiLabel);
+    if (resolvedTopic) {
+      targetByTopic.set(resolvedTopic, label);
+      const parsedFields = parseRaCountFields(target.formFields);
+      if (parsedFields.length > 0) {
+        countFieldsByTopic.set(resolvedTopic as RaTopicName, parsedFields);
+      }
+    }
   }
 
   return (
@@ -64,6 +94,9 @@ export default async function RegulatoryAffairsFormPage({ searchParams }: Regula
           defaultSourceAsOfMonth={sourceAsOfMonth}
           reportingVersionId={latestVersion.reporting_version_id}
           objectivesByTopic={Object.fromEntries(targetByTopic)}
+          countFieldsByTopic={Object.fromEntries(
+            RA_TOPICS.map((topic) => [topic, countFieldsByTopic.get(topic) ?? RA_TOPIC_COUNT_FIELDS[topic]]),
+          )}
           rows={rows}
         />
       </div>

@@ -4,6 +4,12 @@ import { LegalComplianceForm } from '@/components/forms/legal-compliance-form';
 import { getLatestReportingVersion } from '@/lib/data/versions/get-latest-version';
 import { getLegalComplianceMonthlyInputs } from '@/lib/data/legal-compliance-forms';
 import { getAdminTargets } from '@/lib/data/targets';
+import type { LegalComplianceAnswerField, LegalComplianceKpiName } from '@/lib/data/legal-compliance-forms-schema';
+import {
+  LEGAL_COMPLIANCE_KPI_FIELDS,
+  LEGAL_COMPLIANCE_KPIS,
+  parseLegalComplianceFields,
+} from '@/lib/data/legal-compliance-forms-schema';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +18,10 @@ function formatMonth(value: string | null | undefined) {
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return 'N/A';
   return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
+}
+
+function normalizeText(value: string | null | undefined) {
+  return (value ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
 type PageProps = { searchParams: Promise<{ period?: string }> };
@@ -26,6 +36,17 @@ export default async function LegalComplianceFormPage({ searchParams }: PageProp
   const objectiveByKpi = Object.fromEntries(
     targets.map((target) => [target.kpiName, target.targetValueNumeric ?? null]),
   ) as Record<string, number | null>;
+  const answerFieldsByKpi = new Map<LegalComplianceKpiName, ReadonlyArray<LegalComplianceAnswerField>>();
+  const kpiNameLookup = new Map(LEGAL_COMPLIANCE_KPIS.map((name) => [normalizeText(name), name]));
+
+  for (const target of targets) {
+    const resolvedKpi = kpiNameLookup.get(normalizeText(target.kpiName));
+    if (!resolvedKpi) continue;
+    const parsed = parseLegalComplianceFields(target.formFields);
+    if (parsed.length > 0) {
+      answerFieldsByKpi.set(resolvedKpi, parsed);
+    }
+  }
 
   return (
     <section className="grid h-full min-h-0 grid-rows-[auto_1fr] gap-3 overflow-hidden lg:gap-2 xl:gap-3 2xl:gap-4">
@@ -53,6 +74,9 @@ export default async function LegalComplianceFormPage({ searchParams }: PageProp
           defaultSourceAsOfMonth={sourceAsOfMonth}
           reportingVersionId={latestVersion.reporting_version_id}
           objectiveByKpi={objectiveByKpi}
+          answerFieldsByKpi={Object.fromEntries(
+            LEGAL_COMPLIANCE_KPIS.map((kpi) => [kpi, answerFieldsByKpi.get(kpi) ?? LEGAL_COMPLIANCE_KPI_FIELDS[kpi]]),
+          )}
           rows={rows}
         />
       </div>

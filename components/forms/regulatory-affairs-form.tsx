@@ -2,8 +2,8 @@
 
 import { Loader2 } from 'lucide-react';
 import { useFormStatus } from 'react-dom';
-import type { RaMonthlyInputRow } from '@/lib/data/ra-forms-schema';
-import { RA_TOPICS } from '@/lib/data/ra-forms-schema';
+import type { RaCountMetric, RaMonthlyInputRow, RaTopicName } from '@/lib/data/ra-forms-schema';
+import { RA_TOPICS, RA_TOPIC_COUNT_FIELDS } from '@/lib/data/ra-forms-schema';
 import { submitRegulatoryAffairsForm } from '@/app/forms/regulatory-affairs/actions';
 
 type RegulatoryAffairsFormProps = {
@@ -11,6 +11,7 @@ type RegulatoryAffairsFormProps = {
   defaultSourceAsOfMonth: string;
   reportingVersionId: string;
   objectivesByTopic: Record<string, string>;
+  countFieldsByTopic?: Partial<Record<RaTopicName, ReadonlyArray<RaCountMetric>>>;
   rows: RaMonthlyInputRow[];
 };
 
@@ -25,6 +26,18 @@ function toInputValue(value: number | null | undefined) {
 function toMonthValue(value: string) {
   return value?.slice(0, 7) ?? '';
 }
+
+const COUNT_FIELD_META: Record<
+  RaCountMetric,
+  { label: string; suffix: string; read: (row: RaMonthlyInputRow | undefined) => number | null | undefined }
+> = {
+  on_time: { label: 'On-time', suffix: 'on_time', read: (row) => row?.onTimeCount },
+  late: { label: 'Late', suffix: 'late', read: (row) => row?.lateCount },
+  pending: { label: 'Pending', suffix: 'pending', read: (row) => row?.pendingCount },
+  active: { label: 'Active', suffix: 'active', read: (row) => row?.activeCount },
+  overdue: { label: 'Overdue', suffix: 'overdue', read: (row) => row?.overdueCount },
+  ytd: { label: 'YTD total', suffix: 'ytd', read: (row) => row?.ytdCount },
+};
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -61,6 +74,7 @@ export function RegulatoryAffairsForm({
   defaultSourceAsOfMonth,
   reportingVersionId,
   objectivesByTopic,
+  countFieldsByTopic = {},
   rows,
 }: RegulatoryAffairsFormProps) {
   const byTopic = new Map(rows.map((row) => [row.topic.toLowerCase().trim(), row]));
@@ -130,30 +144,21 @@ export function RegulatoryAffairsForm({
             </div>
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">On-time</span>
-                <input name={`${key}_on_time`} type="number" defaultValue={toInputValue(current?.onTimeCount)} required className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Late</span>
-                <input name={`${key}_late`} type="number" defaultValue={toInputValue(current?.lateCount)} required className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Pending</span>
-                <input name={`${key}_pending`} type="number" defaultValue={toInputValue(current?.pendingCount)} required className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Active</span>
-                <input name={`${key}_active`} type="number" defaultValue={toInputValue(current?.activeCount)} required className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Overdue</span>
-                <input name={`${key}_overdue`} type="number" defaultValue={toInputValue(current?.overdueCount)} required className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">YTD total</span>
-                <input name={`${key}_ytd`} type="number" defaultValue={toInputValue(current?.ytdCount)} required className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm" />
-              </label>
+              {(countFieldsByTopic[topic] ?? RA_TOPIC_COUNT_FIELDS[topic] ?? []).map((field) => {
+                const meta = COUNT_FIELD_META[field];
+                return (
+                  <label key={field} className="space-y-1">
+                    <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500">{meta.label}</span>
+                    <input
+                      name={`${key}_${meta.suffix}`}
+                      type="number"
+                      defaultValue={toInputValue(meta.read(current))}
+                      required
+                      className="w-full rounded-[10px] border border-slate-200 px-3 py-2 text-sm"
+                    />
+                  </label>
+                );
+              })}
             </div>
 
             <label className="mt-3 block space-y-1">

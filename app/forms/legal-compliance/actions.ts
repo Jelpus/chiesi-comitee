@@ -3,7 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { getAdminTargets, upsertAdminTarget } from '@/lib/data/targets';
-import { LEGAL_COMPLIANCE_KPIS } from '@/lib/data/legal-compliance-forms-schema';
+import {
+  LEGAL_COMPLIANCE_KPIS,
+  LEGAL_COMPLIANCE_KPI_FIELDS,
+  parseLegalComplianceFields,
+} from '@/lib/data/legal-compliance-forms-schema';
 import { saveLegalComplianceMonthlyInputs } from '@/lib/data/legal-compliance-forms';
 
 function parseNumericTarget(rawValue: string): number | null {
@@ -43,26 +47,54 @@ export async function submitLegalComplianceForm(formData: FormData) {
   const objectiveByKpi = new Map(
     targets.map((target) => [target.kpiName.toLowerCase().trim(), target.targetValueNumeric]),
   );
+  const fieldsByKpi = new Map<string, ReadonlySet<string>>();
+  for (const target of targets) {
+    const parsedFields = parseLegalComplianceFields(target.formFields);
+    if (parsedFields.length > 0) {
+      fieldsByKpi.set(target.kpiName.toLowerCase().trim(), new Set(parsedFields));
+    }
+  }
 
   const kpis = LEGAL_COMPLIANCE_KPIS.map((kpiName) => {
     const key = kpiName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const configuredFields =
+      fieldsByKpi.get(kpiName.toLowerCase().trim()) ?? new Set(LEGAL_COMPLIANCE_KPI_FIELDS[kpiName] ?? []);
     return {
       kpiName,
       objectiveCount: objectiveByKpi.get(kpiName.toLowerCase().trim()) ?? null,
-      currentCount: parseCount(formData.get(`${key}_current_count`)),
-      activeCount: parseCount(formData.get(`${key}_active_count`)),
-      additionalAmountMxn: parseCount(formData.get(`${key}_additional_amount_mxn`)),
+      currentCount: configuredFields.has('current_count') ? parseCount(formData.get(`${key}_current_count`)) : null,
+      activeCount: configuredFields.has('active_count') ? parseCount(formData.get(`${key}_active_count`)) : null,
+      additionalAmountMxn: configuredFields.has('additional_amount_mxn')
+        ? parseCount(formData.get(`${key}_additional_amount_mxn`))
+        : null,
       comment: String(formData.get(`${key}_comment`) ?? '').trim(),
     };
   });
 
-  const missingCore = kpis.filter((item) => item.currentCount == null || item.activeCount == null);
+  const missingCore = kpis.filter((item) => {
+    const configuredFields =
+      fieldsByKpi.get(item.kpiName.toLowerCase().trim()) ??
+      new Set(LEGAL_COMPLIANCE_KPI_FIELDS[item.kpiName as (typeof LEGAL_COMPLIANCE_KPIS)[number]] ?? []);
+    if (configuredFields.has('current_count') && item.currentCount == null) return true;
+    if (configuredFields.has('active_count') && item.activeCount == null) return true;
+    return false;
+  });
   if (missingCore.length > 0) {
     throw new Error(`Missing required counts for ${missingCore.length} KPI(s).`);
   }
 
   const lawsuits = kpis.find((item) => item.kpiName.toLowerCase().includes('juicios'));
-  if (lawsuits && ((lawsuits.currentCount ?? 0) + (lawsuits.activeCount ?? 0) > 0) && lawsuits.additionalAmountMxn == null) {
+  const lawsuitsFields =
+    lawsuits == null
+      ? new Set<string>()
+      : fieldsByKpi.get(lawsuits.kpiName.toLowerCase().trim()) ??
+        new Set(LEGAL_COMPLIANCE_KPI_FIELDS[lawsuits.kpiName as (typeof LEGAL_COMPLIANCE_KPIS)[number]] ?? []);
+  if (
+    lawsuits &&
+    lawsuitsFields.has('additional_amount_mxn') &&
+    ((lawsuits.currentCount ?? 0) + (lawsuits.activeCount ?? 0) > 0) &&
+    lawsuits.additionalAmountMxn == null
+  ) {
     throw new Error('Contingent liability amount is required when lawsuits are active/current.');
   }
 

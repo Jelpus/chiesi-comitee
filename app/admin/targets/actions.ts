@@ -102,6 +102,7 @@ export async function saveAdminTarget(formData: FormData) {
   const kpiLabel = String(formData.get('kpiLabel') ?? '').trim();
   const qtyUnit = String(formData.get('qtyUnit') ?? '').trim();
   const targetValueText = String(formData.get('targetValue') ?? '').trim();
+  const formFields = String(formData.get('formFields') ?? '').trim();
   const isActive = String(formData.get('isActive') ?? 'true') === 'true';
 
   if (!reportingVersionId) throw new Error('Reporting version is required.');
@@ -119,6 +120,7 @@ export async function saveAdminTarget(formData: FormData) {
     qtyUnit,
     targetValueText,
     targetValueNumeric: parseNumericTarget(targetValueText),
+    formFields: formFields || null,
     isActive,
     updatedBy: 'system',
   });

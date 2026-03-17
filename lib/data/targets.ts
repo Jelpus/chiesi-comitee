@@ -13,6 +13,7 @@ export type AdminTargetRow = {
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
+  formFields: string | null;
   isActive: boolean;
   updatedAt: string | null;
   updatedBy: string | null;
@@ -28,6 +29,7 @@ export type UpsertTargetInput = {
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
+  formFields?: string | null;
   isActive: boolean;
   updatedBy?: string;
 };
@@ -88,6 +90,7 @@ async function ensureTargetsTable() {
             qty_unit STRING,
             target_value_text STRING,
             target_value_numeric NUMERIC,
+            form_fields STRING,
             is_active BOOL,
             created_at TIMESTAMP,
             created_by STRING,
@@ -124,6 +127,12 @@ async function ensureTargetsTable() {
         query: `
           ALTER TABLE \`${TARGETS_TABLE}\`
           ADD COLUMN IF NOT EXISTS period_month DATE
+        `,
+      }));
+      await queryWithUpdateRateLimitRetry(() => client.query({
+        query: `
+          ALTER TABLE \`${TARGETS_TABLE}\`
+          ADD COLUMN IF NOT EXISTS form_fields STRING
         `,
       }));
     })();
@@ -163,6 +172,7 @@ export async function getAdminTargets(
   reportingVersionId?: string,
   periodMonth?: string,
 ): Promise<AdminTargetRow[]> {
+  await ensureTargetsTable();
   const client = getBigQueryClient();
   const { whereClauses, params } = buildTargetFilters(area, reportingVersionId, periodMonth);
 
@@ -181,6 +191,7 @@ export async function getAdminTargets(
           qty_unit,
           target_value_text,
           CAST(target_value_numeric AS FLOAT64) AS target_value_numeric,
+          form_fields,
           is_active,
           CAST(updated_at AS STRING) AS updated_at,
           updated_by,
@@ -204,6 +215,7 @@ export async function getAdminTargets(
           qty_unit,
           target_value_text,
           target_value_numeric,
+          form_fields,
           is_active,
           updated_at,
           updated_by,
@@ -229,6 +241,7 @@ export async function getAdminTargets(
         qty_unit,
         target_value_text,
         target_value_numeric,
+        form_fields,
         is_active,
         updated_at,
         updated_by
@@ -250,6 +263,7 @@ export async function getAdminTargets(
     qtyUnit: String(row.qty_unit ?? ''),
     targetValueText: String(row.target_value_text ?? ''),
     targetValueNumeric: row.target_value_numeric == null ? null : Number(row.target_value_numeric),
+    formFields: row.form_fields == null ? null : String(row.form_fields),
     isActive: Boolean(row.is_active ?? true),
     updatedAt: row.updated_at == null ? null : String(row.updated_at),
     updatedBy: row.updated_by == null ? null : String(row.updated_by),
@@ -257,6 +271,7 @@ export async function getAdminTargets(
 }
 
 export async function getAdminTargetAreas(reportingVersionId?: string, periodMonth?: string): Promise<string[]> {
+  await ensureTargetsTable();
   const client = getBigQueryClient();
   const { whereClauses, params } = buildTargetFilters(undefined, reportingVersionId, periodMonth);
 
@@ -317,6 +332,7 @@ type LatestTargetRevision = {
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
+  formFields: string | null;
   isActive: boolean;
 };
 
@@ -337,6 +353,7 @@ async function getLatestTargetRevisionById(targetId: string): Promise<LatestTarg
         qty_unit,
         target_value_text,
         CAST(target_value_numeric AS FLOAT64) AS target_value_numeric,
+        form_fields,
         is_active
       FROM \`${TARGETS_TABLE}\`
       WHERE target_id = @targetId
@@ -361,6 +378,7 @@ async function getLatestTargetRevisionById(targetId: string): Promise<LatestTarg
     qtyUnit: String(row.qty_unit ?? ''),
     targetValueText: String(row.target_value_text ?? ''),
     targetValueNumeric: row.target_value_numeric == null ? null : Number(row.target_value_numeric),
+    formFields: row.form_fields == null ? null : String(row.form_fields),
     isActive: Boolean(row.is_active ?? true),
   };
 }
@@ -384,6 +402,7 @@ async function getLatestTargetRevisionByNaturalKey(input: UpsertTargetInput): Pr
           qty_unit,
           target_value_text,
           CAST(target_value_numeric AS FLOAT64) AS target_value_numeric,
+          form_fields,
           is_active,
           ROW_NUMBER() OVER (
             PARTITION BY target_id
@@ -408,6 +427,7 @@ async function getLatestTargetRevisionByNaturalKey(input: UpsertTargetInput): Pr
         qty_unit,
         target_value_text,
         target_value_numeric,
+        form_fields,
         is_active
       FROM ranked
       WHERE rn = 1
@@ -437,6 +457,7 @@ async function getLatestTargetRevisionByNaturalKey(input: UpsertTargetInput): Pr
     qtyUnit: String(row.qty_unit ?? ''),
     targetValueText: String(row.target_value_text ?? ''),
     targetValueNumeric: row.target_value_numeric == null ? null : Number(row.target_value_numeric),
+    formFields: row.form_fields == null ? null : String(row.form_fields),
     isActive: Boolean(row.is_active ?? true),
   };
 }
@@ -453,6 +474,7 @@ async function appendTargetRevision(params: {
   qtyUnit: string;
   targetValueText: string;
   targetValueNumeric: number | null;
+  formFields: string | null;
   isActive: boolean;
   createdAt: string;
   createdBy: string;
@@ -474,6 +496,7 @@ async function appendTargetRevision(params: {
         qty_unit,
         target_value_text,
         target_value_numeric,
+        form_fields,
         is_active,
         created_at,
         created_by,
@@ -492,6 +515,7 @@ async function appendTargetRevision(params: {
         @qtyUnit,
         @targetValueText,
         SAFE_CAST(@targetValueNumeric AS NUMERIC),
+        @formFields,
         @isActive,
         TIMESTAMP(@createdAt),
         @createdBy,
@@ -511,6 +535,7 @@ async function appendTargetRevision(params: {
       qtyUnit: 'STRING',
       targetValueText: 'STRING',
       targetValueNumeric: 'NUMERIC',
+      formFields: 'STRING',
       isActive: 'BOOL',
       createdAt: 'STRING',
       createdBy: 'STRING',
@@ -540,6 +565,7 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
       qtyUnit: input.qtyUnit,
       targetValueText: input.targetValueText,
       targetValueNumeric: input.targetValueNumeric,
+      formFields: input.formFields ?? latest.formFields ?? null,
       isActive: input.isActive,
       createdAt: latest.createdAt || new Date().toISOString(),
       createdBy: latest.createdBy || updatedBy,
@@ -562,6 +588,7 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
       qtyUnit: input.qtyUnit,
       targetValueText: input.targetValueText,
       targetValueNumeric: input.targetValueNumeric,
+      formFields: input.formFields ?? existing.formFields ?? null,
       isActive: input.isActive,
       createdAt: existing.createdAt || new Date().toISOString(),
       createdBy: existing.createdBy || updatedBy,
@@ -583,6 +610,7 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
     qtyUnit: input.qtyUnit,
     targetValueText: input.targetValueText,
     targetValueNumeric: input.targetValueNumeric,
+    formFields: input.formFields ?? null,
     isActive: input.isActive,
     createdAt: new Date().toISOString(),
     createdBy: updatedBy,
@@ -609,6 +637,7 @@ export async function deleteAdminTarget(targetId: string) {
     qtyUnit: latest.qtyUnit,
     targetValueText: latest.targetValueText,
     targetValueNumeric: latest.targetValueNumeric,
+    formFields: latest.formFields,
     isActive: false,
     createdAt: latest.createdAt || new Date().toISOString(),
     createdBy: latest.createdBy || 'system',

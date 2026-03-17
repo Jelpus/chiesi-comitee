@@ -4,6 +4,10 @@ import { useMemo, useState, useTransition } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import type { AdminTargetRow } from '@/lib/data/targets';
+import type { RaCountMetric } from '@/lib/data/ra-forms-schema';
+import { parseRaCountFields } from '@/lib/data/ra-forms-schema';
+import type { LegalComplianceAnswerField } from '@/lib/data/legal-compliance-forms-schema';
+import { parseLegalComplianceFields } from '@/lib/data/legal-compliance-forms-schema';
 import { removeAdminTarget, saveAdminTarget } from '@/app/admin/targets/actions';
 
 type TargetsManagerProps = {
@@ -23,6 +27,21 @@ const DEFAULT_AREAS = [
   'opex',
   'legal_compliance',
   'ra_quality_fv',
+];
+
+const RA_FORM_FIELD_OPTIONS: Array<{ key: RaCountMetric; label: string }> = [
+  { key: 'on_time', label: 'on_time_count' },
+  { key: 'late', label: 'late_count' },
+  { key: 'pending', label: 'pending_count' },
+  { key: 'active', label: 'active_count' },
+  { key: 'overdue', label: 'overdue_count' },
+  { key: 'ytd', label: 'ytd_count' },
+];
+
+const LEGAL_FORM_FIELD_OPTIONS: Array<{ key: LegalComplianceAnswerField; label: string }> = [
+  { key: 'current_count', label: 'current_count' },
+  { key: 'active_count', label: 'active_count' },
+  { key: 'additional_amount_mxn', label: 'additional_amount_mxn' },
 ];
 
 function formatUpdatedAt(value: string | null) {
@@ -231,7 +250,6 @@ export function TargetsManager({
                 <th className="px-4 py-3">KPI Label</th>
                 <th className="px-4 py-3">Unit</th>
                 <th className="px-4 py-3">Target</th>
-                <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3">Actions</th>
               </tr>
@@ -261,6 +279,21 @@ export function TargetsManager({
                       className="w-[280px] rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
                       required
                     />
+                    {row.area === 'ra_quality_fv' ? (
+                      <AnswerFieldChips
+                        formId={`target-edit-${row.targetId}`}
+                        defaultFields={row.formFields}
+                      />
+                    ) : null}
+                    {row.area === 'legal_compliance' ? (
+                      <LegalAnswerFieldChips
+                        formId={`target-edit-${row.targetId}`}
+                        defaultFields={row.formFields}
+                      />
+                    ) : null}
+                    {row.area !== 'ra_quality_fv' && row.area !== 'legal_compliance' ? (
+                      <input type="hidden" name="formFields" form={`target-edit-${row.targetId}`} value="" />
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 align-top">
                     <input
@@ -288,17 +321,6 @@ export function TargetsManager({
                       required
                     />
                   </td>
-                  <td className="px-4 py-3 align-top">
-                    <select
-                      name="isActive"
-                      form={`target-edit-${row.targetId}`}
-                      defaultValue={row.isActive ? 'true' : 'false'}
-                      className="w-[100px] rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
-                    >
-                      <option value="true">Active</option>
-                      <option value="false">Inactive</option>
-                    </select>
-                  </td>
                   <td className="px-4 py-3 align-top text-xs text-slate-600">
                     <p className="font-semibold">Rev {row.revisionNumber}</p>
                     <p>{formatUpdatedAt(row.updatedAt)}</p>
@@ -307,6 +329,7 @@ export function TargetsManager({
                     <div className="flex items-center gap-2">
                       <form id={`target-edit-${row.targetId}`} action={submitEdit}>
                         <input type="hidden" name="targetId" value={row.targetId} />
+                        <input type="hidden" name="isActive" value={row.isActive ? 'true' : 'false'} />
                         <input type="hidden" name="reportingVersionId" value={row.reportingVersionId ?? selectedReportingVersionId} />
                         <input type="hidden" name="periodMonth" value={row.periodMonth ?? selectedPeriodMonth} />
                         <input
@@ -347,6 +370,94 @@ export function TargetsManager({
       {message ? (
         <p className="text-sm text-slate-700">{message}</p>
       ) : null}
+    </div>
+  );
+}
+
+function AnswerFieldChips({
+  formId,
+  defaultFields,
+}: {
+  formId: string;
+  defaultFields: string | null;
+}) {
+  const [selectedFields, setSelectedFields] = useState<RaCountMetric[]>(
+    parseRaCountFields(defaultFields),
+  );
+
+  function toggleField(field: RaCountMetric) {
+    setSelectedFields((prev) =>
+      prev.includes(field) ? prev.filter((item) => item !== field) : [...prev, field],
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <input type="hidden" name="formFields" form={formId} value={selectedFields.join(',')} />
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Answer fields</p>
+      <div className="flex flex-wrap gap-1.5">
+        {RA_FORM_FIELD_OPTIONS.map((option) => {
+          const selected = selectedFields.includes(option.key);
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => toggleField(option.key)}
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.04em] ${
+                selected
+                  ? 'border-slate-950 bg-slate-950 text-white'
+                  : 'border-slate-950 bg-white text-slate-950'
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LegalAnswerFieldChips({
+  formId,
+  defaultFields,
+}: {
+  formId: string;
+  defaultFields: string | null;
+}) {
+  const [selectedFields, setSelectedFields] = useState<LegalComplianceAnswerField[]>(
+    parseLegalComplianceFields(defaultFields),
+  );
+
+  function toggleField(field: LegalComplianceAnswerField) {
+    setSelectedFields((prev) =>
+      prev.includes(field) ? prev.filter((item) => item !== field) : [...prev, field],
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <input type="hidden" name="formFields" form={formId} value={selectedFields.join(',')} />
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Answer fields</p>
+      <div className="flex flex-wrap gap-1.5">
+        {LEGAL_FORM_FIELD_OPTIONS.map((option) => {
+          const selected = selectedFields.includes(option.key);
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => toggleField(option.key)}
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.04em] ${
+                selected
+                  ? 'border-slate-950 bg-slate-950 text-white'
+                  : 'border-slate-950 bg-white text-slate-950'
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
