@@ -387,7 +387,7 @@ async function getHumanResourcesExecutiveSnapshot(
   const [turnover, training, auditSources] = await Promise.all([
     getHumanResourcesTurnoverThemeData(reportingVersionId, 'total'),
     getHumanResourcesTrainingThemeData(reportingVersionId, 'total'),
-    getHumanResourcesAuditSources(reportingVersionId),
+    getHumanResourcesAuditSources(reportingVersionId).catch(() => []),
   ]);
 
   const turnoverActual = turnover?.summary.currentYtdExits ?? 0;
@@ -640,7 +640,24 @@ export async function getExecutiveCardsFromBigQuery(
   for (const spec of executiveCardOrder) {
     const promise = snapshotPromises[spec.key];
     if (promise) {
-      const snapshot = await promise;
+      let snapshot: ExecutiveCardItem | null = null;
+      try {
+        snapshot = await promise;
+      } catch (error) {
+        console.error(`[executive-home] snapshot failed for ${spec.key}`, error);
+      }
+      if (!snapshot) {
+        finalCards.push({
+          module: spec.module,
+          kpi: spec.defaultKpi,
+          actual: '-',
+          target: '-',
+          variance: '-',
+          status: 'neutral',
+          detailHref: detailHrefWithVersion(spec.detailHref),
+        });
+        continue;
+      }
       finalCards.push({
         ...snapshot,
         module: spec.module,
