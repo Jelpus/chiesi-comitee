@@ -6,6 +6,7 @@ export type ExecutiveCardItem = {
   actual: string;
   target: string;
   variance: string;
+  sourceAsOfMonth?: string | null;
   status: SemanticStatus;
   kpiSignals?: Array<{
     label: string;

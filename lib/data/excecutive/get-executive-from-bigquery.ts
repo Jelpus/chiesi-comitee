@@ -3,9 +3,9 @@ import { unstable_cache } from 'next/cache';
 
 import type { ExecutiveCardItem } from '@/types/executive';
 import type { SemanticStatus } from '@/lib/status/status-styles';
-import { getSalesInternalBudgetDualKpis, getSalesInternalDualKpisYoY } from '@/lib/data/sales-internal';
-import { getBusinessExcellenceBusinessUnitChannelRows } from '@/lib/data/business-excellence';
-import { getHumanResourcesTrainingThemeData, getHumanResourcesTurnoverThemeData } from '@/lib/data/human-resources';
+import { getSalesInternalAuditContext, getSalesInternalBudgetDualKpis, getSalesInternalDualKpisYoY } from '@/lib/data/sales-internal';
+import { getBusinessExcellenceAuditSources, getBusinessExcellenceBusinessUnitChannelRows } from '@/lib/data/business-excellence';
+import { getHumanResourcesAuditSources, getHumanResourcesTrainingThemeData, getHumanResourcesTurnoverThemeData } from '@/lib/data/human-resources';
 import {
   getCommercialOperationsDeliveryOrderRows,
   getCommercialOperationsStocksRows,
@@ -97,12 +97,22 @@ function statusFromCoverage(coverage: number | null): SemanticStatus {
   return 'red';
 }
 
+function resolveLatestMonth(values: Array<string | null | undefined>) {
+  return values
+    .map((value) => (value ?? '').trim())
+    .filter((value) => value.length > 0)
+    .sort()
+    .at(-1) ?? null;
+}
+
 async function getSalesInternalExecutiveSnapshot(
+  periodMonth: string,
   fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
-  const [dualKpisYoY, budgetDualKpis] = await Promise.all([
+  const [dualKpisYoY, budgetDualKpis, auditContext] = await Promise.all([
     getSalesInternalDualKpisYoY({}),
     getSalesInternalBudgetDualKpis({}),
+    getSalesInternalAuditContext(periodMonth),
   ]);
 
   const actual = dualKpisYoY.netSales.actual;
@@ -124,6 +134,7 @@ async function getSalesInternalExecutiveSnapshot(
         tone: toneFromCoverage(coverage == null ? null : coverage * 100),
       },
     ],
+    sourceAsOfMonth: auditContext.sourceAsOfMonth ?? periodMonth,
     detailHref: '/executive/sales-internal/insights',
   };
 }
@@ -143,15 +154,20 @@ function toSignedUnits(value: number) {
 
 async function getBusinessExcellenceExecutiveSnapshot(
   reportingVersionId: string,
+  periodMonth: string,
   fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
-  const rows = await getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId);
+  const [rows, auditSources] = await Promise.all([
+    getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId),
+    getBusinessExcellenceAuditSources(reportingVersionId),
+  ]);
   const targetUnits = new Set(['air', 'care']);
   const scopedRows = rows.filter((row) => targetUnits.has(row.businessUnitName.trim().toLowerCase()));
   const actual = scopedRows.reduce((sum, row) => sum + row.totalYtdUnits, 0);
   const target = scopedRows.reduce((sum, row) => sum + row.totalYtdBudgetUnits, 0);
   const variance = actual - target;
   const coverage = target === 0 ? null : actual / target;
+  const pmmSourceAsOf = auditSources.find((row) => row.sourceKey === 'pmm')?.sourceAsOfMonth ?? null;
 
   return {
     module: fallback?.module ?? 'Business Excellence',
@@ -167,6 +183,7 @@ async function getBusinessExcellenceExecutiveSnapshot(
         tone: toneFromCoverage(coverage == null ? null : coverage * 100),
       },
     ],
+    sourceAsOfMonth: pmmSourceAsOf ?? periodMonth,
     detailHref: '/executive/business-excellence/insights',
   };
 }
@@ -220,6 +237,7 @@ async function getMedicalExecutiveSnapshot(
         tone: toneFromCoverage(healthScorePct),
       },
     ],
+    sourceAsOfMonth: data.sourceAsOfMonth ?? periodMonth,
     detailHref: '/executive/medical',
   };
 }
@@ -356,17 +374,20 @@ async function getCommercialOperationsExecutiveSnapshot(
       { label: 'DOH', coveragePct: dohCoveragePct, tone: toneFromCoverage(dohCoveragePct) },
       { label: 'FR', coveragePct: fillRateCoveragePct, tone: toneFromCoverage(fillRateCoveragePct) },
     ],
+    sourceAsOfMonth: sourceAsOf ?? resolveLatestMonth(stockRows.map((row) => row.sourceAsOfMonth)),
     detailHref: '/executive/commercial-operations/insights',
   };
 }
 
 async function getHumanResourcesExecutiveSnapshot(
   reportingVersionId: string,
+  periodMonth: string,
   fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
-  const [turnover, training] = await Promise.all([
+  const [turnover, training, auditSources] = await Promise.all([
     getHumanResourcesTurnoverThemeData(reportingVersionId, 'total'),
     getHumanResourcesTrainingThemeData(reportingVersionId, 'total'),
+    getHumanResourcesAuditSources(reportingVersionId),
   ]);
 
   const turnoverActual = turnover?.summary.currentYtdExits ?? 0;
@@ -394,6 +415,7 @@ async function getHumanResourcesExecutiveSnapshot(
       : turnoverStatus === 'yellow' || trainingStatus === 'yellow'
         ? 'yellow'
         : 'green';
+  const sourceAsOfMonth = resolveLatestMonth(auditSources.map((row) => row.sourceAsOfMonth)) ?? periodMonth;
 
   return {
     module: fallback?.module ?? 'Human Resources',
@@ -414,6 +436,7 @@ async function getHumanResourcesExecutiveSnapshot(
         tone: toneFromCoverage(trainingCoveragePct),
       },
     ],
+    sourceAsOfMonth,
     detailHref: '/executive/human-resources/insights',
   };
 }
@@ -439,6 +462,7 @@ function resolveOpexMetricMap(rows: Awaited<ReturnType<typeof getOpexRows>>) {
 
 async function getOpexExecutiveSnapshot(
   reportingVersionId: string,
+  periodMonth: string,
   fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
   const rows = await getOpexRows(reportingVersionId);
@@ -473,6 +497,7 @@ async function getOpexExecutiveSnapshot(
         tone: toneFromCoverage(coveragePct),
       },
     ],
+    sourceAsOfMonth: resolveLatestMonth(rows.map((row) => row.sourceAsOfMonth)) ?? periodMonth,
     detailHref: '/executive/opex/insights',
   };
 }
@@ -502,6 +527,7 @@ async function getRaQualityFvExecutiveSnapshot(
         tone: toneFromCoverage(coveragePct),
       },
     ],
+    sourceAsOfMonth: data.sourceAsOfMonth ?? periodMonth,
     detailHref: '/executive/ra-quality-fv/insights',
   };
 }
@@ -531,62 +557,63 @@ async function getLegalComplianceExecutiveSnapshot(
         tone: toneFromCoverage(data.summary.weightedHealthPct),
       },
     ],
+    sourceAsOfMonth: data.sourceAsOfMonth ?? periodMonth,
     detailHref: '/executive/legal-compliance/insights',
   };
 }
 
 const getSalesInternalExecutiveSnapshotCached = unstable_cache(
-  async () => getSalesInternalExecutiveSnapshot({ module: 'Internal Sales' }),
-  ['executive-home', 'snapshot', 'internal-sales'],
+  async (periodMonth: string) => getSalesInternalExecutiveSnapshot(periodMonth, { module: 'Internal Sales' }),
+  ['executive-home', 'snapshot', 'internal-sales-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getBusinessExcellenceExecutiveSnapshotCached = unstable_cache(
-  async (reportingVersionId: string) =>
-    getBusinessExcellenceExecutiveSnapshot(reportingVersionId, { module: 'Business Excellence' }),
-  ['executive-home', 'snapshot', 'business-excellence-v2'],
+  async (reportingVersionId: string, periodMonth: string) =>
+    getBusinessExcellenceExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Business Excellence' }),
+  ['executive-home', 'snapshot', 'business-excellence-v3'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getCommercialOperationsExecutiveSnapshotCached = unstable_cache(
   async (reportingVersionId: string) =>
     getCommercialOperationsExecutiveSnapshot(reportingVersionId, { module: 'Commercial Operations' }),
-  ['executive-home', 'snapshot', 'commercial-operations'],
+  ['executive-home', 'snapshot', 'commercial-operations-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getMedicalExecutiveSnapshotCached = unstable_cache(
   async (reportingVersionId: string, periodMonth: string) =>
     getMedicalExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Medical' }),
-  ['executive-home', 'snapshot', 'medical'],
+  ['executive-home', 'snapshot', 'medical-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getOpexExecutiveSnapshotCached = unstable_cache(
-  async (reportingVersionId: string) =>
-    getOpexExecutiveSnapshot(reportingVersionId, { module: 'Opex' }),
-  ['executive-home', 'snapshot', 'opex'],
+  async (reportingVersionId: string, periodMonth: string) =>
+    getOpexExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Opex' }),
+  ['executive-home', 'snapshot', 'opex-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getHumanResourcesExecutiveSnapshotCached = unstable_cache(
-  async (reportingVersionId: string) =>
-    getHumanResourcesExecutiveSnapshot(reportingVersionId, { module: 'Human Resources' }),
-  ['executive-home', 'snapshot', 'human-resources'],
+  async (reportingVersionId: string, periodMonth: string) =>
+    getHumanResourcesExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Human Resources' }),
+  ['executive-home', 'snapshot', 'human-resources-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getRaQualityFvExecutiveSnapshotCached = unstable_cache(
   async (reportingVersionId: string, periodMonth: string) =>
     getRaQualityFvExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'RA - Quality - FV' }),
-  ['executive-home', 'snapshot', 'ra-quality-fv'],
+  ['executive-home', 'snapshot', 'ra-quality-fv-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
 const getLegalComplianceExecutiveSnapshotCached = unstable_cache(
   async (reportingVersionId: string, periodMonth: string) =>
     getLegalComplianceExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Legal & Compliance' }),
-  ['executive-home', 'snapshot', 'legal-compliance'],
+  ['executive-home', 'snapshot', 'legal-compliance-v2'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 
@@ -599,12 +626,12 @@ export async function getExecutiveCardsFromBigQuery(
     href ? `${href}${href.includes('?') ? '&' : '?'}version=${encodeURIComponent(reportingVersionId)}` : null;
 
   const snapshotPromises: Record<ExecutiveModuleKey, Promise<ExecutiveCardItem> | null> = {
-    internal_sales: getSalesInternalExecutiveSnapshotCached(),
+    internal_sales: getSalesInternalExecutiveSnapshotCached(selectedPeriodMonth),
     commercial_operations: getCommercialOperationsExecutiveSnapshotCached(reportingVersionId),
-    business_excellence: getBusinessExcellenceExecutiveSnapshotCached(reportingVersionId),
+    business_excellence: getBusinessExcellenceExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
     medical: getMedicalExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
-    opex: getOpexExecutiveSnapshotCached(reportingVersionId),
-    human_resources: getHumanResourcesExecutiveSnapshotCached(reportingVersionId),
+    opex: getOpexExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
+    human_resources: getHumanResourcesExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
     ra_quality_fv: getRaQualityFvExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
     legal_compliance: getLegalComplianceExecutiveSnapshotCached(reportingVersionId, selectedPeriodMonth),
   };
