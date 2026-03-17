@@ -192,16 +192,16 @@ export async function getHumanResourcesAuditSources(
       turnover_view AS (
         SELECT
           @reportingVersionId AS reporting_version_id,
-          MAX(DATE(report_period_month)) AS report_period_month,
-          MAX(DATE(source_as_of_month)) AS source_as_of_month
+          MAX(SAFE_CAST(report_period_month AS DATE)) AS report_period_month,
+          MAX(SAFE_CAST(source_as_of_month AS DATE)) AS source_as_of_month
         FROM \`${TURNOVER_VIEW}\`
         WHERE reporting_version_id = @reportingVersionId
       ),
       training_view AS (
         SELECT
           @reportingVersionId AS reporting_version_id,
-          MAX(DATE(report_period_month)) AS report_period_month,
-          MAX(DATE(source_as_of_month)) AS source_as_of_month
+          MAX(SAFE_CAST(report_period_month AS DATE)) AS report_period_month,
+          MAX(SAFE_CAST(source_as_of_month AS DATE)) AS source_as_of_month
         FROM \`${TRAINING_VIEW}\`
         WHERE reporting_version_id = @reportingVersionId
       )
