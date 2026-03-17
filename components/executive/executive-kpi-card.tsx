@@ -21,7 +21,8 @@ export function ExecutiveKpiCard({ item }: ExecutiveKpiCardProps) {
     neutral: 'bg-slate-300',
   };
   const sourceAsOfLabel = (() => {
-    const value = item.sourceAsOfMonth?.trim();
+    const value = String(item.sourceAsOfMonth ?? '').trim();
+    if (!value || value === '[object Object]') return null;
     if (!value) return null;
     const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
     if (Number.isNaN(date.getTime())) return value;
@@ -104,44 +105,45 @@ export function ExecutiveKpiCard({ item }: ExecutiveKpiCardProps) {
           </div>
         </div>
 
-        {sourceAsOfLabel ? (
-          <div className="mt-0.5">
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">
-              Source As Of: {sourceAsOfLabel}
-            </span>
-          </div>
-        ) : null}
-
         {/* Footer CTA */}
-        <div className="mt-auto flex justify-end pt-1">
-          {item.detailHref ? (
-            <Link
-              href={item.detailHref}
-              className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-4 py-1.5 text-xs font-semibold text-indigo-700 transition-all duration-200 hover:border-indigo-300 hover:bg-indigo-100 hover:shadow-sm sm:text-[13px]"
-            >
-              View details
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                className="h-3.5 w-3.5 opacity-70"
+        <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+          <div className="min-h-[26px]">
+            {sourceAsOfLabel ? (
+              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">
+                Source As Of: {sourceAsOfLabel}
+              </span>
+            ) : null}
+          </div>
+          <div className="shrink-0">
+            {item.detailHref ? (
+              <Link
+                href={item.detailHref}
+                className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-4 py-1.5 text-xs font-semibold text-indigo-700 transition-all duration-200 hover:border-indigo-300 hover:bg-indigo-100 hover:shadow-sm sm:text-[13px]"
               >
-                <path
-                  fillRule="evenodd"
-                  d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06L7.28 11.78a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </Link>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className="cursor-not-allowed rounded-full border border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-400 sm:text-[13px]"
-            >
-              Coming soon
-            </button>
-          )}
+                View details
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                  className="h-3.5 w-3.5 opacity-70"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06L7.28 11.78a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </Link>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="cursor-not-allowed rounded-full border border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-400 sm:text-[13px]"
+              >
+                Coming soon
+              </button>
+            )}
+          </div>
         </div>
 
       </div>

@@ -599,7 +599,7 @@ const getOpexExecutiveSnapshotCached = unstable_cache(
 const getHumanResourcesExecutiveSnapshotCached = unstable_cache(
   async (reportingVersionId: string, periodMonth: string) =>
     getHumanResourcesExecutiveSnapshot(reportingVersionId, periodMonth, { module: 'Human Resources' }),
-  ['executive-home', 'snapshot', 'human-resources-v2'],
+  ['executive-home', 'snapshot', 'human-resources-v3'],
   { revalidate: 120, tags: ['executive-home'] },
 );
 

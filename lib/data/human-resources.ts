@@ -75,6 +75,30 @@ function buildUserLookupKeys(value: string | null | undefined) {
   return Array.from(keys);
 }
 
+function toIsoDateString(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString().slice(0, 10);
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === 'object') {
+    const candidate = value as { value?: unknown };
+    if (typeof candidate.value === 'string' && candidate.value.trim()) {
+      return candidate.value.trim();
+    }
+  }
+  return null;
+}
+
 async function getEmployeesPeopleMap() {
   try {
     const response = await fetch('https://www.chiesihub.com/_functions/empleados', {
@@ -174,8 +198,8 @@ export async function getHumanResourcesAuditSources(
     sourceKey: String(row.source_key) as 'turnover' | 'training',
     sourceLabel: String(row.source_label ?? ''),
     reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
-    reportPeriodMonth: row.report_period_month ? String(row.report_period_month) : null,
-    sourceAsOfMonth: row.source_as_of_month ? String(row.source_as_of_month) : null,
+    reportPeriodMonth: toIsoDateString(row.report_period_month),
+    sourceAsOfMonth: toIsoDateString(row.source_as_of_month),
   }));
 }
 
@@ -227,8 +251,8 @@ export async function getHumanResourcesTurnoverOverview(
   if (!row) return null;
 
   return {
-    reportPeriodMonth: row.report_period_month ? String(row.report_period_month) : null,
-    sourceAsOfMonth: row.source_as_of_month ? String(row.source_as_of_month) : null,
+    reportPeriodMonth: toIsoDateString(row.report_period_month),
+    sourceAsOfMonth: toIsoDateString(row.source_as_of_month),
     ytdExits: Number(row.ytd_exits ?? 0),
     ytdVoluntaryExits: Number(row.ytd_voluntary_exits ?? 0),
     ytdInvoluntaryExits: Number(row.ytd_involuntary_exits ?? 0),
@@ -264,8 +288,8 @@ export async function getHumanResourcesTrainingOverview(
   const completed = Number(row.ytd_completed ?? 0);
 
   return {
-    reportPeriodMonth: row.report_period_month ? String(row.report_period_month) : null,
-    sourceAsOfMonth: row.source_as_of_month ? String(row.source_as_of_month) : null,
+    reportPeriodMonth: toIsoDateString(row.report_period_month),
+    sourceAsOfMonth: toIsoDateString(row.source_as_of_month),
     ytdTotalHours: Number(row.ytd_total_hours ?? 0),
     ytdCompleted: completed,
     ytdTotalRecords: total,
