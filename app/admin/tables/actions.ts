@@ -68,13 +68,92 @@ function getPreviewClient(optionKey: string) {
 }
 
 function getPreviewQueryLocation(optionKey: string) {
-  return isPublicMarketOptionKey(optionKey) ? 'US' : undefined;
+  if (!isPublicMarketOptionKey(optionKey)) return undefined;
+
+  const configuredLocation = process.env.GOB360_QUERY_LOCATION?.trim() || process.env.GOB360_LOCATION?.trim();
+  return configuredLocation || 'US';
+}
+
+function splitTableId(tableId: string) {
+  const [projectId, datasetId, tableName] = tableId.split('.');
+  if (!projectId || !datasetId || !tableName) return null;
+  return { projectId, datasetId, tableName };
+}
+
+function inferTypeFromValue(value: unknown): string {
+  if (value === null || value === undefined) return 'UNKNOWN';
+  if (Array.isArray(value)) return 'ARRAY';
+  if (value instanceof Date) return 'TIMESTAMP';
+  const valueType = typeof value;
+  if (valueType === 'string') return 'STRING';
+  if (valueType === 'boolean') return 'BOOL';
+  if (valueType === 'number') return Number.isInteger(value) ? 'INT64' : 'FLOAT64';
+  if (valueType === 'bigint') return 'INT64';
+  if (valueType === 'object') return 'STRUCT';
+  return 'UNKNOWN';
+}
+
+async function getSchemaPreviewWithoutInformationSchema(
+  optionKey: string,
+  tableId: string,
+): Promise<TableSchemaRow[]> {
+  const client = getPreviewClient(optionKey);
+  const location = getPreviewQueryLocation(optionKey);
+  const tableRef = splitTableId(tableId);
+  if (!tableRef) return [];
+
+  try {
+    const [metadata] = await client
+      .dataset(tableRef.datasetId, { projectId: tableRef.projectId })
+      .table(tableRef.tableName)
+      .getMetadata();
+
+    const fields = (metadata?.schema?.fields ?? []) as Array<{
+      name?: string;
+      type?: string;
+      mode?: string;
+    }>;
+
+    if (fields.length > 0) {
+      return fields.map((field, index) => ({
+        column_name: field.name ?? `column_${index + 1}`,
+        data_type: field.type ?? 'UNKNOWN',
+        is_nullable: field.mode === 'REQUIRED' ? 'NO' : 'YES',
+        ordinal_position: index + 1,
+      }));
+    }
+  } catch {
+    // Fallback to one-row query based inference when table metadata is not available.
+  }
+
+  const [rows] = await client.query({
+    query: `SELECT * FROM \`${tableId}\` LIMIT 1`,
+    location,
+  });
+
+  const firstRow = (rows as Array<Record<string, unknown>>)[0];
+  if (!firstRow) return [];
+
+  return Object.entries(firstRow).map(([columnName, value], index) => ({
+    column_name: columnName,
+    data_type: inferTypeFromValue(value),
+    is_nullable: 'YES',
+    ordinal_position: index + 1,
+  }));
 }
 
 export async function getTableSchemaPreview(optionKey: string) {
   const tableId = resolvePreviewTableId(optionKey);
   if (!tableId) {
     throw new Error(`Unknown table key: ${optionKey}`);
+  }
+
+  if (isPublicMarketOptionKey(optionKey)) {
+    const columns = await getSchemaPreviewWithoutInformationSchema(optionKey, tableId);
+    return {
+      tableId,
+      columns,
+    };
   }
 
   const schemaRef = resolveInformationSchema(tableId);

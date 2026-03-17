@@ -1,6 +1,6 @@
 'use client';
 
-import { Database, Play, Table2 } from 'lucide-react';
+import { Copy, Database, Download, Play, Table2 } from 'lucide-react';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import {
   getTableSamplePreview,
@@ -24,6 +24,38 @@ type QueryResult = {
   tableId: string;
   rows: Array<Record<string, unknown>>;
 };
+
+function normalizeCellValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function escapeCsvCell(value: string): string {
+  if (!/[",\n\r]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function toCsv(rows: Array<Record<string, unknown>>): string {
+  if (rows.length === 0) return '';
+
+  const columnSet = new Set<string>();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      columnSet.add(key);
+    }
+  }
+
+  const columns = Array.from(columnSet);
+  const header = columns.map((column) => escapeCsvCell(column)).join(',');
+  const body = rows.map((row) =>
+    columns
+      .map((column) => escapeCsvCell(normalizeCellValue(row[column])))
+      .join(','),
+  );
+
+  return [header, ...body].join('\n');
+}
 
 function GenericPreviewTable({ rows }: { rows: Array<Record<string, unknown>> }) {
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
@@ -78,6 +110,7 @@ export function TablesConsole({ options }: TablesConsoleProps) {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [showAsJson, setShowAsJson] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [copyFeedback, setCopyFeedback] = useState<'idle' | 'ok' | 'error'>('idle');
 
   const selectedOption = useMemo(
     () => options.find((option) => option.key === selectedKey) ?? null,
@@ -142,6 +175,36 @@ export function TablesConsole({ options }: TablesConsoleProps) {
   }
 
   const runCurrent = mode === 'sample' ? runSample : runQuery;
+
+  async function copyJsonResult() {
+    if (!result) return;
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(result.rows, null, 2));
+      setCopyFeedback('ok');
+    } catch {
+      setCopyFeedback('error');
+    }
+
+    setTimeout(() => setCopyFeedback('idle'), 1800);
+  }
+
+  function downloadCsvResult() {
+    if (!result) return;
+
+    const csvContent = toCsv(result.rows);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const filename = `${result.tableId.replace(/[^a-zA-Z0-9_.-]/g, '_')}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   function appendColumnToSelect(columnName: string) {
     const trimmed = selectClause.trim();
@@ -282,6 +345,26 @@ export function TablesConsole({ options }: TablesConsoleProps) {
           <Database className="h-3.5 w-3.5" />
           {showAsJson ? 'Table View' : 'JSON View'}
         </button>
+        {showAsJson && result ? (
+          <>
+            <button
+              type="button"
+              onClick={copyJsonResult}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {copyFeedback === 'ok' ? 'Copied' : copyFeedback === 'error' ? 'Copy Error' : 'Copy JSON'}
+            </button>
+            <button
+              type="button"
+              onClick={downloadCsvResult}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download CSV
+            </button>
+          </>
+        ) : null}
       </div>
 
       {errorMessage ? (
