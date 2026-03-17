@@ -72,9 +72,9 @@ const sourceTables = [
     note: 'Vista enriquecida para el primer grupo de analisis, lista para leer mercado, manager, territorio y producto Chiesi.',
   },
   {
-    name: 'Recetas Privado',
+    name: 'Private Prescriptions',
     tableId: 'chiesi-committee.chiesi_committee_stg.vw_business_excellence_closeup_enriched',
-    note: 'Vista principal para recetas privadas, specialty, market group y metadata de producto.',
+    note: 'Main view for private prescriptions, specialty, market group, and product metadata.',
   },
   {
     name: 'Budget Sell Out',
@@ -264,7 +264,7 @@ function LandingContent() {
         <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Aligned Sources</p>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Business Excellence</h2>
         <p className="mt-2 max-w-3xl text-sm text-slate-600">
-          El dashboard parte ahora de vistas enriquecidas para Sell Out Privado, Recetas Privado y Budget Sell Out.
+          The dashboard now uses enriched views for Private Sell Out, Private Prescriptions, and Budget Sell Out.
         </p>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -453,7 +453,7 @@ function DashboardTopCards({
       <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('amber')}`}>
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Total Private Prescriptions YTD</p>
         <div className="mt-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Recetas</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Prescriptions</p>
           <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
             {formatRecetas(prescriptionsOverview?.ytdRecetas ?? 0)}
           </p>
@@ -657,7 +657,7 @@ function PublicPerformancePanel({
     >
       {error ? (
         <div className="rounded-[12px] border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          Public market query is not available yet: {error}
+          Public data note: {error}
         </div>
       ) : null}
 
@@ -2090,12 +2090,16 @@ const getCachedPublicMarketData = unstable_cache(
         getBusinessExcellencePublicMarketChartPoints(reportingVersionId || undefined),
         getBusinessExcellencePublicDimensionRankingRows(reportingVersionId || undefined),
       ]);
+      const scFallbackNote =
+        overview?.scSourceIsFallback
+          ? `SC source for cutoff month unavailable; using SC from ${overview.scSourceMonth ?? 'previous available month'} projected into cutoff month.`
+          : null;
       return {
         overview,
         topProducts,
         chartRows,
         rankingRows,
-        error: null as string | null,
+        error: scFallbackNote as string | null,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load public market data.';

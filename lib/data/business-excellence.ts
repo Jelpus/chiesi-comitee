@@ -492,7 +492,7 @@ export async function getBusinessExcellenceAuditSources(
     closeup AS (
       SELECT
         'closeup' AS source_key,
-        'Recetas Privado' AS source_label,
+        'Private Prescriptions' AS source_label,
         @reportingVersionId AS reporting_version_id,
         CAST(MAX(report_period_month) AS STRING) AS report_period_month,
         CAST(MAX(source_as_of_month) AS STRING) AS source_as_of_month
@@ -1153,6 +1153,8 @@ async function getProductMetadataBusinessUnitMap() {
 
 type Gob360OverviewRow = {
   latest_date: string | null;
+  sc_selected_month: string | null;
+  sc_is_fallback: boolean;
   ytd_pieces: number;
   ytd_pieces_py: number;
   mth_pieces: number;
@@ -1207,12 +1209,13 @@ async function getGob360OverviewFromMappedClaves(
   const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
   const query = `
     WITH source_raw AS (
-      SELECT DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
+      SELECT 'pc' AS source_db, DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
       UNION ALL
-      SELECT DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
+      SELECT 'sc' AS source_db, DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
     ),
     source_clean AS (
       SELECT
+        source_db,
         CAST(CLUE AS STRING) AS clue,
         LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
         COALESCE(
@@ -1227,12 +1230,59 @@ async function getGob360OverviewFromMappedClaves(
         AND CLAVE IS NOT NULL
         AND TRIM(CAST(CLAVE AS STRING)) != ''
     ),
-    mapped AS (
-      SELECT *
+    sc_month_candidates AS (
+      SELECT DISTINCT DATE_TRUNC(event_date, MONTH) AS sc_month
       FROM source_clean
-      WHERE source_clave_normalized IN UNNEST(@mappedClaves)
+      WHERE source_db = 'sc'
+        AND source_clave_normalized IN UNNEST(@mappedClaves)
         AND event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR event_date <= DATE(@cutoffDate))
+    ),
+    sc_selected AS (
+      SELECT
+        CASE
+          WHEN @cutoffDate IS NULL THEN MAX(sc_month)
+          ELSE COALESCE(
+            MAX(IF(sc_month = DATE_TRUNC(DATE(@cutoffDate), MONTH), sc_month, NULL)),
+            MAX(sc_month)
+          )
+        END AS sc_selected_month
+      FROM sc_month_candidates
+    ),
+    mapped AS (
+      SELECT
+        s.source_db,
+        s.clue,
+        s.source_clave_normalized,
+        DATE_ADD(
+          s.event_date,
+          INTERVAL IF(
+            s.source_db = 'sc'
+            AND @cutoffDate IS NOT NULL
+            AND sc.sc_selected_month IS NOT NULL
+            AND sc.sc_selected_month < DATE_TRUNC(DATE(@cutoffDate), MONTH),
+            DATE_DIFF(DATE_TRUNC(DATE(@cutoffDate), MONTH), sc.sc_selected_month, MONTH),
+            0
+          ) MONTH
+        ) AS event_date,
+        s.pieces,
+        sc.sc_selected_month
+      FROM source_clean s
+      CROSS JOIN sc_selected sc
+      WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
+        AND s.event_date IS NOT NULL
+        AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+        AND (
+          s.source_db = 'pc'
+          OR (
+            s.source_db = 'sc'
+            AND sc.sc_selected_month IS NOT NULL
+            AND DATE_TRUNC(s.event_date, MONTH) IN (
+              sc.sc_selected_month,
+              DATE_SUB(sc.sc_selected_month, INTERVAL 1 YEAR)
+            )
+          )
+        )
     ),
     latest_ctx AS (
       SELECT MAX(event_date) AS latest_date
@@ -1246,6 +1296,12 @@ async function getGob360OverviewFromMappedClaves(
     )
     SELECT
       CAST(MAX(latest_date) AS STRING) AS latest_date,
+      CAST(MAX(sc_selected_month) AS STRING) AS sc_selected_month,
+      IF(
+        @cutoffDate IS NULL OR MAX(sc_selected_month) IS NULL,
+        FALSE,
+        MAX(sc_selected_month) < DATE_TRUNC(DATE(@cutoffDate), MONTH)
+      ) AS sc_is_fallback,
       COALESCE(SUM(IF(EXTRACT(YEAR FROM event_date) = EXTRACT(YEAR FROM latest_date), pieces, 0)), 0) AS ytd_pieces,
       COALESCE(SUM(IF(EXTRACT(YEAR FROM event_date) = EXTRACT(YEAR FROM DATE_SUB(latest_date, INTERVAL 1 YEAR))
                       AND EXTRACT(MONTH FROM event_date) <= EXTRACT(MONTH FROM latest_date), pieces, 0)), 0) AS ytd_pieces_py,
@@ -1285,12 +1341,13 @@ async function getGob360AggRowsByClave(mappedClaves: string[], cutoffDate: strin
   const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
   const query = `
     WITH source_raw AS (
-      SELECT DB, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
+      SELECT 'pc' AS source_db, DB, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
       UNION ALL
-      SELECT DB, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
+      SELECT 'sc' AS source_db, DB, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
     ),
     source_clean AS (
       SELECT
+        source_db,
         LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
         COALESCE(
           SAFE_CAST(FECHA AS DATE),
@@ -1304,12 +1361,57 @@ async function getGob360AggRowsByClave(mappedClaves: string[], cutoffDate: strin
         AND CLAVE IS NOT NULL
         AND TRIM(CAST(CLAVE AS STRING)) != ''
     ),
-    mapped AS (
-      SELECT *
+    sc_month_candidates AS (
+      SELECT DISTINCT DATE_TRUNC(event_date, MONTH) AS sc_month
       FROM source_clean
-      WHERE source_clave_normalized IN UNNEST(@mappedClaves)
+      WHERE source_db = 'sc'
+        AND source_clave_normalized IN UNNEST(@mappedClaves)
         AND event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR event_date <= DATE(@cutoffDate))
+    ),
+    sc_selected AS (
+      SELECT
+        CASE
+          WHEN @cutoffDate IS NULL THEN MAX(sc_month)
+          ELSE COALESCE(
+            MAX(IF(sc_month = DATE_TRUNC(DATE(@cutoffDate), MONTH), sc_month, NULL)),
+            MAX(sc_month)
+          )
+        END AS sc_selected_month
+      FROM sc_month_candidates
+    ),
+    mapped AS (
+      SELECT
+        s.source_db,
+        s.source_clave_normalized,
+        DATE_ADD(
+          s.event_date,
+          INTERVAL IF(
+            s.source_db = 'sc'
+            AND @cutoffDate IS NOT NULL
+            AND sc.sc_selected_month IS NOT NULL
+            AND sc.sc_selected_month < DATE_TRUNC(DATE(@cutoffDate), MONTH),
+            DATE_DIFF(DATE_TRUNC(DATE(@cutoffDate), MONTH), sc.sc_selected_month, MONTH),
+            0
+          ) MONTH
+        ) AS event_date,
+        s.pieces
+      FROM source_clean s
+      CROSS JOIN sc_selected sc
+      WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
+        AND s.event_date IS NOT NULL
+        AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+        AND (
+          s.source_db = 'pc'
+          OR (
+            s.source_db = 'sc'
+            AND sc.sc_selected_month IS NOT NULL
+            AND DATE_TRUNC(s.event_date, MONTH) IN (
+              sc.sc_selected_month,
+              DATE_SUB(sc.sc_selected_month, INTERVAL 1 YEAR)
+            )
+          )
+        )
     ),
     ctx AS (
       SELECT MAX(event_date) AS latest_date FROM mapped
@@ -1343,12 +1445,13 @@ async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: s
   const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
   const query = `
     WITH source_raw AS (
-      SELECT DB, CLUE, CLAVE, RUTA, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
+      SELECT 'pc' AS source_db, DB, CLUE, CLAVE, RUTA, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
       UNION ALL
-      SELECT DB, CLUE, CLAVE, RUTA, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
+      SELECT 'sc' AS source_db, DB, CLUE, CLAVE, RUTA, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
     ),
     source_clean AS (
       SELECT
+        source_db,
         CAST(CLUE AS STRING) AS clue,
         COALESCE(NULLIF(TRIM(CAST(CLAVE AS STRING)), ''), 'NO CLAVE') AS source_clave_raw,
         LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
@@ -1365,12 +1468,60 @@ async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: s
         AND CLAVE IS NOT NULL
         AND TRIM(CAST(CLAVE AS STRING)) != ''
     ),
-    mapped AS (
-      SELECT *
+    sc_month_candidates AS (
+      SELECT DISTINCT DATE_TRUNC(event_date, MONTH) AS sc_month
       FROM source_clean
-      WHERE source_clave_normalized IN UNNEST(@mappedClaves)
+      WHERE source_db = 'sc'
+        AND source_clave_normalized IN UNNEST(@mappedClaves)
         AND event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR event_date <= DATE(@cutoffDate))
+    ),
+    sc_selected AS (
+      SELECT
+        CASE
+          WHEN @cutoffDate IS NULL THEN MAX(sc_month)
+          ELSE COALESCE(
+            MAX(IF(sc_month = DATE_TRUNC(DATE(@cutoffDate), MONTH), sc_month, NULL)),
+            MAX(sc_month)
+          )
+        END AS sc_selected_month
+      FROM sc_month_candidates
+    ),
+    mapped AS (
+      SELECT
+        s.source_db,
+        s.clue,
+        s.source_clave_raw,
+        s.source_clave_normalized,
+        s.ruta,
+        DATE_ADD(
+          s.event_date,
+          INTERVAL IF(
+            s.source_db = 'sc'
+            AND @cutoffDate IS NOT NULL
+            AND sc.sc_selected_month IS NOT NULL
+            AND sc.sc_selected_month < DATE_TRUNC(DATE(@cutoffDate), MONTH),
+            DATE_DIFF(DATE_TRUNC(DATE(@cutoffDate), MONTH), sc.sc_selected_month, MONTH),
+            0
+          ) MONTH
+        ) AS event_date,
+        s.pieces
+      FROM source_clean s
+      CROSS JOIN sc_selected sc
+      WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
+        AND s.event_date IS NOT NULL
+        AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+        AND (
+          s.source_db = 'pc'
+          OR (
+            s.source_db = 'sc'
+            AND sc.sc_selected_month IS NOT NULL
+            AND DATE_TRUNC(s.event_date, MONTH) IN (
+              sc.sc_selected_month,
+              DATE_SUB(sc.sc_selected_month, INTERVAL 1 YEAR)
+            )
+          )
+        )
     ),
     ctx AS (
       SELECT MAX(event_date) AS latest_date FROM mapped
@@ -1518,9 +1669,16 @@ export async function getBusinessExcellencePublicMarketOverview(
   const mthPiecesPy = Number(row.mth_pieces_py ?? 0);
   const cluesTotalYtd = Number(row.clues_total_ytd ?? 0);
   const chiesiCluesActiveYtd = Number(row.chiesi_clues_active_ytd ?? 0);
+  const scIsFallbackRaw = row.sc_is_fallback;
+  const scSourceIsFallback =
+    scIsFallbackRaw === true ||
+    scIsFallbackRaw === 1 ||
+    String(scIsFallbackRaw ?? '').toLowerCase() === 'true';
 
   return {
     latestDate: row.latest_date ? String(row.latest_date) : null,
+    scSourceMonth: row.sc_selected_month ? String(row.sc_selected_month) : null,
+    scSourceIsFallback,
     ytdPieces,
     ytdPiecesPy,
     ytdGrowthPct: ytdPiecesPy === 0 ? null : ((ytdPieces - ytdPiecesPy) / ytdPiecesPy) * 100,
@@ -3904,7 +4062,7 @@ export async function getBusinessExcellenceSourceOverviews(
     const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
     results.push({
       sourceKey: 'closeup',
-      sourceLabel: 'Recetas Privado',
+      sourceLabel: 'Private Prescriptions',
       latestPeriod: closeupLatestPeriod,
       ytdStartPeriod,
       lastMonthPrimaryValue: Number(row.last_month_recetas ?? 0),
@@ -3917,7 +4075,7 @@ export async function getBusinessExcellenceSourceOverviews(
   } else {
     results.push({
       sourceKey: 'closeup',
-      sourceLabel: 'Recetas Privado',
+      sourceLabel: 'Private Prescriptions',
       latestPeriod: null,
       ytdStartPeriod: null,
       lastMonthPrimaryValue: 0,

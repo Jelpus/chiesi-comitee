@@ -28,6 +28,60 @@ function formatPercent(value: number | null) {
   return `${value.toFixed(1)}%`;
 }
 
+function topicDisplayLabel(item: { topic: string; targetText: string }) {
+  return item.targetText && item.targetText !== 'Target not configured' ? item.targetText : item.topic;
+}
+
+function topicCompletionPct(item: {
+  topic: string;
+  targetValue: number | null;
+  onTimeCount: number | null;
+  lateCount: number | null;
+  pendingCount: number | null;
+  activeCount: number | null;
+  overdueCount: number | null;
+  ytdCount: number | null;
+}) {
+  const topic = item.topic.toLowerCase();
+  if (topic.includes('procedimientos')) {
+    const active = item.activeCount ?? 0;
+    const overdue = item.overdueCount ?? 0;
+    if (active <= 0) return 100;
+    return Math.max(0, ((active - overdue) / active) * 100);
+  }
+  if (topic.includes('auditorias')) {
+    if (item.targetValue == null || item.targetValue <= 0) return null;
+    return ((item.ytdCount ?? 0) / item.targetValue) * 100;
+  }
+  const onTime = item.onTimeCount ?? 0;
+  const late = item.lateCount ?? 0;
+  const pending = item.pendingCount ?? 0;
+  const total = onTime + late + pending;
+  if (total <= 0) return null;
+  return (onTime / total) * 100;
+}
+
+function topicGapText(item: {
+  topic: string;
+  targetValue: number | null;
+  lateCount: number | null;
+  pendingCount: number | null;
+  overdueCount: number | null;
+  ytdCount: number | null;
+}) {
+  const topic = item.topic.toLowerCase();
+  if (topic.includes('procedimientos')) {
+    return `clear ${item.overdueCount ?? 0} overdue`;
+  }
+  if (topic.includes('auditorias')) {
+    if (item.targetValue == null) return 'N/A';
+    const gap = Math.max(0, Math.ceil(item.targetValue - (item.ytdCount ?? 0)));
+    return gap > 0 ? `+${gap} audits` : 'at target';
+  }
+  const gap = (item.lateCount ?? 0) + (item.pendingCount ?? 0);
+  return gap > 0 ? `${gap} late/pending` : 'stable';
+}
+
 function buildTopicKpiLine(item: {
   topic: string;
   targetText: string;
@@ -205,6 +259,26 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
   const working = data.scores.filter((item) => item.status === 'on_track');
   const needsImprove = data.scores.filter((item) => item.status === 'off_track');
   const watch = data.scores.filter((item) => item.status === 'watch');
+  const topRisks = [...needsImprove]
+    .sort((a, b) => (topicCompletionPct(a) ?? -Infinity) - (topicCompletionPct(b) ?? -Infinity))
+    .slice(0, 3);
+  const quickWinsFromWatch = [...watch]
+    .sort((a, b) => (topicCompletionPct(b) ?? 0) - (topicCompletionPct(a) ?? 0));
+  const quickWinsFromOffTrack = [...needsImprove]
+    .sort((a, b) => (topicCompletionPct(b) ?? 0) - (topicCompletionPct(a) ?? 0));
+  const quickWins = (quickWinsFromWatch.length > 0 ? quickWinsFromWatch : quickWinsFromOffTrack).slice(0, 3);
+  const hasWatchQuickWins = quickWinsFromWatch.length > 0;
+  const currentHealthPoints = data.summary.onTrack * 1 + data.summary.watch * 0.5;
+  const projectedOnTrack = data.summary.onTrack + data.summary.watch;
+  const projectedHealthPct =
+    data.summary.totalTopics > 0
+      ? ((projectedOnTrack * 1 + 0 * 0.5) / data.summary.totalTopics) * 100
+      : null;
+  const recoverableCount = Math.min(2, needsImprove.length);
+  const projectedHealthFromRecoveryPct =
+    data.summary.totalTopics > 0
+      ? ((currentHealthPoints + recoverableCount * 0.5) / data.summary.totalTopics) * 100
+      : null;
 
   return (
     <section className="space-y-4 pb-8">
@@ -245,16 +319,71 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                 <strong>{formatPercent(data.summary.weightedHealthPct)}</strong>.
               </p>
               <p className="mt-2 text-sm text-slate-700">
-                Main risk drivers are concentrated in {needsImprove.length > 0 ? needsImprove.map((item) => item.topic).join(', ') : 'no critical topics this month'}.
+                Main risk drivers are concentrated in {needsImprove.length > 0 ? needsImprove.map((item) => topicDisplayLabel(item)).join(', ') : 'no critical topics this month'}.
               </p>
             </article>
             <article className="rounded-[18px] border border-slate-200 bg-white p-4">
               <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Read For Next Layer</p>
-              <ul className="mt-2 list-disc pl-5 text-sm text-slate-700">
-                <li>Pending workload tracked this cut: {data.summary.openPending} items.</li>
-                <li>Use `/forms/regulatory-affairs` to correct or enrich topic comments.</li>
-                <li>Next step: add SLA trend by topic (rolling 3-month view).</li>
-              </ul>
+              <div className="mt-2 space-y-3 text-sm text-slate-700">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Top Risks This Cut</p>
+                  <div className="mt-1 space-y-1.5">
+                    {topRisks.length === 0 ? (
+                      <p className="text-slate-600">No critical topics in this cut.</p>
+                    ) : (
+                      topRisks.map((item) => (
+                        <p key={`risk-${item.topic}`}>
+                          <span className="font-semibold text-slate-900">{topicDisplayLabel(item)}</span>: completion {formatPercent(topicCompletionPct(item))}, gap {topicGapText(item)}.
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Quick Wins</p>
+                  <div className="mt-1 space-y-1.5">
+                    {quickWins.length === 0 ? (
+                      <p className="text-slate-600">No near-threshold topics in this cut.</p>
+                    ) : (
+                      quickWins.map((item) => (
+                        <p key={`quick-${item.topic}`}>
+                          <span className="font-semibold text-slate-900">{topicDisplayLabel(item)}</span>:{' '}
+                          {hasWatchQuickWins
+                            ? `needs ${topicGapText(item)} to move on track.`
+                            : `off-track but closest to threshold, needs ${topicGapText(item)}.`}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Management Focus (Next 30 Days)</p>
+                  <p className="mt-1">
+                    Prioritize off-track topics with highest execution gaps, reduce pending workload ({data.summary.openPending}), and lock weekly owner follow-up with SLA discipline.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Projection</p>
+                  {data.summary.watch > 0 ? (
+                    <p className="mt-1">
+                      If all watch topics move on-track, health improves from{' '}
+                      <span className="font-semibold text-slate-900">{formatPercent(data.summary.weightedHealthPct)}</span> to{' '}
+                      <span className="font-semibold text-slate-900">{formatPercent(projectedHealthPct)}</span>.
+                    </p>
+                  ) : recoverableCount > 0 ? (
+                    <p className="mt-1">
+                      No watch topics available. If the top {recoverableCount} off-track topics move to watch, health improves from{' '}
+                      <span className="font-semibold text-slate-900">{formatPercent(data.summary.weightedHealthPct)}</span> to{' '}
+                      <span className="font-semibold text-slate-900">{formatPercent(projectedHealthFromRecoveryPct)}</span>.
+                    </p>
+                  ) : (
+                    <p className="mt-1">No near-term recovery scenario available for this cut.</p>
+                  )}
+                </div>
+              </div>
             </article>
           </div>
         ) : null}
@@ -267,7 +396,7 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                 {working.length > 0 ? (
                   working.map((item) => (
                     <div key={item.topic} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
-                      <p className="text-sm font-semibold text-slate-900">{item.topic}</p>
+                      <p className="text-sm font-semibold text-slate-900">{topicDisplayLabel(item)}</p>
                       <p className="text-xs text-slate-700">{buildTopicKpiLine(item)}</p>
                       <p className="mt-1 text-xs text-slate-600">{buildTopicActionLine(item)}</p>
                     </div>
@@ -284,7 +413,7 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                 {needsImprove.length > 0 ? (
                   needsImprove.map((item) => (
                     <div key={item.topic} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
-                      <p className="text-sm font-semibold text-slate-900">{item.topic}</p>
+                      <p className="text-sm font-semibold text-slate-900">{topicDisplayLabel(item)}</p>
                       <p className="text-xs text-slate-700">{buildTopicKpiLine(item)}</p>
                       <p className="mt-1 text-xs text-slate-600">{buildTopicActionLine(item)}</p>
                     </div>
@@ -330,7 +459,7 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                     return (
                       <div key={`mix-${item.topic}`}>
                         <div className="mb-1 flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-700">{item.topic}</span>
+                          <span className="font-semibold text-slate-700">{topicDisplayLabel(item)}</span>
                           <span className="text-slate-500">{total} total</span>
                         </div>
                         <div className="h-3 w-full overflow-hidden rounded-full border border-slate-200">
@@ -367,7 +496,7 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                 <tbody className="divide-y divide-slate-100">
                   {data.scores.map((item) => (
                     <tr key={item.topic}>
-                      <td className="px-4 py-3 font-semibold text-slate-900">{item.topic}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-900">{topicDisplayLabel(item)}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${statusClasses(item.status)}`}>
                           {item.statusLabel}
@@ -419,7 +548,7 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                   key={`watch-${item.topic}`}
                   className="inline-flex rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-800"
                 >
-                  {item.topic}
+                  {topicDisplayLabel(item)}
                 </span>
               ))}
             </div>

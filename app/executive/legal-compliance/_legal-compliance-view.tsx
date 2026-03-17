@@ -47,6 +47,12 @@ function coverageDotClass(status: LegalComplianceStatus) {
   return 'bg-rose-500';
 }
 
+function isLawsuitKpi(item: { kpiName: string; kpiLabel: string }) {
+  const normalizedName = item.kpiName.toLowerCase();
+  const normalizedLabel = item.kpiLabel.toLowerCase();
+  return normalizedName.includes('juicios') || normalizedLabel.includes('lawsuit');
+}
+
 function ModeTabs({ active, params }: { active: LegalComplianceViewMode; params: SearchParams }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -82,6 +88,37 @@ export async function LegalComplianceView({ viewMode, searchParams = {} }: Legal
   const hasData = data.scores.length > 0;
   const working = data.scores.filter((item) => item.status === 'on_track');
   const needsImprove = data.scores.filter((item) => item.status === 'off_track');
+  const watch = data.scores.filter((item) => item.status === 'watch');
+  const topRisks = [...needsImprove]
+    .sort((a, b) => (a.coveragePct ?? -Infinity) - (b.coveragePct ?? -Infinity))
+    .slice(0, 3);
+  const quickWinsFromWatch = [...watch]
+    .filter((item) => item.coveragePct != null)
+    .sort((a, b) => (b.coveragePct ?? 0) - (a.coveragePct ?? 0));
+  const quickWinsFromOffTrack = [...needsImprove]
+    .filter((item) => item.coveragePct != null)
+    .sort((a, b) => (b.coveragePct ?? 0) - (a.coveragePct ?? 0));
+  const quickWins = (quickWinsFromWatch.length > 0 ? quickWinsFromWatch : quickWinsFromOffTrack).slice(0, 3);
+  const hasWatchQuickWins = quickWinsFromWatch.length > 0;
+  const currentHealthPoints = data.summary.onTrack * 1 + data.summary.watch * 0.5;
+  const projectedOnTrack = data.summary.onTrack + data.summary.watch;
+  const projectedHealthPct =
+    data.summary.totalKpis > 0
+      ? ((projectedOnTrack * 1 + 0 * 0.5) / data.summary.totalKpis) * 100
+      : null;
+  const recoverableCount = Math.min(2, needsImprove.length);
+  const projectedHealthFromRecoveryPct =
+    data.summary.totalKpis > 0
+      ? ((currentHealthPoints + recoverableCount * 0.5) / data.summary.totalKpis) * 100
+      : null;
+
+  function formatGapToTarget(item: (typeof data.scores)[number]) {
+    const objective = item.objectiveCount ?? 0;
+    const current = item.currentCount ?? 0;
+    const gap = objective - current;
+    if (gap <= 0) return 'At target';
+    return `+${formatInt(gap)}`;
+  }
 
   return (
     <section className="space-y-4 pb-8">
@@ -141,11 +178,11 @@ export async function LegalComplianceView({ viewMode, searchParams = {} }: Legal
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.scores.map((item) => {
-                  const isLawsuit = item.kpiName.toLowerCase().includes('juicios');
+                  const isLawsuit = isLawsuitKpi(item);
                   const showAdditional = isLawsuit && ((item.currentCount ?? 0) + (item.activeCount ?? 0) > 0);
                   return (
-                    <tr key={item.kpiName}>
-                      <td className="px-4 py-3 font-semibold text-slate-900">{item.kpiName}</td>
+                    <tr key={`${item.kpiLabel}-${item.kpiName}`}>
+                      <td className="px-4 py-3 font-semibold text-slate-900">{item.kpiLabel}</td>
                       <td className="px-4 py-3 text-slate-700">{formatInt(item.objectiveCount)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatInt(item.currentCount)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatInt(item.activeCount)}</td>
@@ -173,8 +210,8 @@ export async function LegalComplianceView({ viewMode, searchParams = {} }: Legal
             <p className="text-xs uppercase tracking-[0.14em] text-emerald-800">What Is Working</p>
             <div className="mt-2 space-y-2">
               {working.map((item) => (
-                <div key={item.kpiName} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
-                  <p className="text-sm font-semibold text-slate-900">{item.kpiName}</p>
+                <div key={`${item.kpiLabel}-${item.kpiName}`} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
+                  <p className="text-sm font-semibold text-slate-900">{item.kpiLabel}</p>
                   <p className="text-xs text-slate-700">
                     Objective {formatInt(item.objectiveCount)} | Current {formatInt(item.currentCount)} | Active {formatInt(item.activeCount)} | Coverage {formatPercent(item.coveragePct)}
                   </p>
@@ -187,8 +224,8 @@ export async function LegalComplianceView({ viewMode, searchParams = {} }: Legal
             <p className="text-xs uppercase tracking-[0.14em] text-rose-800">What Needs To Improve</p>
             <div className="mt-2 space-y-2">
               {needsImprove.map((item) => (
-                <div key={item.kpiName} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
-                  <p className="text-sm font-semibold text-slate-900">{item.kpiName}</p>
+                <div key={`${item.kpiLabel}-${item.kpiName}`} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
+                  <p className="text-sm font-semibold text-slate-900">{item.kpiLabel}</p>
                   <p className="text-xs text-slate-700">
                     Objective {formatInt(item.objectiveCount)} | Current {formatInt(item.currentCount)} | Active {formatInt(item.activeCount)} | Coverage {formatPercent(item.coveragePct)}
                   </p>
@@ -210,11 +247,66 @@ export async function LegalComplianceView({ viewMode, searchParams = {} }: Legal
           </article>
           <article className="rounded-[18px] border border-slate-200 bg-white p-4">
             <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Read For Next Layer</p>
-            <ul className="mt-2 list-disc pl-5 text-sm text-slate-700">
-              <li>Open pending items in this cut: {data.summary.openPending}.</li>
-              <li>Track `current + active` weekly for Speakers AIR/CARE and supplier contracts.</li>
-              <li>If lawsuits become active, load contingent liability in the additional field.</li>
-            </ul>
+            <div className="mt-2 space-y-3 text-sm text-slate-700">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Top Risks This Cut</p>
+                <div className="mt-1 space-y-1.5">
+                  {topRisks.length === 0 ? (
+                    <p className="text-slate-600">No critical KPI in this cut.</p>
+                  ) : (
+                    topRisks.map((item) => (
+                      <p key={`risk-${item.kpiLabel}-${item.kpiName}`}>
+                        <span className="font-semibold text-slate-900">{item.kpiLabel}</span>: coverage {formatPercent(item.coveragePct)}, gap {formatGapToTarget(item)}.
+                      </p>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Quick Wins</p>
+                <div className="mt-1 space-y-1.5">
+                  {quickWins.length === 0 ? (
+                    <p className="text-slate-600">No watch KPI close to threshold.</p>
+                  ) : (
+                    quickWins.map((item) => (
+                      <p key={`quick-${item.kpiLabel}-${item.kpiName}`}>
+                        <span className="font-semibold text-slate-900">{item.kpiLabel}</span>:{' '}
+                        {hasWatchQuickWins
+                          ? `needs ${formatGapToTarget(item)} to move on track.`
+                          : `off-track but closest to threshold, needs ${formatGapToTarget(item)} to reach target.`}
+                      </p>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Management Focus (Next 30 Days)</p>
+                <p className="mt-1">
+                  Prioritize off-track KPIs with highest gaps, reduce open pending items ({formatInt(data.summary.openPending)}), and enforce weekly follow-up on current plus active execution.
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Projection</p>
+                {data.summary.watch > 0 ? (
+                  <p className="mt-1">
+                    If all watch KPIs move on-track, health improves from{' '}
+                    <span className="font-semibold text-slate-900">{formatPercent(data.summary.weightedHealthPct)}</span> to{' '}
+                    <span className="font-semibold text-slate-900">{formatPercent(projectedHealthPct)}</span>.
+                  </p>
+                ) : recoverableCount > 0 ? (
+                  <p className="mt-1">
+                    No watch KPIs available. If the top {recoverableCount} off-track KPIs move to watch, health improves from{' '}
+                    <span className="font-semibold text-slate-900">{formatPercent(data.summary.weightedHealthPct)}</span> to{' '}
+                    <span className="font-semibold text-slate-900">{formatPercent(projectedHealthFromRecoveryPct)}</span>.
+                  </p>
+                ) : (
+                  <p className="mt-1">No near-term recovery scenario available for this cut.</p>
+                )}
+              </div>
+            </div>
           </article>
         </div>
       ) : null}
@@ -233,11 +325,11 @@ export async function LegalComplianceView({ viewMode, searchParams = {} }: Legal
           <div className="mt-2 flex flex-wrap gap-2">
             {data.scores.map((item) => (
               <span
-                key={`chip-${item.kpiName}`}
+                key={`chip-${item.kpiLabel}-${item.kpiName}`}
                 className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClasses(item.status)}`}
-                title={item.comment || item.kpiName}
+                title={item.comment || item.kpiLabel}
               >
-                {item.kpiName}
+                {item.kpiLabel}
               </span>
             ))}
           </div>

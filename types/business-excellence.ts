@@ -367,6 +367,8 @@ export type BusinessExcellencePrivateScorecard = {
 
 export type BusinessExcellencePublicMarketOverview = {
   latestDate: string | null;
+  scSourceMonth: string | null;
+  scSourceIsFallback: boolean;
   ytdPieces: number;
   ytdPiecesPy: number;
   ytdGrowthPct: number | null;

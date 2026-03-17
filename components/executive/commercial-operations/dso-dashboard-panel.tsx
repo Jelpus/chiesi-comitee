@@ -63,6 +63,15 @@ function formatQuantity(value: number | null | undefined) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 }
 
+function formatSignedQuantity(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  const rounded = Math.round(value);
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(rounded));
+  if (rounded > 0) return `+${formatted}`;
+  if (rounded < 0) return `-${formatted}`;
+  return '0';
+}
+
 function formatPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return 'N/A';
   return `${value.toFixed(1)}%`;
@@ -1001,6 +1010,12 @@ export function DsoDashboardPanel({
       projectedYearEndProgress2026Pct,
     };
   }, [governmentMonthlyRows, governmentContractRows, selectedGovernmentStage]);
+  const selectedGovernmentStageLabel =
+    selectedGovernmentStage === 'ordenado'
+      ? 'Ordered'
+      : selectedGovernmentStage === 'facturado'
+        ? 'Invoiced'
+        : 'Delivered';
 
   const governmentCurrentYear = useMemo(() => {
     const anchor =
@@ -1719,9 +1734,9 @@ export function DsoDashboardPanel({
 
           <div className="mt-4 flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
             {([
-              ['ordenado', 'Ordenado'],
-              ['entregado', 'Entregado'],
-              ['facturado', 'Facturado'],
+              ['ordenado', 'Ordered'],
+              ['entregado', 'Delivered'],
+              ['facturado', 'Invoiced'],
             ] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -1738,8 +1753,8 @@ export function DsoDashboardPanel({
 
           <div className="mt-4 grid gap-3 md:grid-cols-4">
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">MTH Delivered</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900">{formatDsoValue(governmentSummary.currentDelivered)}</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">MTH {selectedGovernmentStageLabel}</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900">{formatQuantity(governmentSummary.currentDelivered)}</p>
               <p className="text-xs text-slate-600">{formatMonthLabel(governmentSummary.currentPeriod)}</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
@@ -1755,15 +1770,15 @@ export function DsoDashboardPanel({
               >
                 {governmentSummary.momDelta == null
                   ? 'N/A'
-                  : `${governmentSummary.momDelta > 0 ? '+' : ''}${governmentSummary.momDelta.toFixed(1)}`}
+                  : formatSignedQuantity(governmentSummary.momDelta)}
               </p>
               <p className="text-xs text-slate-600">Current vs previous month</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">YTD Delivered</p>
-              <p className="mt-1 text-xl font-semibold text-slate-900">{formatDsoValue(governmentSummary.ytdTotal)}</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">YTD {selectedGovernmentStageLabel}</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900">{formatQuantity(governmentSummary.ytdTotal)}</p>
               <p className="text-xs text-slate-600">
-                {governmentPyLabel} YTD: {formatDsoValue(governmentSummary.ytdPyTotal)}
+                {governmentPyLabel} YTD: {formatQuantity(governmentSummary.ytdPyTotal)}
               </p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">

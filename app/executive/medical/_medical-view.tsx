@@ -157,6 +157,29 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
   const working = data.scores.filter((item) => item.status === 'on_track');
   const needsImprove = data.scores.filter((item) => item.status === 'off_track');
   const watch = data.scores.filter((item) => item.status === 'watch');
+  const topRisks = [...needsImprove]
+    .sort((a, b) => (a.coveragePct ?? -Infinity) - (b.coveragePct ?? -Infinity))
+    .slice(0, 3);
+  const quickWins = [...watch]
+    .filter((item) => item.coveragePct != null)
+    .sort((a, b) => (b.coveragePct ?? 0) - (a.coveragePct ?? 0))
+    .slice(0, 3);
+  const projectedOnTrack = data.summary.onTrack + data.summary.watch;
+  const projectedHealthScorePct =
+    data.summary.totalKpis > 0
+      ? ((projectedOnTrack * 1 + 0 * 0.5) / data.summary.totalKpis) * 100
+      : null;
+
+  function formatGapToTarget(item: (typeof data.scores)[number]) {
+    if (item.targetValue == null || item.resultNumeric == null) return 'N/A';
+    const gap = item.targetValue - item.resultNumeric;
+    if (!Number.isFinite(gap) || gap <= 0) return 'At target';
+    if (item.qtyUnit === '%') return `+${gap.toFixed(1)}pp`;
+    if (item.qtyUnit.toLowerCase() === 'count' || item.qtyUnit.toLowerCase() === 'index') {
+      return `+${Math.ceil(gap)}`;
+    }
+    return `+${gap.toFixed(1)} ${item.qtyUnit}`.trim();
+  }
 
   return (
     <section className="space-y-4 pb-8">
@@ -201,11 +224,53 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
             </article>
             <article className="rounded-[18px] border border-slate-200 bg-white p-4">
               <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Read For Next Layer</p>
-              <ul className="mt-2 list-disc pl-5 text-sm text-slate-700">
-                <li>Watchlist this cut: {watch.length} KPI(s).</li>
-                <li>Use `/forms/medical` to update results and contextual comments.</li>
-                <li>Next step: add 3-month trend by KPI to detect momentum shifts.</li>
-              </ul>
+              <div className="mt-2 space-y-3 text-sm text-slate-700">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Top Risks This Cut</p>
+                  <div className="mt-1 space-y-1.5">
+                    {topRisks.length === 0 ? (
+                      <p className="text-slate-600">No critical KPI in this cut.</p>
+                    ) : (
+                      topRisks.map((item) => (
+                        <p key={`risk-${item.kpiLabel}-${item.kpiName}`}>
+                          <span className="font-semibold text-slate-900">{item.kpiLabel}</span>: {formatPercent(item.coveragePct)} coverage, gap {formatGapToTarget(item)}.
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Quick Wins</p>
+                  <div className="mt-1 space-y-1.5">
+                    {quickWins.length === 0 ? (
+                      <p className="text-slate-600">No watch KPI close to threshold.</p>
+                    ) : (
+                      quickWins.map((item) => (
+                        <p key={`quick-${item.kpiLabel}-${item.kpiName}`}>
+                          <span className="font-semibold text-slate-900">{item.kpiLabel}</span>: needs {formatGapToTarget(item)} to move on track.
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Management Focus (Next 30 Days)</p>
+                  <p className="mt-1">
+                    Recover top off-track KPIs, convert watchlist items to on-track, and enforce owner/date comments on every update cycle.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Projection</p>
+                  <p className="mt-1">
+                    If all watch KPIs move on-track, health score improves from{' '}
+                    <span className="font-semibold text-slate-900">{formatPercent(data.summary.healthScorePct)}</span> to{' '}
+                    <span className="font-semibold text-slate-900">{formatPercent(projectedHealthScorePct)}</span>.
+                  </p>
+                </div>
+              </div>
             </article>
           </div>
         ) : null}
@@ -217,7 +282,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
               <div className="mt-2 space-y-2">
                 {working.length > 0 ? (
                   working.map((item) => (
-                    <div key={item.kpiName} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
+                    <div key={`${item.kpiLabel}-${item.kpiName}`} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
                       <p className="text-sm font-semibold text-slate-900">{item.kpiLabel}</p>
                       <p className="text-xs text-slate-700">
                         Coverage {formatPercent(item.coveragePct)} | Result {formatResult(item.resultNumeric, item.qtyUnit, item.resultText)} | Target {item.targetText}
@@ -235,7 +300,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
               <div className="mt-2 space-y-2">
                 {needsImprove.length > 0 ? (
                   needsImprove.map((item) => (
-                    <div key={item.kpiName} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
+                    <div key={`${item.kpiLabel}-${item.kpiName}`} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
                       <p className="text-sm font-semibold text-slate-900">{item.kpiLabel}</p>
                       <p className="text-xs text-slate-700">
                         Coverage {formatPercent(item.coveragePct)} | Result {formatResult(item.resultNumeric, item.qtyUnit, item.resultText)} | Target {item.targetText}
@@ -275,7 +340,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
                     const coverage = item.coveragePct ?? 0;
                     const width = Math.max(0, Math.min(coverage, 140));
                     return (
-                      <div key={`coverage-${item.kpiName}`}>
+                      <div key={`coverage-${item.kpiLabel}-${item.kpiName}`}>
                         <div className="mb-1 flex items-center justify-between text-xs">
                           <span className="font-semibold text-slate-700">{item.kpiLabel}</span>
                           <span className="text-slate-500">{formatPercent(item.coveragePct)}</span>
@@ -309,7 +374,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.scores.map((item) => (
-                      <tr key={item.kpiName}>
+                      <tr key={`${item.kpiLabel}-${item.kpiName}`}>
                         <td className="px-4 py-3 font-semibold text-slate-900">{item.kpiLabel}</td>
                         <td className="px-4 py-3">
                           <span

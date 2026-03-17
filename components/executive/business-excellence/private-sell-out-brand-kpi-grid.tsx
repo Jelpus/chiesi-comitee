@@ -133,11 +133,11 @@ export function PrivateSellOutBrandKpiGrid({ rows }: PrivateSellOutBrandKpiGridP
                   </td>
                   <td className="px-2 py-2 text-right">
                     <p className="text-slate-700">{formatRecetas(rxMg)}</p>
-                    <p className="text-xs text-slate-500">{formatRatioPercent(rxMgRatio)} of total Rx</p>
+                    <p className="text-xs text-slate-500">{formatRatioPercent(rxMgRatio)} of total Prescriptions</p>
                   </td>
                   <td className="px-2 py-2 text-right">
                     <p className="text-slate-700">{formatRecetas(rxNeumo)}</p>
-                    <p className="text-xs text-slate-500">{formatRatioPercent(rxNeumoRatio)} of total Rx</p>
+                    <p className="text-xs text-slate-500">{formatRatioPercent(rxNeumoRatio)} of total Prescriptions</p>
                   </td>
                 </tr>
               );
