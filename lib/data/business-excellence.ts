@@ -1669,11 +1669,12 @@ export async function getBusinessExcellencePublicMarketOverview(
   const mthPiecesPy = Number(row.mth_pieces_py ?? 0);
   const cluesTotalYtd = Number(row.clues_total_ytd ?? 0);
   const chiesiCluesActiveYtd = Number(row.chiesi_clues_active_ytd ?? 0);
-  const scIsFallbackRaw = row.sc_is_fallback;
+  const scIsFallbackRaw = row.sc_is_fallback as unknown;
+  const scIsFallbackText = String(scIsFallbackRaw ?? '').toLowerCase();
   const scSourceIsFallback =
     scIsFallbackRaw === true ||
-    scIsFallbackRaw === 1 ||
-    String(scIsFallbackRaw ?? '').toLowerCase() === 'true';
+    scIsFallbackText === '1' ||
+    scIsFallbackText === 'true';
 
   return {
     latestDate: row.latest_date ? String(row.latest_date) : null,
