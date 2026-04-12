@@ -88,6 +88,16 @@ function isConcurrentUpdateOrQuotaError(error: unknown) {
     );
 }
 
+function isTableUpdateQuotaError(error: unknown) {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+        message.includes('exceeded quota for table update operations') ||
+        message.includes('job exceeded rate limits') ||
+        message.includes('rate limits')
+    );
+}
+
 async function runWithTableUpdateRetry<T>(fn: () => Promise<T>, retries = 4) {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -602,12 +612,19 @@ async function ensureUploadsAsOfColumn() {
     if (!ensureUploadsAsOfColumnPromise) {
         ensureUploadsAsOfColumnPromise = (async () => {
             const client = getBigQueryClient();
-            await client.query({
-                query: `
+            try {
+                await client.query({
+                    query: `
           ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
           ADD COLUMN IF NOT EXISTS source_as_of_month DATE
         `,
-            });
+                });
+            } catch (error) {
+                if (!isTableUpdateQuotaError(error)) throw error;
+                console.warn('[ensureUploadsAsOfColumn] skipped due to table update quota', {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
         })();
     }
 
@@ -618,12 +635,19 @@ async function ensureUploadsErrorColumn() {
     if (!ensureUploadsErrorColumnPromise) {
         ensureUploadsErrorColumnPromise = (async () => {
             const client = getBigQueryClient();
-            await client.query({
-                query: `
+            try {
+                await client.query({
+                    query: `
           ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
           ADD COLUMN IF NOT EXISTS last_error_message STRING
         `,
-            });
+                });
+            } catch (error) {
+                if (!isTableUpdateQuotaError(error)) throw error;
+                console.warn('[ensureUploadsErrorColumn] skipped due to table update quota', {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
         })();
     }
 
@@ -634,12 +658,19 @@ async function ensureUploadsDddSourceColumn() {
     if (!ensureUploadsDddSourceColumnPromise) {
         ensureUploadsDddSourceColumnPromise = (async () => {
             const client = getBigQueryClient();
-            await client.query({
-                query: `
+            try {
+                await client.query({
+                    query: `
           ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
           ADD COLUMN IF NOT EXISTS ddd_source STRING
         `,
-            });
+                });
+            } catch (error) {
+                if (!isTableUpdateQuotaError(error)) throw error;
+                console.warn('[ensureUploadsDddSourceColumn] skipped due to table update quota', {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
         })();
     }
 
@@ -943,7 +974,6 @@ async function setUploadError(uploadId: string, message: string, fallbackStatus:
 }
 
 async function setUploadStatus(uploadId: string, status: string) {
-    await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
 
     await runWithTableUpdateRetry(() =>
@@ -951,11 +981,7 @@ async function setUploadStatus(uploadId: string, status: string) {
             query: `
       UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
       SET
-        status = @status,
-        last_error_message = CASE
-          WHEN @status IN ('error') THEN last_error_message
-          ELSE NULL
-        END
+        status = @status
       WHERE upload_id = @uploadId
     `,
             params: { uploadId, status },
@@ -1179,7 +1205,6 @@ export async function createUploadRecord(formData: FormData) {
         const storageClient = getStorageClient();
         const bucket = storageClient.bucket(bucketName);
 
-    await setUploadStatus(uploadId, 'uploading');
     await bucket.file(storageObjectPath).save(fileBuffer, {
       resumable: false,
       contentType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -1233,37 +1258,47 @@ export async function inspectUploadWorkbook(formData: FormData) {
 
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const sheetNames = inspectExcelWorkbook(fileBuffer);
+  if (sheetNames.length === 0) {
+    throw new Error('No sheets/tabs were detected in the uploaded file.');
+  }
 
   let suggestedSheetName = sheetNames[0] ?? '';
   let suggestedHeaderRow = 1;
 
   if (moduleCode) {
-    const client = getBigQueryClient();
-    const [rows] = await client.query({
-      query: `
-        SELECT
-          selected_sheet_name,
-          selected_header_row
-        FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
-        WHERE module_code = @moduleCode
-          AND selected_sheet_name IS NOT NULL
-        ORDER BY uploaded_at DESC
-        LIMIT 1
-      `,
-      params: { moduleCode },
-    });
-    const latest = (rows as Array<Record<string, unknown>>)[0];
-    const lastSheet = latest?.selected_sheet_name
-      ? String(latest.selected_sheet_name)
-      : '';
-    const lastHeaderRow = Number(latest?.selected_header_row ?? 1);
+    try {
+      const client = getBigQueryClient();
+      const [rows] = await client.query({
+        query: `
+          SELECT
+            selected_sheet_name,
+            selected_header_row
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE module_code = @moduleCode
+            AND selected_sheet_name IS NOT NULL
+          ORDER BY uploaded_at DESC
+          LIMIT 1
+        `,
+        params: { moduleCode },
+      });
+      const latest = (rows as Array<Record<string, unknown>>)[0];
+      const lastSheet = latest?.selected_sheet_name
+        ? String(latest.selected_sheet_name)
+        : '';
+      const lastHeaderRow = Number(latest?.selected_header_row ?? 1);
 
-    if (lastSheet && sheetNames.includes(lastSheet)) {
-      suggestedSheetName = lastSheet;
-      suggestedHeaderRow =
-        Number.isFinite(lastHeaderRow) && lastHeaderRow > 0
-          ? Math.trunc(lastHeaderRow)
-          : 1;
+      if (lastSheet && sheetNames.includes(lastSheet)) {
+        suggestedSheetName = lastSheet;
+        suggestedHeaderRow =
+          Number.isFinite(lastHeaderRow) && lastHeaderRow > 0
+            ? Math.trunc(lastHeaderRow)
+            : 1;
+      }
+    } catch (error) {
+      console.warn('[inspectUploadWorkbook] unable to fetch latest sheet/header defaults', {
+        moduleCode,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1356,7 +1391,6 @@ export async function processUpload(uploadId: string) {
             await deleteTemporaryNdjson(tempFile.bucketName, tempFile.ndjsonObjectPath);
         }
         await updateUploadCounters(uploadId, rowsForRaw.length);
-        await setUploadStatus(uploadId, 'raw_loaded');
 
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');

@@ -33,16 +33,33 @@ let ensureUploadsAsOfColumnPromise: Promise<void> | null = null;
 let ensureUploadsErrorColumnPromise: Promise<void> | null = null;
 let ensureUploadsDddSourceColumnPromise: Promise<void> | null = null;
 
+function isTableUpdateQuotaError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('exceeded quota for table update operations') ||
+    message.includes('job exceeded rate limits') ||
+    message.includes('rate limits')
+  );
+}
+
 async function ensureUploadsAsOfColumn() {
   if (!ensureUploadsAsOfColumnPromise) {
     ensureUploadsAsOfColumnPromise = (async () => {
       const client = getBigQueryClient();
-      await client.query({
-        query: `
-          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
-          ADD COLUMN IF NOT EXISTS source_as_of_month DATE
-        `,
-      });
+      try {
+        await client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+            ADD COLUMN IF NOT EXISTS source_as_of_month DATE
+          `,
+        });
+      } catch (error) {
+        if (!isTableUpdateQuotaError(error)) throw error;
+        console.warn('[ensureUploadsAsOfColumn] skipped due to table update quota', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     })();
   }
 
@@ -53,12 +70,19 @@ async function ensureUploadsErrorColumn() {
   if (!ensureUploadsErrorColumnPromise) {
     ensureUploadsErrorColumnPromise = (async () => {
       const client = getBigQueryClient();
-      await client.query({
-        query: `
-          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
-          ADD COLUMN IF NOT EXISTS last_error_message STRING
-        `,
-      });
+      try {
+        await client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+            ADD COLUMN IF NOT EXISTS last_error_message STRING
+          `,
+        });
+      } catch (error) {
+        if (!isTableUpdateQuotaError(error)) throw error;
+        console.warn('[ensureUploadsErrorColumn] skipped due to table update quota', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     })();
   }
 
@@ -69,12 +93,19 @@ async function ensureUploadsDddSourceColumn() {
   if (!ensureUploadsDddSourceColumnPromise) {
     ensureUploadsDddSourceColumnPromise = (async () => {
       const client = getBigQueryClient();
-      await client.query({
-        query: `
-          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
-          ADD COLUMN IF NOT EXISTS ddd_source STRING
-        `,
-      });
+      try {
+        await client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+            ADD COLUMN IF NOT EXISTS ddd_source STRING
+          `,
+        });
+      } catch (error) {
+        if (!isTableUpdateQuotaError(error)) throw error;
+        console.warn('[ensureUploadsDddSourceColumn] skipped due to table update quota', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     })();
   }
 
