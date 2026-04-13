@@ -2,7 +2,7 @@
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
-import { deleteAdminTarget, upsertAdminTarget } from '@/lib/data/targets';
+import { deleteAdminTarget, getAdminTargets, upsertAdminTarget } from '@/lib/data/targets';
 
 function parseNumericTarget(rawValue: string): number | null {
   const raw = rawValue.trim();
@@ -164,4 +164,45 @@ export async function removeAdminTarget(formData: FormData) {
   revalidatePath('/admin/targets');
   revalidatePath('/executive');
   return result;
+}
+
+export async function cloneAdminTargetsFromVersion(formData: FormData) {
+  const sourceReportingVersionId = String(formData.get('sourceReportingVersionId') ?? '').trim();
+  const sourcePeriodMonth = String(formData.get('sourcePeriodMonth') ?? '').trim();
+  const targetReportingVersionId = String(formData.get('targetReportingVersionId') ?? '').trim();
+  const targetPeriodMonth = String(formData.get('targetPeriodMonth') ?? '').trim();
+
+  if (!sourceReportingVersionId) throw new Error('Source reporting version is required.');
+  if (!sourcePeriodMonth) throw new Error('Source period month is required.');
+  if (!targetReportingVersionId) throw new Error('Target reporting version is required.');
+  if (!targetPeriodMonth) throw new Error('Target period month is required.');
+  if (sourceReportingVersionId === targetReportingVersionId) {
+    throw new Error('Source and target versions must be different.');
+  }
+
+  const sourceRows = await getAdminTargets(undefined, sourceReportingVersionId, sourcePeriodMonth);
+  if (sourceRows.length === 0) {
+    return { ok: true as const, copied: 0 };
+  }
+
+  for (const row of sourceRows) {
+    await upsertAdminTarget({
+      targetId: row.targetId,
+      reportingVersionId: targetReportingVersionId,
+      periodMonth: targetPeriodMonth,
+      area: row.area,
+      kpiName: row.kpiName,
+      kpiLabel: row.kpiLabel ?? row.kpiName,
+      qtyUnit: row.qtyUnit,
+      targetValueText: row.targetValueText,
+      targetValueNumeric: row.targetValueNumeric,
+      formFields: row.formFields,
+      isActive: row.isActive,
+      updatedBy: 'clone',
+    });
+  }
+
+  revalidatePath('/admin/targets');
+  revalidatePath('/executive');
+  return { ok: true as const, copied: sourceRows.length };
 }

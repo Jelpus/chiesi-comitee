@@ -6,6 +6,7 @@ export type AppNavItem = {
 export const appNavigation: AppNavItem[] = [
   { href: '/', label: 'Home' },
   { href: '/forms', label: 'Forms' },
+  { href: '/closing-inputs', label: 'Closing Inputs' },
   { href: '/admin', label: 'Admin' },
   { href: '/admin/periods', label: 'Periods' },
   { href: '/admin/versions', label: 'Versions' },

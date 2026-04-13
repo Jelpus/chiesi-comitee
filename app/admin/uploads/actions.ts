@@ -179,6 +179,17 @@ function getRowValue(payload: Record<string, unknown>, aliases: string[]) {
     return null;
 }
 
+function hasAnyHeader(rows: ParsedUploadRow[], aliases: string[]) {
+    const aliasSet = new Set(aliases.map((alias) => normalizeRowKey(alias)));
+    for (const row of rows) {
+        for (const key of Object.keys(row.payload)) {
+            if (key.startsWith('column_')) continue;
+            if (aliasSet.has(normalizeRowKey(key))) return true;
+        }
+    }
+    return false;
+}
+
 function asNumber(value: unknown) {
     if (value == null || value === '') return null;
     const normalized = String(value).replace(/\s/g, '').replace(',', '.');
@@ -360,6 +371,84 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
                 checked: sampleRows.length,
                 message:
                     'Sample check failed for Weekly Tracking: expected product columns (PACK_DES/PROD_DES/PRODCODE).',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (
+        moduleCode === 'business_excellence_salesforce_fichero_medico' ||
+        moduleCode === 'business_excellence_fichero_medico' ||
+        moduleCode === 'fichero_medico'
+    ) {
+        const hasOnekey = hasAnyHeader(sampleRows, ['Onekey ID', 'OneKey ID', 'ONEKEY ID', 'OnEkey ID']);
+        const hasTerritory = hasAnyHeader(sampleRows, ['Territory', 'Territorio']);
+        const hasMes = hasAnyHeader(sampleRows, ['Mes', 'Month', 'Periodo', 'Period']);
+
+        if (!hasOnekey || !hasTerritory || !hasMes) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Fichero Medico: expected Onekey ID, Territory and Mes columns in first rows.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (
+        moduleCode === 'business_excellence_salesforce_tft' ||
+        moduleCode === 'business_excellence_tft' ||
+        moduleCode === 'tft'
+    ) {
+        const hasTerritorio = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Territorio', 'Territory']) ?? '').trim().length > 0,
+        );
+        const hasStartDate = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Fecha de inicio', 'Start Date']) ?? '').trim().length > 0,
+        );
+        const hasDays = sampleRows.some((row) =>
+            asNumber(getRowValue(row.payload, ['Days', 'Dias', 'Días'])) != null,
+        );
+
+        if (!hasTerritorio || !hasStartDate || !hasDays) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for TFT: expected Territorio, Fecha de inicio and Days columns in first rows.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (
+        moduleCode === 'business_excellence_salesforce_interacciones' ||
+        moduleCode === 'business_excellence_interacciones' ||
+        moduleCode === 'interacciones'
+    ) {
+        const hasInteractionId = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Interaction: Id.', 'Interaction: Call Name']) ?? '').trim().length > 0,
+        );
+        const hasOnekey = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Cuenta: Código OneKey', 'Cuenta: Codigo OneKey']) ?? '').trim().length > 0,
+        );
+        const hasTerritorio = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Territorio', 'Territory']) ?? '').trim().length > 0,
+        );
+        const hasFecha = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Fecha y Hora', 'Interaction Date']) ?? '').trim().length > 0,
+        );
+
+        if (!hasInteractionId || !hasOnekey || !hasTerritorio || !hasFecha) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Interacciones: expected Interaction Id, Cuenta: Código OneKey, Territorio and Fecha y Hora columns in first rows.',
             };
         }
 

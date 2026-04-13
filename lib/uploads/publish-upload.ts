@@ -629,6 +629,210 @@ async function publishBusinessExcellenceWeeklyTrackingUpload(context: UploadPubl
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
+async function publishBusinessExcellenceSalesforceMedicalFileUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        'fichero_medico_rows',
+        'Fichero Medico - Loaded Rows',
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+        AND s.period_month = DATE(@periodMonth)
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
+      WHERE upload_id = @uploadId
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: { uploadId: context.uploadId, periodMonth: context.periodMonth },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
+async function publishBusinessExcellenceSalesforceTftUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        'tft_days_total',
+        'TFT - Total Days Out of Territory',
+        CAST(COALESCE(SUM(days_value), 0) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+        AND s.period_month = DATE(@periodMonth)
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft\`
+      WHERE upload_id = @uploadId
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: { uploadId: context.uploadId, periodMonth: context.periodMonth },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
+async function publishBusinessExcellenceSalesforceInteractionsUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        'interacciones_rows',
+        'Interacciones - Loaded Rows',
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        CAST(NULL AS STRING)
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions\` s
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE s.upload_id = @uploadId
+        AND s.interaction_period_month = DATE(@periodMonth)
+      GROUP BY dm.module_name
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions\`
+      WHERE upload_id = @uploadId
+        AND interaction_period_month = DATE(@periodMonth)
+    `,
+    params: { uploadId: context.uploadId, periodMonth: context.periodMonth },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
 async function publishHumanResourcesMetricUpload(context: UploadPublishContext) {
   const client = getBigQueryClient();
   const metricType =
@@ -1247,6 +1451,27 @@ export async function publishUploadToMart(uploadId: string) {
     context.moduleCode === 'weekly_tracking'
   ) {
     return publishBusinessExcellenceWeeklyTrackingUpload(context);
+  }
+  if (
+    context.moduleCode === 'business_excellence_salesforce_fichero_medico' ||
+    context.moduleCode === 'business_excellence_fichero_medico' ||
+    context.moduleCode === 'fichero_medico'
+  ) {
+    return publishBusinessExcellenceSalesforceMedicalFileUpload(context);
+  }
+  if (
+    context.moduleCode === 'business_excellence_salesforce_tft' ||
+    context.moduleCode === 'business_excellence_tft' ||
+    context.moduleCode === 'tft'
+  ) {
+    return publishBusinessExcellenceSalesforceTftUpload(context);
+  }
+  if (
+    context.moduleCode === 'business_excellence_salesforce_interacciones' ||
+    context.moduleCode === 'business_excellence_interacciones' ||
+    context.moduleCode === 'interacciones'
+  ) {
+    return publishBusinessExcellenceSalesforceInteractionsUpload(context);
   }
   if (context.moduleCode === 'human_resources_turnover') {
     return publishHumanResourcesTurnoverUpload(context);

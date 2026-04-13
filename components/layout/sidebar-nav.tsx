@@ -34,6 +34,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
   const iconByHref: Record<string, ComponentType<{ className?: string }>> = {
     '/': Gauge,
     '/forms': FolderUp,
+    '/closing-inputs': FolderUp,
     '/admin': Settings,
     '/admin/periods': Calendar,
     '/admin/versions': Layers,
@@ -50,6 +51,8 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     ? 'admin'
     : pathname.startsWith('/executive')
       ? 'executive'
+      : pathname.startsWith('/closing-inputs')
+        ? 'closing-inputs'
       : 'home';
   const executiveInitialsByHref: Record<string, string> = {
     '/executive/sales-internal': 'SI',
@@ -64,6 +67,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
   const sectionItems = appNavigation.filter((item) => {
     if (currentSection === 'admin') return item.href.startsWith('/admin/') && item.href !== '/admin';
     if (currentSection === 'executive') return item.href.startsWith('/executive');
+    if (currentSection === 'closing-inputs') return item.href === '/closing-inputs';
     return item.href === '/' || item.href === '/forms';
   });
 
@@ -81,6 +85,11 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     if (nextSection === 'executive') {
       router.push('/executive');
       onNavigate?.();
+      return;
+    }
+    if (nextSection === 'closing-inputs') {
+      router.push('/closing-inputs');
+      onNavigate?.();
     }
   }
 
@@ -93,6 +102,8 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
               ? 'Admin Section'
               : currentSection === 'executive'
                 ? 'Executive Section'
+                : currentSection === 'closing-inputs'
+                  ? 'Closing Inputs Section'
                 : 'Forms Section'}
           </p>
         ) : null}
@@ -169,7 +180,10 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
           </div>
           <select
             value={
-              currentSection === 'home' || currentSection === 'admin' || currentSection === 'executive'
+              currentSection === 'home' ||
+              currentSection === 'admin' ||
+              currentSection === 'executive' ||
+              currentSection === 'closing-inputs'
                 ? currentSection
                 : ''
             }
@@ -181,6 +195,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
               {collapsed ? 'Go' : 'Select...'}
             </option>
             <option value="home">Forms</option>
+            <option value="closing-inputs">Closing Inputs</option>
             <option value="admin">Admin</option>
             <option value="executive">Executive</option>
           </select>

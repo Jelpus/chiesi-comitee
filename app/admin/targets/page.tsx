@@ -19,6 +19,13 @@ export default async function TargetsPage({ searchParams }: TargetsPageProps) {
   const versions = await getReportingVersions();
   const selectedVersion =
     versions.find((item) => item.reportingVersionId === params.version) ?? versions[0];
+  const selectedVersionIndex = versions.findIndex(
+    (item) => item.reportingVersionId === selectedVersion?.reportingVersionId,
+  );
+  const previousVersion =
+    selectedVersionIndex >= 0 && selectedVersionIndex + 1 < versions.length
+      ? versions[selectedVersionIndex + 1]
+      : null;
   const selectedReportingVersionId = selectedVersion?.reportingVersionId ?? '';
   const selectedPeriodMonth = selectedVersion?.periodMonth ?? '';
 
@@ -52,6 +59,9 @@ export default async function TargetsPage({ searchParams }: TargetsPageProps) {
         selectedArea={selectedArea}
         selectedReportingVersionId={selectedReportingVersionId}
         selectedPeriodMonth={selectedPeriodMonth}
+        previousReportingVersionId={previousVersion?.reportingVersionId ?? ''}
+        previousPeriodMonth={previousVersion?.periodMonth ?? ''}
+        previousVersionName={previousVersion?.versionName ?? ''}
       />
     </section>
   );

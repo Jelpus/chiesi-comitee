@@ -8,7 +8,7 @@ import type { RaCountMetric } from '@/lib/data/ra-forms-schema';
 import { parseRaCountFields } from '@/lib/data/ra-forms-schema';
 import type { LegalComplianceAnswerField } from '@/lib/data/legal-compliance-forms-schema';
 import { parseLegalComplianceFields } from '@/lib/data/legal-compliance-forms-schema';
-import { removeAdminTarget, saveAdminTarget } from '@/app/admin/targets/actions';
+import { cloneAdminTargetsFromVersion, removeAdminTarget, saveAdminTarget } from '@/app/admin/targets/actions';
 
 type TargetsManagerProps = {
   rows: AdminTargetRow[];
@@ -16,6 +16,9 @@ type TargetsManagerProps = {
   selectedArea: string;
   selectedReportingVersionId: string;
   selectedPeriodMonth: string;
+  previousReportingVersionId: string;
+  previousPeriodMonth: string;
+  previousVersionName: string;
 };
 
 const DEFAULT_AREAS = [
@@ -63,6 +66,9 @@ export function TargetsManager({
   selectedArea,
   selectedReportingVersionId,
   selectedPeriodMonth,
+  previousReportingVersionId,
+  previousPeriodMonth,
+  previousVersionName,
 }: TargetsManagerProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -155,6 +161,35 @@ export function TargetsManager({
     });
   }
 
+  function submitCloneFromPrevious(formData: FormData) {
+    setMessage('');
+    startTransition(async () => {
+      try {
+        const sourceVersion = String(formData.get('sourceReportingVersionId') ?? '').trim();
+        const sourcePeriod = String(formData.get('sourcePeriodMonth') ?? '').trim();
+        const targetVersion = String(formData.get('targetReportingVersionId') ?? '').trim();
+        const targetPeriod = String(formData.get('targetPeriodMonth') ?? '').trim();
+
+        const confirmed = window.confirm(
+          [
+            'Copy all targets from previous version?',
+            `From: ${sourceVersion} | ${sourcePeriod}`,
+            `To: ${targetVersion} | ${targetPeriod}`,
+          ].join('\n'),
+        );
+
+        if (!confirmed) return;
+
+        const result = await cloneAdminTargetsFromVersion(formData);
+        setMessage(`Copied ${result.copied} targets from previous version.`);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'Failed to copy targets from previous version.');
+      } finally {
+        router.refresh();
+      }
+    });
+  }
+
   return (
     <div className="space-y-4">
       <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.08)]">
@@ -181,6 +216,30 @@ export function TargetsManager({
           >
             {isAddOpen ? 'Hide add form' : 'Add custom target'}
           </button>
+          <form action={submitCloneFromPrevious} className="self-start">
+            <input type="hidden" name="sourceReportingVersionId" value={previousReportingVersionId} />
+            <input type="hidden" name="sourcePeriodMonth" value={previousPeriodMonth} />
+            <input type="hidden" name="targetReportingVersionId" value={selectedReportingVersionId} />
+            <input type="hidden" name="targetPeriodMonth" value={selectedPeriodMonth} />
+            <button
+              type="submit"
+              disabled={
+                isPending ||
+                !previousReportingVersionId ||
+                !previousPeriodMonth ||
+                !selectedReportingVersionId ||
+                !selectedPeriodMonth
+              }
+              className="rounded-full border border-blue-300 bg-blue-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                previousReportingVersionId && previousPeriodMonth
+                  ? `Copy from ${previousPeriodMonth} - ${previousVersionName || previousReportingVersionId}`
+                  : 'No previous version available'
+              }
+            >
+              Copy From Previous Version
+            </button>
+          </form>
         </div>
 
         {isAddOpen ? (

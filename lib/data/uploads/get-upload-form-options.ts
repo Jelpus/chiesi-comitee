@@ -13,6 +13,18 @@ const businessExcellenceSourceModules = [
   { value: 'business_excellence_iqvia_weekly', label: 'Business Excellence - Weekly Tracking' },
   { value: 'business_excellence_closeup', label: 'Business Excellence - Closeup' },
   { value: 'business_excellence_cuotas', label: 'Business Excellence - Cuotas' },
+  {
+    value: 'business_excellence_salesforce_fichero_medico',
+    label: 'Business Excellence - Efectividad Fuerza de Ventas - Fichero Medico',
+  },
+  {
+    value: 'business_excellence_salesforce_tft',
+    label: 'Business Excellence - Efectividad Fuerza de Ventas - TFT',
+  },
+  {
+    value: 'business_excellence_salesforce_interacciones',
+    label: 'Business Excellence - Efectividad Fuerza de Ventas - Interacciones',
+  },
   { value: 'human_resources_turnover', label: 'Human Resources - Turnover' },
   { value: 'human_resources_training', label: 'Human Resources - Training' },
   { value: 'commercial_operations_dso', label: 'Commercial Operations - DSO' },
