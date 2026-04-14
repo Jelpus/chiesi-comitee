@@ -80,6 +80,19 @@ const PRODUCT_METADATA_TABLE =
   'chiesi-committee.chiesi_committee_admin.product_metadata';
 const REPORTING_VERSIONS_TABLE =
   'chiesi-committee.chiesi_committee_admin.reporting_versions';
+const CUROSURF_STANDARD_PRODUCT_ID = 'PRD_000007';
+const CUROSURF_3ML_PRODUCT_ID = 'PRD_000012';
+
+function normalizeBusinessExcellenceProductId(productId: string | null | undefined) {
+  const id = (productId ?? '').trim();
+  if (!id) return null;
+  return id === CUROSURF_3ML_PRODUCT_ID ? CUROSURF_STANDARD_PRODUCT_ID : id;
+}
+
+function getBusinessExcellenceUnitsFactor(productId: string | null | undefined) {
+  const id = (productId ?? '').trim();
+  return id === CUROSURF_3ML_PRODUCT_ID ? 2 : 1;
+}
 
 function latestUploadsCtes() {
   return `
@@ -1132,8 +1145,10 @@ async function getGob360MappedClaves() {
   `;
   const [rows] = await client.query({ query });
   return (rows as Array<Record<string, unknown>>).map((row) => ({
+    _rawProductId: row.product_id ? String(row.product_id) : null,
     sourceClaveNormalized: String(row.source_clave_normalized ?? ''),
-    productId: row.product_id ? String(row.product_id) : null,
+    productId: normalizeBusinessExcellenceProductId(row.product_id ? String(row.product_id) : null),
+    unitsFactor: getBusinessExcellenceUnitsFactor(row.product_id ? String(row.product_id) : null),
     marketGroup: row.market_group ? String(row.market_group) : null,
   }));
 }
@@ -1725,8 +1740,8 @@ async function getGovernmentBudgetAgg(
       COALESCE(SUM(IF(EXTRACT(YEAR FROM period_month) = @latestYear AND EXTRACT(MONTH FROM period_month) = @latestMonth, amount_value, 0)), 0) AS mth_budget_units,
       COALESCE(SUM(IF(EXTRACT(YEAR FROM period_month) = @latestYear - 1 AND EXTRACT(MONTH FROM period_month) = @latestMonth, amount_value, 0)), 0) AS mth_budget_units_py
     FROM \`${SELL_OUT_ENRICHED_VIEW}\`
-    WHERE mapped_product_id IS NOT NULL
-      AND TRIM(mapped_product_id) != ''
+    WHERE resolved_product_id IS NOT NULL
+      AND TRIM(resolved_product_id) != ''
       AND period_month IS NOT NULL
       AND LOWER(TRIM(source_scope)) = 'gobierno'
       AND LOWER(TRIM(channel)) = 'gobierno'
@@ -1761,13 +1776,41 @@ export async function getBusinessExcellencePublicMarketOverview(
     .filter((row) => row.productId && row.productId.trim() !== '')
     .map((row) => row.sourceClaveNormalized);
   if (mappedClaves.length === 0) return null;
+  const mappingByClave = new Map(
+    mappingRows.map((row) => [
+      row.sourceClaveNormalized,
+      { unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1) },
+    ]),
+  );
   const row = await getGob360OverviewFromMappedClaves(mappedClaves, context.cutoffDate);
   if (!row) return null;
+  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate);
+  if (sourceRows.length === 0) return null;
 
-  const ytdPieces = Number(row.ytd_pieces ?? 0);
-  const ytdPiecesPy = Number(row.ytd_pieces_py ?? 0);
-  const mthPieces = Number(row.mth_pieces ?? 0);
-  const mthPiecesPy = Number(row.mth_pieces_py ?? 0);
+  const latestRef = parseYearMonthFromDateText(row.latest_date ? String(row.latest_date) : null);
+  if (latestRef.year === null || latestRef.month === null) return null;
+  const latestYear = latestRef.year;
+  const latestMonth = latestRef.month;
+  const pyYear = latestYear - 1;
+
+  let ytdPieces = 0;
+  let ytdPiecesPy = 0;
+  let mthPieces = 0;
+  let mthPiecesPy = 0;
+  for (const sourceRow of sourceRows) {
+    const mapping = mappingByClave.get(String(sourceRow.source_clave_normalized ?? ''));
+    const factor = mapping?.unitsFactor ?? 1;
+    const eventRef = parseYearMonthFromDateText(String(sourceRow.event_date ?? ''));
+    if (eventRef.year === null || eventRef.month === null) continue;
+    const year = eventRef.year;
+    const month = eventRef.month;
+    const pieces = Number(sourceRow.pieces ?? 0) * factor;
+    if (year === latestYear && month <= latestMonth) ytdPieces += pieces;
+    if (year === pyYear && month <= latestMonth) ytdPiecesPy += pieces;
+    if (year === latestYear && month === latestMonth) mthPieces += pieces;
+    if (year === pyYear && month === latestMonth) mthPiecesPy += pieces;
+  }
+
   const cluesTotalYtd = Number(row.clues_total_ytd ?? 0);
   const chiesiCluesActiveYtd = Number(row.chiesi_clues_active_ytd ?? 0);
   const scIsFallbackRaw = row.sc_is_fallback as unknown;
@@ -1807,7 +1850,14 @@ export async function getBusinessExcellencePublicMarketTopProducts(
   if (mappingRows.length === 0) return [];
 
   const mappingByClave = new Map(
-    mappingRows.map((row) => [row.sourceClaveNormalized, { productId: row.productId, marketGroup: row.marketGroup }]),
+    mappingRows.map((row) => [
+      row.sourceClaveNormalized,
+      {
+        productId: row.productId,
+        marketGroup: row.marketGroup,
+        unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+      },
+    ]),
   );
   const mappedClaves = mappingRows.map((row) => row.sourceClaveNormalized);
   const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate);
@@ -1860,7 +1910,7 @@ export async function getBusinessExcellencePublicMarketTopProducts(
     if (eventRef.year === null || eventRef.month === null) continue;
     const year = eventRef.year;
     const month = eventRef.month;
-    const pieces = Number(row.pieces ?? 0);
+    const pieces = Number(row.pieces ?? 0) * (mapping.unitsFactor ?? 1);
     const productId = mapping.productId;
     const isChiesi = Boolean(productId && productId.trim() !== '');
     const marketKey = mapping.marketGroup ?? 'No Market';
@@ -1962,7 +2012,11 @@ export async function getBusinessExcellencePublicMarketChartPoints(
   const mappingByClave = new Map(
     mappingRows.map((row) => [
       row.sourceClaveNormalized,
-      { productId: row.productId, marketGroup: row.marketGroup },
+      {
+        productId: row.productId,
+        marketGroup: row.marketGroup,
+        unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+      },
     ]),
   );
   const mappedClaves = mappingRows.map((row) => row.sourceClaveNormalized);
@@ -1978,7 +2032,7 @@ export async function getBusinessExcellencePublicMarketChartPoints(
     const eventRef = parseYearMonthFromDateText(String(row.event_date ?? ''));
     if (eventRef.year === null || eventRef.month === null) continue;
     const periodMonth = `${eventRef.year}-${String(eventRef.month).padStart(2, '0')}-01`;
-    const units = Number(row.pieces ?? 0);
+    const units = Number(row.pieces ?? 0) * (mapping.unitsFactor ?? 1);
 
     const keyAll = `${marketGroup}|||all|||${periodMonth}`;
     agg.set(keyAll, (agg.get(keyAll) ?? 0) + units);
@@ -2016,7 +2070,11 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
   const mappingByClave = new Map(
     mappingRows.map((row) => [
       row.sourceClaveNormalized,
-      { productId: row.productId, marketGroup: row.marketGroup },
+      {
+        productId: row.productId,
+        marketGroup: row.marketGroup,
+        unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+      },
     ]),
   );
   const mappedClaves = mappingRows.map((row) => row.sourceClaveNormalized);
@@ -2040,7 +2098,7 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
     if (eventRef.year === null || eventRef.month === null) continue;
     const year = eventRef.year;
     const month = eventRef.month;
-    const pieces = Number(row.pieces ?? 0);
+    const pieces = Number(row.pieces ?? 0) * (mapping.unitsFactor ?? 1);
 
     const clueCode = row.clue || 'NO CLUE';
     const clueKey = clueCode
@@ -2136,8 +2194,8 @@ async function getPrivateBusinessUnitUnits(reportingVersionId?: string) {
       FROM \`${SELL_OUT_ENRICHED_VIEW}\` b
       JOIN ctx c ON c.latest_date IS NOT NULL
       WHERE b.reporting_version_id = @reportingVersionId
-        AND b.mapped_product_id IS NOT NULL
-        AND TRIM(b.mapped_product_id) != ''
+        AND b.resolved_product_id IS NOT NULL
+        AND TRIM(b.resolved_product_id) != ''
         AND b.period_month IS NOT NULL
         AND LOWER(TRIM(b.source_scope)) = 'privado'
         AND LOWER(TRIM(b.channel)) = 'privado'
@@ -2240,8 +2298,8 @@ async function getGovernmentBudgetByBusinessUnit(
       )), 0) AS public_mth_budget_units
     FROM \`${SELL_OUT_ENRICHED_VIEW}\`
     WHERE reporting_version_id = @reportingVersionId
-      AND mapped_product_id IS NOT NULL
-      AND TRIM(mapped_product_id) != ''
+      AND resolved_product_id IS NOT NULL
+      AND TRIM(resolved_product_id) != ''
       AND period_month IS NOT NULL
       AND LOWER(TRIM(source_scope)) = 'gobierno'
       AND LOWER(TRIM(channel)) = 'gobierno'
@@ -2272,7 +2330,13 @@ async function getPublicBusinessUnitUnits(reportingVersionId?: string) {
   if (mappingRows.length === 0) return [];
 
   const mappingByClave = new Map(
-    mappingRows.map((row) => [row.sourceClaveNormalized, { productId: row.productId }]),
+    mappingRows.map((row) => [
+      row.sourceClaveNormalized,
+      {
+        productId: row.productId,
+        unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+      },
+    ]),
   );
   const mappedClaves = mappingRows
     .filter((row) => row.productId && row.productId.trim() !== '')
@@ -2316,7 +2380,7 @@ async function getPublicBusinessUnitUnits(reportingVersionId?: string) {
     if (eventRef.year === null || eventRef.month === null) continue;
     const year = eventRef.year;
     const month = eventRef.month;
-    const pieces = Number(row.pieces ?? 0);
+    const pieces = Number(row.pieces ?? 0) * (mapping?.unitsFactor ?? 1);
 
     const current = aggregate.get(businessUnitName) ?? {
       publicYtdUnits: 0,

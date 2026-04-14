@@ -65,6 +65,11 @@ export function FieldForceExcellencePanelClient({
     value == null
       ? 'N/A'
       : new Intl.NumberFormat('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+  const toNumericValue = (value: unknown) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    const num = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
 
   const selectedCoveragePct =
     activeView === 'ytd'
@@ -365,7 +370,7 @@ export function FieldForceExcellencePanelClient({
                   ))}
                 </Pie>
                 <Tooltip
-                  formatter={(value: number, name: string) => [showNumber(value, 0), name]}
+                  formatter={(value, name) => [showNumber(toNumericValue(value), 0), String(name)]}
                   contentStyle={{ borderRadius: 12, borderColor: '#cbd5e1' }}
                   labelFormatter={() => `Criterio: En objetivo = ${showNumber(objectiveMinPct, 0)}%-${showNumber(objectiveMaxPct, 0)}%`}
                 />
@@ -387,7 +392,7 @@ export function FieldForceExcellencePanelClient({
               <XAxis type="number" tick={{ fontSize: 11 }} />
                             <YAxis type="category" dataKey="label" width={180} tick={{ fontSize: 11 }} />
               <Tooltip
-                formatter={(value: number) => showNumber(value, 0)}
+                formatter={(value) => showNumber(toNumericValue(value), 0)}
                 labelFormatter={(value, payload) => {
                   const item = payload?.[0]?.payload as
                     | { fullLabel?: string; objetivo?: number; interacciones?: number; gap?: number }
@@ -442,7 +447,7 @@ export function FieldForceExcellencePanelClient({
                 <XAxis type="number" tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="visitType" width={180} tick={{ fontSize: 11 }} />
                 <Tooltip
-                  formatter={(value: number) => [showNumber(value, 0), 'Interactions']}
+                  formatter={(value) => [showNumber(toNumericValue(value), 0), 'Interactions']}
                   labelFormatter={(value, payload) => {
                     const item = payload?.[0]?.payload as { fullVisitType?: string; channel?: string } | undefined;
                     if (!item) return String(value);

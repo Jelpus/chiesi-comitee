@@ -1,7 +1,12 @@
 import Link from 'next/link';
+import { MedicalFieldExecutionPanelClient } from '@/components/executive/medical/medical-field-execution-panel-client';
 import { SectionHeader } from '@/components/ui/section-header';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
-import { getMedicalData, type MedicalKpiStatus } from '@/lib/data/medical';
+import {
+  getMedicalData,
+  getMedicalMslDashboardData,
+  type MedicalKpiStatus,
+} from '@/lib/data/medical';
 
 export type MedicalViewMode = 'insights' | 'scorecard' | 'dashboard';
 
@@ -64,6 +69,42 @@ function ModeTabs({ active, params }: { active: MedicalViewMode; params: SearchP
   );
 }
 
+function TopCards({
+  totalKpis,
+  onTrack,
+  healthScorePct,
+  mslCoveragePct,
+  mslReachPct,
+}: {
+  totalKpis: number;
+  onTrack: number;
+  healthScorePct: number | null;
+  mslCoveragePct: number | null;
+  mslReachPct: number | null;
+}) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">KPIs On Track</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+          {onTrack}/{totalKpis}
+        </p>
+        <p className="mt-1 text-xs text-slate-600">Current cut status</p>
+      </article>
+      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">MSL Visit Coverage</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(mslCoveragePct)}</p>
+        <p className="mt-1 text-xs text-slate-600">Reach YTD {formatPercent(mslReachPct)}</p>
+      </article>
+      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Health Score</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(healthScorePct)}</p>
+        <p className="mt-1 text-xs text-slate-600">((On Track*1) + (Watch*0.5)) / Total</p>
+      </article>
+    </div>
+  );
+}
+
 function StatusStack({
   onTrack,
   watch,
@@ -98,47 +139,6 @@ function StatusStack({
   );
 }
 
-function TopCards({
-  totalKpis,
-  onTrack,
-  watch,
-  offTrack,
-  healthScorePct,
-}: {
-  totalKpis: number;
-  onTrack: number;
-  watch: number;
-  offTrack: number;
-  healthScorePct: number | null;
-}) {
-  return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">KPIs On Track</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          {onTrack}/{totalKpis}
-        </p>
-        <p className="mt-1 text-xs text-slate-600">Current cut status</p>
-      </article>
-      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Watch KPIs</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{watch}</p>
-        <p className="mt-1 text-xs text-slate-600">Needs follow-up</p>
-      </article>
-      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Off Track KPIs</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{offTrack}</p>
-        <p className="mt-1 text-xs text-slate-600">Performance gap</p>
-      </article>
-      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Health Score</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(healthScorePct)}</p>
-        <p className="mt-1 text-xs text-slate-600">((On Track*1) + (Watch*0.5)) / Total</p>
-      </article>
-    </div>
-  );
-}
-
 type MedicalViewProps = {
   viewMode: MedicalViewMode;
   searchParams?: SearchParams;
@@ -153,6 +153,11 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
     versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];
 
   const data = await getMedicalData(selectedVersion.reportingVersionId, selectedVersion.periodMonth);
+  const dashboardData =
+    viewMode === 'dashboard'
+      ? await getMedicalMslDashboardData(selectedVersion.reportingVersionId, selectedVersion.periodMonth)
+      : null;
+  const mslSummaryYtd = dashboardData?.summary.ytd ?? null;
   const hasData = data.scores.length > 0;
   const working = data.scores.filter((item) => item.status === 'on_track');
   const needsImprove = data.scores.filter((item) => item.status === 'off_track');
@@ -196,7 +201,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
         </span>
         <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700">
           <span className="font-semibold uppercase tracking-[0.12em] text-slate-500">Source As Of</span>
-          <span className="font-semibold text-slate-900">{formatMonth(data.sourceAsOfMonth)}</span>
+          <span className="font-semibold text-slate-900">{formatMonth(viewMode === 'dashboard' ? (dashboardData?.sourceAsOfMonth ?? data.sourceAsOfMonth) : data.sourceAsOfMonth)}</span>
         </span>
       </div>
 
@@ -204,9 +209,9 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
         <TopCards
           totalKpis={data.summary.totalKpis}
           onTrack={data.summary.onTrack}
-          watch={data.summary.watch}
-          offTrack={data.summary.offTrack}
           healthScorePct={data.summary.healthScorePct}
+          mslCoveragePct={mslSummaryYtd?.coveragePct ?? null}
+          mslReachPct={mslSummaryYtd?.reachPct ?? null}
         />
 
         {viewMode === 'insights' && hasData ? (
@@ -324,7 +329,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
           </div>
         ) : null}
 
-        {viewMode === 'dashboard' && hasData ? (
+        {viewMode === 'dashboard' ? (
           <div className="space-y-3">
             <div className="grid gap-3 xl:grid-cols-2">
               <StatusStack
@@ -410,6 +415,8 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
                 </table>
               </div>
             </article>
+
+            <MedicalFieldExecutionPanelClient data={dashboardData} />
           </div>
         ) : null}
 

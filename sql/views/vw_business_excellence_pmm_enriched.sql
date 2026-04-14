@@ -87,35 +87,65 @@ brick_assignment_dedup AS (
       AND u.status IN ('normalized', 'published')
   )
   WHERE rn = 1
+),
+pmm_resolved AS (
+  SELECT
+    p.*,
+    u.reporting_version_id,
+    rv.period_month AS report_period_month,
+    u.source_as_of_month,
+    u.uploaded_at AS source_uploaded_at,
+    COALESCE(
+      NULLIF(TRIM(u.ddd_source), ''),
+      CASE
+        WHEN LOWER(u.source_file_name) LIKE '%innovair%' THEN 'innovair'
+        WHEN LOWER(u.source_file_name) LIKE '%ribuspir%' THEN 'ribuspir'
+        WHEN LOWER(u.source_file_name) LIKE '%rinoclenil%' THEN 'rinoclenil'
+        ELSE 'unknown'
+      END
+    ) AS ddd_source,
+    map.product_id AS mapped_product_id,
+    COALESCE(map.product_id, p.product_id) AS resolved_product_id_raw,
+    CASE
+      WHEN COALESCE(map.product_id, p.product_id) = 'PRD_000012' THEN 'PRD_000007'
+      ELSE COALESCE(map.product_id, p.product_id)
+    END AS resolved_product_id,
+    CASE
+      WHEN UPPER(TRIM(COALESCE(p.sales_group, ''))) = 'UNITS'
+       AND COALESCE(map.product_id, p.product_id) = 'PRD_000012'
+      THEN p.amount_value * 2
+      ELSE p.amount_value
+    END AS amount_value_adjusted
+  FROM normalized_pmm_base p
+  JOIN `chiesi-committee.chiesi_committee_raw.uploads` u
+    ON u.upload_id = p.upload_id
+  LEFT JOIN `chiesi-committee.chiesi_committee_admin.reporting_versions` rv
+    ON rv.reporting_version_id = u.reporting_version_id
+  LEFT JOIN active_pmm_mapping map
+    ON map.source_pack_des_normalized = p.pack_des_normalized
+  WHERE LOWER(TRIM(u.module_code)) IN ('business_excellence_ddd', 'business_excellence_pmm', 'pmm', 'ddd')
+    AND u.status IN ('normalized', 'published')
 )
 SELECT
   p.upload_id,
   p.row_number,
-  u.reporting_version_id,
-  rv.period_month AS report_period_month,
-  u.source_as_of_month,
-  u.uploaded_at AS source_uploaded_at,
-  COALESCE(
-    NULLIF(TRIM(u.ddd_source), ''),
-    CASE
-      WHEN LOWER(u.source_file_name) LIKE '%innovair%' THEN 'innovair'
-      WHEN LOWER(u.source_file_name) LIKE '%ribuspir%' THEN 'ribuspir'
-      WHEN LOWER(u.source_file_name) LIKE '%rinoclenil%' THEN 'rinoclenil'
-      ELSE 'unknown'
-    END
-  ) AS ddd_source,
+  p.reporting_version_id,
+  p.report_period_month,
+  p.source_as_of_month,
+  p.source_uploaded_at,
+  p.ddd_source,
   p.period_month,
   p.source_date,
   p.source_month_raw,
   p.source_year_raw,
   p.sales_group,
-  p.amount_value,
+  p.amount_value_adjusted AS amount_value,
   p.pack_des_raw,
   p.pack_des_normalized,
   p.brick,
   p.product_id AS source_product_id,
-  map.product_id AS mapped_product_id,
-  COALESCE(map.product_id, p.product_id) AS resolved_product_id,
+  p.mapped_product_id,
+  p.resolved_product_id,
   COALESCE(NULLIF(map.market_group, ''), NULLIF(p.market_group, '')) AS market_group,
   d.canonical_product_code,
   COALESCE(
@@ -141,19 +171,14 @@ SELECT
   pm.lifecycle_status,
   pm.display_order,
   pm.notes
-FROM normalized_pmm_base p
-JOIN `chiesi-committee.chiesi_committee_raw.uploads` u
-  ON u.upload_id = p.upload_id
-LEFT JOIN `chiesi-committee.chiesi_committee_admin.reporting_versions` rv
-  ON rv.reporting_version_id = u.reporting_version_id
+FROM pmm_resolved p
 LEFT JOIN active_pmm_mapping map
   ON map.source_pack_des_normalized = p.pack_des_normalized
 LEFT JOIN `chiesi-committee.chiesi_committee_core.dim_product` d
-  ON d.product_id = COALESCE(map.product_id, p.product_id)
+  ON d.product_id = p.resolved_product_id
 LEFT JOIN product_metadata_dedup pm
-  ON pm.product_id = COALESCE(map.product_id, p.product_id)
+  ON pm.product_id = p.resolved_product_id
 LEFT JOIN brick_assignment_dedup ba
-  ON ba.reporting_version_id = u.reporting_version_id
+  ON ba.reporting_version_id = p.reporting_version_id
  AND ba.brick_join_key = p.brick_join_key
-WHERE LOWER(TRIM(u.module_code)) IN ('business_excellence_ddd', 'business_excellence_pmm', 'pmm', 'ddd')
-  AND u.status IN ('normalized', 'published');
+;
