@@ -3,6 +3,7 @@ import { unstable_cache } from 'next/cache';
 import { PrivateSellOutBrandKpiGrid } from '@/components/executive/business-excellence/private-sell-out-brand-kpi-grid';
 import { PrivateMarketGroupCharts } from '@/components/executive/business-excellence/private-market-group-charts';
 import { PublicMarketGroupAnalysis } from '@/components/executive/business-excellence/public-market-group-analysis';
+import { FieldForceExcellencePanelClient } from '@/components/executive/business-excellence/field-force-excellence-panel-client';
 import { SectionHeader } from '@/components/ui/section-header';
 import {
   getBusinessExcellenceAuditSources,
@@ -15,6 +16,8 @@ import {
   getBusinessExcellencePublicMarketChartPoints,
   getBusinessExcellencePublicDimensionRankingRows,
   getBusinessExcellencePublicMarketTopProducts,
+  getBusinessExcellenceFieldForceExcellenceData,
+  getBusinessExcellenceFieldForceTopCardKpis,
   getBusinessExcellencePrivateManagers,
   getBusinessExcellencePrivateMarketChartPoints,
   getBusinessExcellencePrivatePrescriptionDimensionRanking,
@@ -49,6 +52,8 @@ import type {
   BusinessExcellencePublicDimensionRankingRow,
   BusinessExcellencePublicMarketChartPoint,
   BusinessExcellencePublicMarketTopProductRow,
+  BusinessExcellenceFieldForceExcellenceData,
+  BusinessExcellenceFieldForceTopCardKpis,
 } from '@/types/business-excellence';
 
 export type BusinessExcellenceViewMode = 'insights' | 'scorecard' | 'dashboard' 
@@ -63,6 +68,11 @@ type SearchParams = {
   publicView?: string;
   marketView?: string;
   marketChannel?: string;
+  fieldForceView?: string;
+  fieldForceBu?: string;
+  fieldForceCoverage?: string;
+  fieldForceDetailMode?: string;
+  fieldForcePotential?: string;
 };
 
 const sourceTables = [
@@ -106,7 +116,7 @@ function modeHref(mode: Exclude<BusinessExcellenceViewMode, 'landing'>, params: 
   return `/executive/business-excellence/${mode}${queryText ? `?${queryText}` : ''}`;
 }
 
-function dashboardTabHref(tab: 'market' | 'private' | 'public', params: SearchParams) {
+function dashboardTabHref(tab: 'market' | 'private' | 'public' | 'fieldforce', params: SearchParams) {
   const query = new URLSearchParams();
   if (params.version) query.set('version', params.version);
   query.set('dashboardTab', tab);
@@ -118,6 +128,21 @@ function dashboardTabHref(tab: 'market' | 'private' | 'public', params: SearchPa
   }
   if (tab === 'market' && (params.marketChannel === 'private' || params.marketChannel === 'public' || params.marketChannel === 'total')) {
     query.set('marketChannel', params.marketChannel);
+  }
+  if (tab === 'fieldforce' && (params.fieldForceView === 'mth' || params.fieldForceView === 'ytd')) {
+    query.set('fieldForceView', params.fieldForceView);
+  }
+  if (tab === 'fieldforce' && (params.fieldForceBu === 'air' || params.fieldForceBu === 'care' || params.fieldForceBu === 'total')) {
+    query.set('fieldForceBu', params.fieldForceBu);
+  }
+  if (tab === 'fieldforce' && (params.fieldForceCoverage === 'adjusted' || params.fieldForceCoverage === 'base')) {
+    query.set('fieldForceCoverage', params.fieldForceCoverage);
+  }
+  if (tab === 'fieldforce' && (params.fieldForceDetailMode === 'territory' || params.fieldForceDetailMode === 'district')) {
+    query.set('fieldForceDetailMode', params.fieldForceDetailMode);
+  }
+  if (tab === 'fieldforce' && params.fieldForcePotential) {
+    query.set('fieldForcePotential', params.fieldForcePotential);
   }
   return `/executive/business-excellence/dashboard?${query.toString()}`;
 }
@@ -148,6 +173,86 @@ function marketChannelHref(channel: 'total' | 'private' | 'public', params: Sear
   query.set('marketChannel', channel);
   if (params.marketView === 'mth' || params.marketView === 'ytd') {
     query.set('marketView', params.marketView);
+  }
+  return `/executive/business-excellence/dashboard?${query.toString()}`;
+}
+
+function fieldForceViewHref(view: 'ytd' | 'mth', params: SearchParams) {
+  const query = new URLSearchParams();
+  if (params.version) query.set('version', params.version);
+  query.set('dashboardTab', 'fieldforce');
+  query.set('fieldForceView', view);
+  if (params.fieldForceBu === 'air' || params.fieldForceBu === 'care' || params.fieldForceBu === 'total') {
+    query.set('fieldForceBu', params.fieldForceBu);
+  }
+  if (params.fieldForceCoverage === 'adjusted' || params.fieldForceCoverage === 'base') {
+    query.set('fieldForceCoverage', params.fieldForceCoverage);
+  }
+  if (params.fieldForceDetailMode === 'territory' || params.fieldForceDetailMode === 'district') {
+    query.set('fieldForceDetailMode', params.fieldForceDetailMode);
+  }
+  if (params.fieldForcePotential) {
+    query.set('fieldForcePotential', params.fieldForcePotential);
+  }
+  return `/executive/business-excellence/dashboard?${query.toString()}`;
+}
+
+function fieldForceBuHref(bu: 'total' | 'air' | 'care', params: SearchParams) {
+  const query = new URLSearchParams();
+  if (params.version) query.set('version', params.version);
+  query.set('dashboardTab', 'fieldforce');
+  query.set('fieldForceBu', bu);
+  if (params.fieldForceView === 'mth' || params.fieldForceView === 'ytd') {
+    query.set('fieldForceView', params.fieldForceView);
+  }
+  if (params.fieldForceCoverage === 'adjusted' || params.fieldForceCoverage === 'base') {
+    query.set('fieldForceCoverage', params.fieldForceCoverage);
+  }
+  if (params.fieldForceDetailMode === 'territory' || params.fieldForceDetailMode === 'district') {
+    query.set('fieldForceDetailMode', params.fieldForceDetailMode);
+  }
+  if (params.fieldForcePotential) {
+    query.set('fieldForcePotential', params.fieldForcePotential);
+  }
+  return `/executive/business-excellence/dashboard?${query.toString()}`;
+}
+
+function fieldForceCoverageHref(mode: 'base' | 'adjusted', params: SearchParams) {
+  const query = new URLSearchParams();
+  if (params.version) query.set('version', params.version);
+  query.set('dashboardTab', 'fieldforce');
+  query.set('fieldForceCoverage', mode);
+  if (params.fieldForceView === 'mth' || params.fieldForceView === 'ytd') {
+    query.set('fieldForceView', params.fieldForceView);
+  }
+  if (params.fieldForceBu === 'air' || params.fieldForceBu === 'care' || params.fieldForceBu === 'total') {
+    query.set('fieldForceBu', params.fieldForceBu);
+  }
+  if (params.fieldForceDetailMode === 'territory' || params.fieldForceDetailMode === 'district') {
+    query.set('fieldForceDetailMode', params.fieldForceDetailMode);
+  }
+  if (params.fieldForcePotential) {
+    query.set('fieldForcePotential', params.fieldForcePotential);
+  }
+  return `/executive/business-excellence/dashboard?${query.toString()}`;
+}
+
+function fieldForceDetailModeHref(mode: 'territory' | 'district', params: SearchParams) {
+  const query = new URLSearchParams();
+  if (params.version) query.set('version', params.version);
+  query.set('dashboardTab', 'fieldforce');
+  query.set('fieldForceDetailMode', mode);
+  if (params.fieldForceView === 'mth' || params.fieldForceView === 'ytd') {
+    query.set('fieldForceView', params.fieldForceView);
+  }
+  if (params.fieldForceBu === 'air' || params.fieldForceBu === 'care' || params.fieldForceBu === 'total') {
+    query.set('fieldForceBu', params.fieldForceBu);
+  }
+  if (params.fieldForceCoverage === 'adjusted' || params.fieldForceCoverage === 'base') {
+    query.set('fieldForceCoverage', params.fieldForceCoverage);
+  }
+  if (params.fieldForcePotential) {
+    query.set('fieldForcePotential', params.fieldForcePotential);
   }
   return `/executive/business-excellence/dashboard?${query.toString()}`;
 }
@@ -319,19 +424,24 @@ function SectionCard({
   eyebrow,
   title,
   description,
+  headerActions,
   children,
 }: {
   eyebrow: string;
   title: string;
   description?: string;
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
-      <div>
-        <p className="text-xs uppercase tracking-[0.16em] text-slate-600">{eyebrow}</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{title}</h2>
-        {description ? <p className="mt-2 max-w-3xl text-sm text-slate-600">{description}</p> : null}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-600">{eyebrow}</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{title}</h2>
+          {description ? <p className="mt-2 max-w-3xl text-sm text-slate-600">{description}</p> : null}
+        </div>
+        {headerActions ? <div>{headerActions}</div> : null}
       </div>
       <div className="mt-4">{children}</div>
     </article>
@@ -361,13 +471,19 @@ function HeroMetricCard({
   );
 }
 
-function FieldForceCoverageCard() {
+function FieldForceCoverageCard({ kpis }: { kpis: BusinessExcellenceFieldForceTopCardKpis | null }) {
+  const coverage = kpis?.coverageYtdTftPct;
+  const activeTime = kpis?.activeTimeYtdPct;
   return (
     <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('slate')}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Field Force Coverage</p>
-      <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">47%</p>
-      <p className="mt-1 text-sm font-medium text-slate-700">IE - MTH 105 | Q 81</p>
-      <p className="mt-2 text-sm text-slate-600">HCP's impact</p>
+      <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+        {coverage == null ? 'N/A' : `${coverage.toFixed(1)}%`}
+      </p>
+      <p className="mt-1 text-sm font-medium text-slate-700">YTD Coverage (TFT)</p>
+      <p className="mt-2 text-sm text-slate-600">
+        Active Time: {activeTime == null ? 'N/A' : `${activeTime.toFixed(0)}%`}
+      </p>
     </article>
   );
 }
@@ -426,6 +542,7 @@ function DashboardTopCards({
   overview,
   prescriptionsOverview,
   publicOverview,
+  fieldForceTopCardKpis,
 }: {
   martSummary: BusinessExcellencePrivateSellOutMartSummary | null;
   overview: {
@@ -434,6 +551,7 @@ function DashboardTopCards({
   };
   prescriptionsOverview: BusinessExcellencePrivatePrescriptionsOverview | null;
   publicOverview: BusinessExcellencePublicMarketOverview | null;
+  fieldForceTopCardKpis: BusinessExcellenceFieldForceTopCardKpis | null;
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -478,7 +596,7 @@ function DashboardTopCards({
         <p className="mt-3 text-sm text-slate-600">Public market mapped products performance</p>
       </article>
 
-      <FieldForceCoverageCard />
+      <FieldForceCoverageCard kpis={fieldForceTopCardKpis} />
     </div>
   );
 }
@@ -586,13 +704,14 @@ function DashboardPerformanceTabs({
   active,
   params,
 }: {
-  active: 'market' | 'private' | 'public';
+  active: 'market' | 'private' | 'public' | 'fieldforce';
   params: SearchParams;
 }) {
   const items = [
     { key: 'market', label: 'Market Performance' },
     { key: 'private', label: 'Private Performance' },
     { key: 'public', label: 'Public Performance' },
+    { key: 'fieldforce', label: 'Field Force Excellence' },
   ] as const;
   return (
     <div className="rounded-[16px] border border-slate-200 bg-white p-2 shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
@@ -816,6 +935,481 @@ function PublicPerformancePanel({
       </div>
 
       <PublicMarketGroupAnalysis rows={topProducts} chartRows={chartRows} rankingRows={rankingRows} />
+    </SectionCard>
+  );
+}
+
+function FieldForceExcellencePanel({
+  data,
+  activeView,
+  activeBu,
+  activeCoverage,
+  activeDetailMode,
+  activePotential,
+  params,
+}: {
+  data: BusinessExcellenceFieldForceExcellenceData | null;
+  activeView: 'ytd' | 'mth';
+  activeBu: 'total' | 'air' | 'care';
+  activeCoverage: 'base' | 'adjusted';
+  activeDetailMode: 'territory' | 'district';
+  activePotential: string;
+  params: SearchParams;
+}) {
+  const periodScope = activeView === 'ytd' ? 'YTD' : 'MTH';
+  const rows = data?.rows ?? [];
+  const totalRow = rows.find((row) => row.bu === 'total') ?? rows[0] ?? null;
+  const summaryRows = (data?.summaryRows ?? []).filter((row) => row.periodScope === periodScope);
+  const doctorRowsScope = (data?.doctorDetailRows ?? []).filter((row) => row.periodScope === periodScope);
+  const showPct = (value: number | null | undefined) => (value == null ? 'N/A' : `${value.toFixed(1)}%`);
+  const showNumber = (value: number | null | undefined, digits = 0) =>
+    value == null
+      ? 'N/A'
+      : new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+      }).format(value);
+
+  const toLabel = (bu: 'total' | 'air' | 'care') => (bu === 'total' ? 'Total' : bu === 'air' ? 'Air' : 'Care');
+  const modeLabel = activeDetailMode === 'territory' ? 'Territory' : 'District';
+
+  const detailRowsRaw = summaryRows.filter(
+    (row) =>
+      row.aggregationLevel === activeDetailMode
+      && (activeBu === 'total' ? row.bu !== 'total' : row.bu === activeBu),
+  );
+
+  const detailRowsMap = new Map<
+    string,
+    {
+      label: string;
+      clients: number;
+      objetivoBase: number;
+      objetivoAdjusted: number;
+      interacciones: number;
+    }
+  >();
+  for (const row of detailRowsRaw) {
+    const label =
+      activeDetailMode === 'territory'
+        ? (row.territoryName ?? row.territoryNormalized ?? 'N/A')
+        : (row.district ?? 'N/A');
+    const key = label.trim().toLowerCase();
+    const current = detailRowsMap.get(key) ?? {
+      label,
+      clients: 0,
+      objetivoBase: 0,
+      objetivoAdjusted: 0,
+      interacciones: 0,
+    };
+    current.clients += row.clients;
+    current.objetivoBase += row.objetivoBase;
+    current.objetivoAdjusted += row.objetivoAdjusted;
+    current.interacciones += row.interacciones;
+    detailRowsMap.set(key, current);
+  }
+  const detailRows = Array.from(detailRowsMap.values())
+    .map((row) => {
+      const objetivo = activeCoverage === 'adjusted' ? row.objetivoAdjusted : row.objetivoBase;
+      return {
+        ...row,
+        objetivo,
+        coberturaPct: objetivo > 0 ? (row.interacciones / objetivo) * 100 : null,
+      };
+    })
+    .sort((a, b) => b.interacciones - a.interacciones);
+
+  const buFilteredDoctors = doctorRowsScope.filter((row) => activeBu === 'total' || row.bu === activeBu);
+  const potentialOptions = Array.from(
+    new Set(
+      buFilteredDoctors
+        .map((row) => (row.potencial ?? '').trim())
+        .filter((value) => value.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+  const doctorsFilteredByPotential = buFilteredDoctors.filter((row) => {
+    if (activePotential === 'all') return true;
+    const current = (row.potencial ?? '').trim().toLowerCase();
+    return current === activePotential.toLowerCase();
+  });
+  const overvisitedTop = doctorsFilteredByPotential
+    .filter((row) => row.statusVisita === 'sobrevisitado')
+    .map((row) => ({
+      ...row,
+      gap: row.interacciones - row.objetivoBase,
+    }))
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 20);
+  const subvisitedTop = doctorsFilteredByPotential
+    .filter((row) => row.statusVisita === 'subvisitado')
+    .map((row) => ({
+      ...row,
+      gap: row.objetivoBase - row.interacciones,
+    }))
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 20);
+  const noVisitedRows = doctorsFilteredByPotential
+    .filter((row) => row.statusVisita === 'no_visitado')
+    .sort((a, b) => a.doctorId.localeCompare(b.doctorId));
+
+  const selectedCoveragePct =
+    activeView === 'ytd'
+      ? (activeCoverage === 'adjusted' ? totalRow?.coverageAdjustedYtdPct : totalRow?.coverageYtdPct)
+      : (activeCoverage === 'adjusted' ? totalRow?.coverageAdjustedMthPct : totalRow?.coverageMthPct);
+  const selectedTarget =
+    activeView === 'ytd'
+      ? (activeCoverage === 'adjusted' ? totalRow?.targetVisitsAdjustedYtd : totalRow?.targetVisitsYtd)
+      : (activeCoverage === 'adjusted' ? totalRow?.targetVisitsAdjustedMth : totalRow?.targetVisitsMth);
+
+  return (
+    <SectionCard
+      eyebrow="Field Force Excellence"
+      title="Field Force Effectiveness"
+      description="Fichero medico + Interacciones (Estado=Enviado) + TFT, con corte en el maximo disponible sin exceder el Report Period."
+      headerActions={(
+        <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+          <Link
+            href={fieldForceViewHref('ytd', params)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+              activeView === 'ytd' ? 'bg-slate-900 text-white' : 'text-slate-600'
+            }`}
+          >
+            YTD
+          </Link>
+          <Link
+            href={fieldForceViewHref('mth', params)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+              activeView === 'mth' ? 'bg-slate-900 text-white' : 'text-slate-600'
+            }`}
+          >
+            MTH
+          </Link>
+        </div>
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+          <Link
+            href={fieldForceCoverageHref('base', params)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+              activeCoverage === 'base' ? 'bg-slate-900 text-white' : 'text-slate-600'
+            }`}
+          >
+            Coverage Base
+          </Link>
+          <Link
+            href={fieldForceCoverageHref('adjusted', params)}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+              activeCoverage === 'adjusted' ? 'bg-slate-900 text-white' : 'text-slate-600'
+            }`}
+          >
+            Coverage TFT
+          </Link>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50/70 p-4 text-base text-slate-700">
+        <p>
+          <span className="font-medium text-slate-900">Report Period:</span> {formatPeriodTag(data?.reportPeriodMonth ?? null)}
+        </p>
+        <p className="mt-1">
+          <span className="font-medium text-slate-900">Effective As Of:</span> {formatPeriodTag(data?.effectiveAsOfMonth ?? null)}
+        </p>
+        <p className="mt-1">
+          <span className="font-medium text-slate-900">YTD Window:</span> {formatPeriodTag(data?.ytdStartMonth ?? null)} - {formatPeriodTag(data?.effectiveAsOfMonth ?? null)}
+        </p>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <article className="rounded-[14px] border border-slate-200 bg-white p-3">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Clients</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{showNumber(totalRow?.portfolioAccounts ?? 0)}</p>
+        </article>
+        <article className="rounded-[14px] border border-slate-200 bg-white p-3">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Objective</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">{showNumber(selectedTarget ?? 0)}</p>
+        </article>
+        <article className="rounded-[14px] border border-slate-200 bg-white p-3">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Interactions</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">
+            {activeView === 'ytd'
+              ? showNumber(totalRow?.sentInteractionsYtd ?? 0)
+              : showNumber(totalRow?.sentInteractionsMth ?? 0)}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">Estado = Enviado</p>
+        </article>
+        <article className="rounded-[14px] border border-slate-200 bg-white p-3">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Coverage</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">
+            {showPct(selectedCoveragePct ?? null)}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">{activeCoverage === 'adjusted' ? 'Coverage TFT' : 'Coverage Base'}</p>
+        </article>
+        <article className="rounded-[14px] border border-slate-200 bg-white p-3">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-500">% Active Time</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-950">
+            {activeView === 'ytd'
+              ? showPct(
+                totalRow && totalRow.workingDaysYtd > 0
+                  ? (totalRow.effectiveDaysYtd / totalRow.workingDaysYtd) * 100
+                  : null,
+              )
+              : showPct(
+                totalRow && totalRow.workingDaysMth > 0
+                  ? (totalRow.effectiveDaysMth / totalRow.workingDaysMth) * 100
+                  : null,
+              )}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            TFT {activeView === 'ytd' ? showNumber(totalRow?.tftDaysYtd ?? 0, 1) : showNumber(totalRow?.tftDaysMth ?? 0, 1)} days
+          </p>
+        </article>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50">
+            <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              <th className="px-3 py-2">BU</th>
+              <th className="px-3 py-2 text-right"># Clients</th>
+              <th className="px-3 py-2 text-right"># Objective</th>
+              <th className="px-3 py-2 text-right"># Interactions</th>
+              <th className="px-3 py-2 text-right">Coverage</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((row) => (
+              <tr key={row.bu}>
+                <td className="px-3 py-2 font-semibold text-slate-900">{toLabel(row.bu)}</td>
+                <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.portfolioAccounts)}</td>
+                <td className="px-3 py-2 text-right text-slate-700">
+                  {activeView === 'ytd'
+                    ? showNumber(activeCoverage === 'adjusted' ? row.targetVisitsAdjustedYtd : row.targetVisitsYtd)
+                    : showNumber(activeCoverage === 'adjusted' ? row.targetVisitsAdjustedMth : row.targetVisitsMth)}
+                </td>
+                <td className="px-3 py-2 text-right text-slate-700">
+                  {activeView === 'ytd' ? showNumber(row.sentInteractionsYtd) : showNumber(row.sentInteractionsMth)}
+                </td>
+                <td className="px-3 py-2 text-right text-slate-700">
+                  {activeView === 'ytd'
+                    ? showPct(activeCoverage === 'adjusted' ? row.coverageAdjustedYtdPct : row.coverageYtdPct)
+                    : showPct(activeCoverage === 'adjusted' ? row.coverageAdjustedMthPct : row.coverageMthPct)}
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 ? (
+              <tr>
+                <td className="px-3 py-3 text-slate-500" colSpan={5}>No rows for selected period/version.</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      <article className="mt-6 rounded-[18px] border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">Detalle Por BU</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+              {(['total', 'air', 'care'] as const).map((bu) => (
+                <Link
+                  key={bu}
+                  href={fieldForceBuHref(bu, params)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                    activeBu === bu ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {toLabel(bu)}
+                </Link>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+              <Link
+                href={fieldForceDetailModeHref('territory', params)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  activeDetailMode === 'territory' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                }`}
+              >
+                Territory
+              </Link>
+              <Link
+                href={fieldForceDetailModeHref('district', params)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  activeDetailMode === 'district' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                }`}
+              >
+                District
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                <th className="px-3 py-2">{modeLabel}</th>
+                <th className="px-3 py-2 text-right"># Clients</th>
+                <th className="px-3 py-2 text-right"># Objetivo</th>
+                <th className="px-3 py-2 text-right"># Interacciones</th>
+                <th className="px-3 py-2 text-right"># Cobertura</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {detailRows.map((row) => (
+                <tr key={row.label}>
+                  <td className="px-3 py-2 font-semibold text-slate-900">{row.label}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.clients)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.objetivo)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.interacciones)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{showPct(row.coberturaPct)}</td>
+                </tr>
+              ))}
+              {detailRows.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-3 text-slate-500" colSpan={5}>No detail rows for current filters.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article className="mt-6 rounded-[18px] border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
+            Analisis De Medicos ({toLabel(activeBu)})
+          </p>
+          <form action="/executive/business-excellence/dashboard" method="get" className="flex items-center gap-2">
+            <input type="hidden" name="dashboardTab" value="fieldforce" />
+            <input type="hidden" name="version" value={params.version ?? ''} />
+            <input type="hidden" name="fieldForceView" value={activeView} />
+            <input type="hidden" name="fieldForceBu" value={activeBu} />
+            <input type="hidden" name="fieldForceCoverage" value={activeCoverage} />
+            <input type="hidden" name="fieldForceDetailMode" value={activeDetailMode} />
+            <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500" htmlFor="ff-potential">
+              Potencial
+            </label>
+            <select
+              id="ff-potential"
+              name="fieldForcePotential"
+              defaultValue={activePotential}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+            >
+              <option value="all">All</option>
+              {potentialOptions.map((potential) => (
+                <option key={potential} value={potential}>{potential}</option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700"
+            >
+              Apply
+            </button>
+          </form>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="overflow-hidden rounded-[14px] border border-slate-200">
+            <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+              Top 20 Clientes Sobrevisitados
+            </div>
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50/70">
+                <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                  <th className="px-3 py-2">Cliente</th>
+                  <th className="px-3 py-2 text-right">Objetivo</th>
+                  <th className="px-3 py-2 text-right">Interacciones</th>
+                  <th className="px-3 py-2 text-right">Cobertura</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {overvisitedTop.map((row) => (
+                  <tr key={`${row.doctorId}-${row.territoryNormalized}`}>
+                    <td className="px-3 py-2 font-semibold text-slate-900">{row.doctorId}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">
+                      {showNumber(activeCoverage === 'adjusted' ? row.objetivoAdjusted : row.objetivoBase)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.interacciones)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">
+                      {showPct(activeCoverage === 'adjusted' ? row.coberturaAdjustedPct : row.coberturaBasePct)}
+                    </td>
+                  </tr>
+                ))}
+                {overvisitedTop.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-3 text-slate-500" colSpan={4}>No rows.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="overflow-hidden rounded-[14px] border border-slate-200">
+            <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+              Top 20 Clientes Subvisitados
+            </div>
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50/70">
+                <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                  <th className="px-3 py-2">Cliente</th>
+                  <th className="px-3 py-2 text-right">Objetivo</th>
+                  <th className="px-3 py-2 text-right">Interacciones</th>
+                  <th className="px-3 py-2 text-right">Cobertura</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {subvisitedTop.map((row) => (
+                  <tr key={`${row.doctorId}-${row.territoryNormalized}`}>
+                    <td className="px-3 py-2 font-semibold text-slate-900">{row.doctorId}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">
+                      {showNumber(activeCoverage === 'adjusted' ? row.objetivoAdjusted : row.objetivoBase)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.interacciones)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">
+                      {showPct(activeCoverage === 'adjusted' ? row.coberturaAdjustedPct : row.coberturaBasePct)}
+                    </td>
+                  </tr>
+                ))}
+                {subvisitedTop.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-3 text-slate-500" colSpan={4}>No rows.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
+          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+            Clientes No Visitados En Fichero
+          </div>
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50/70">
+              <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                <th className="px-3 py-2">Cliente</th>
+                <th className="px-3 py-2">Potencial</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {noVisitedRows.slice(0, 200).map((row) => (
+                <tr key={`${row.doctorId}-${row.territoryNormalized}`}>
+                  <td className="px-3 py-2 font-semibold text-slate-900">{row.doctorId}</td>
+                  <td className="px-3 py-2 text-slate-700">{row.potencial ?? 'N/A'}</td>
+                </tr>
+              ))}
+              {noVisitedRows.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-3 text-slate-500" colSpan={2}>No rows.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
     </SectionCard>
   );
 }
@@ -1536,6 +2130,7 @@ function InsightsPanel({
   publicRows,
   businessUnitRows,
   publicError,
+  fieldForceData,
 }: {
   channelPerformance: BusinessExcellencePrivateChannelPerformance | null;
   martRows: BusinessExcellencePrivateSellOutMartRow[];
@@ -1543,6 +2138,7 @@ function InsightsPanel({
   publicRows: BusinessExcellencePublicMarketTopProductRow[];
   businessUnitRows: BusinessExcellenceBusinessUnitChannelRow[];
   publicError: string | null;
+  fieldForceData: BusinessExcellenceFieldForceExcellenceData | null;
 }) {
   const unitsTrend = channelPerformance?.ytdUnitsGrowthPct ?? null;
   const netSalesTrend = channelPerformance?.ytdNetSalesGrowthPct ?? null;
@@ -1659,6 +2255,30 @@ function InsightsPanel({
   const topNegativeVsPyPublic = [...publicBridgeRows].sort((a, b) => a.deltaVsPyUnits - b.deltaVsPyUnits)[0] ?? null;
   const topPositiveVsBudgetPublic = [...publicBridgeRows].sort((a, b) => b.deltaVsBudgetUnits - a.deltaVsBudgetUnits)[0] ?? null;
   const topNegativeVsBudgetPublic = [...publicBridgeRows].sort((a, b) => a.deltaVsBudgetUnits - b.deltaVsBudgetUnits)[0] ?? null;
+  const ffTotal = (fieldForceData?.rows ?? []).find((row) => row.bu === 'total') ?? null;
+  const ffAir = (fieldForceData?.rows ?? []).find((row) => row.bu === 'air') ?? null;
+  const ffCare = (fieldForceData?.rows ?? []).find((row) => row.bu === 'care') ?? null;
+  const ffActiveTimeTotalPct =
+    ffTotal && ffTotal.workingDaysYtd > 0 ? (ffTotal.effectiveDaysYtd / ffTotal.workingDaysYtd) * 100 : null;
+  const ffCoverageYtdTft = ffTotal?.coverageAdjustedYtdPct ?? null;
+  const ffGapTotal = ffTotal
+    ? Math.max(0, ffTotal.targetVisitsAdjustedYtd - ffTotal.sentInteractionsYtd)
+    : null;
+  const ffBuSignals = [ffAir, ffCare]
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .map((row) => {
+      const activeTimePct = row.workingDaysYtd > 0 ? (row.effectiveDaysYtd / row.workingDaysYtd) * 100 : null;
+      const coveragePct = row.coverageAdjustedYtdPct;
+      const gap = Math.max(0, row.targetVisitsAdjustedYtd - row.sentInteractionsYtd);
+      return {
+        bu: row.bu === 'air' ? 'Air' : 'Care',
+        coveragePct,
+        activeTimePct,
+        gap,
+      };
+    });
+  const ffTopBu = [...ffBuSignals].sort((a, b) => (b.coveragePct ?? -1) - (a.coveragePct ?? -1))[0] ?? null;
+  const ffRiskBu = [...ffBuSignals].sort((a, b) => (a.coveragePct ?? 999) - (b.coveragePct ?? 999))[0] ?? null;
 
   return (
     <div className="space-y-4">
@@ -1702,6 +2322,34 @@ function InsightsPanel({
             <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Cross-Channel Priority</p>
             <p className="mt-1 text-sm text-slate-800">
               Prioritize the business units where growth, coverage and channel mix diverge, then execute recovery actions in the largest market groups.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article className="rounded-[24px] border border-blue-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+        <p className="text-xs uppercase tracking-[0.16em] text-blue-700">Field Force Narrative</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">YTD Effectiveness</p>
+            <p className="mt-1 text-sm text-slate-800">
+              Coverage TFT is {formatPercentNumber(ffCoverageYtdTft, 1)} with active time at {formatPercentNumber(ffActiveTimeTotalPct, 1)} for the current YTD cut.
+            </p>
+          </div>
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">BU Signal</p>
+            <p className="mt-1 text-sm text-slate-800">
+              {ffTopBu
+                ? `${ffTopBu.bu} is leading YTD coverage (${formatPercentNumber(ffTopBu.coveragePct, 1)}), while ${ffRiskBu?.bu ?? 'the other BU'} remains below with ${formatPercentNumber(ffRiskBu?.coveragePct ?? null, 1)}.`
+                : 'No BU-level field force signal available in this cut.'}
+            </p>
+          </div>
+          <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Execution Focus</p>
+            <p className="mt-1 text-sm text-slate-800">
+              {ffGapTotal !== null
+                ? `Close the remaining YTD objective gap (${new Intl.NumberFormat('en-US').format(Math.round(ffGapTotal))} interactions), prioritizing low-coverage territories in ${ffRiskBu?.bu ?? 'the lagging BU'}.`
+                : 'Define recovery actions on low-coverage territories and monitor weekly execution cadence.'}
             </p>
           </div>
         </div>
@@ -1819,6 +2467,7 @@ function ScorecardInsightsPanel({
   channelPerformance,
   publicOverview,
   publicRows,
+  fieldForceData,
 }: {
   martRows: BusinessExcellencePrivateSellOutMartRow[];
   specialtySignals: BusinessExcellencePrivateBrandSpecialtySignal[];
@@ -1826,6 +2475,7 @@ function ScorecardInsightsPanel({
   channelPerformance: BusinessExcellencePrivateChannelPerformance | null;
   publicOverview: BusinessExcellencePublicMarketOverview | null;
   publicRows: BusinessExcellencePublicMarketTopProductRow[];
+  fieldForceData: BusinessExcellenceFieldForceExcellenceData | null;
 }) {
   const privateSignals = deriveBrandSignals(martRows);
   const publicSignalsForMap = derivePublicBrandSignals(publicRows);
@@ -1896,6 +2546,34 @@ function ScorecardInsightsPanel({
   const publicYtdBudgetTotal = publicRows.reduce((sum, row) => sum + (row.ytdBudgetUnits ?? 0), 0);
   const publicYtdBudgetCoveragePct =
     publicYtdBudgetTotal > 0 ? (publicYtdUnitsTotal / publicYtdBudgetTotal) * 100 : null;
+  const fieldForceBuSignals = (fieldForceData?.rows ?? [])
+    .filter((row) => row.bu === 'air' || row.bu === 'care')
+    .map((row) => {
+      const coveragePct = row.coverageAdjustedYtdPct;
+      const objective = row.targetVisitsAdjustedYtd;
+      const interactions = row.sentInteractionsYtd;
+      const noVisitadosRatePct = row.portfolioAccounts > 0 ? (row.noVisitadosYtd / row.portfolioAccounts) * 100 : null;
+      const activeTimePct = row.workingDaysYtd > 0 ? (row.effectiveDaysYtd / row.workingDaysYtd) * 100 : null;
+      const gap = Math.max(0, objective - interactions);
+      const totalCoverage = (fieldForceData?.rows ?? []).find((r) => r.bu === 'total')?.coverageAdjustedYtdPct ?? null;
+      const ei = coveragePct != null && totalCoverage != null && totalCoverage !== 0
+        ? Math.round((coveragePct / totalCoverage) * 100)
+        : null;
+      return {
+        bu: row.bu === 'air' ? 'Air' : 'Care',
+        coveragePct,
+        activeTimePct,
+        noVisitadosRatePct,
+        gap,
+        ei,
+      };
+    });
+  const ffBestCoverage = [...fieldForceBuSignals].sort((a, b) => (b.coveragePct ?? -1) - (a.coveragePct ?? -1))[0] ?? null;
+  const ffBestActiveTime = [...fieldForceBuSignals].sort((a, b) => (b.activeTimePct ?? -1) - (a.activeTimePct ?? -1))[0] ?? null;
+  const ffLowestNoVisited = [...fieldForceBuSignals].sort((a, b) => (a.noVisitadosRatePct ?? 999) - (b.noVisitadosRatePct ?? 999))[0] ?? null;
+  const ffWorstCoverage = [...fieldForceBuSignals].sort((a, b) => (a.coveragePct ?? 999) - (b.coveragePct ?? 999))[0] ?? null;
+  const ffWorstActiveTime = [...fieldForceBuSignals].sort((a, b) => (a.activeTimePct ?? 999) - (b.activeTimePct ?? 999))[0] ?? null;
+  const ffHighestGap = [...fieldForceBuSignals].sort((a, b) => b.gap - a.gap)[0] ?? null;
 
   return (
     <div className="space-y-4">
@@ -2019,6 +2697,27 @@ function ScorecardInsightsPanel({
         <article className="rounded-[24px] border border-emerald-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
           <p className="text-xs uppercase tracking-[0.16em] text-emerald-700">What Is Working</p>
           <div className="mt-3 space-y-2">
+          <div className="rounded-[12px] border border-emerald-200 bg-emerald-50/60 p-3">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.12em] text-blue-800">Field Force</span>
+              <p className="text-xs font-semibold text-emerald-900">BU Signals (YTD | Coverage TFT)</p>
+            </div>
+            <p className="mt-1 text-xs text-slate-700">
+              {ffBestCoverage
+                ? `${ffBestCoverage.bu} leads coverage at ${formatPercentNumber(ffBestCoverage.coveragePct, 1)} (EI ${ffBestCoverage.ei ?? 'N/A'}).`
+                : 'Insufficient BU coverage signal.'}
+            </p>
+            <p className="mt-1 text-xs text-slate-700">
+              {ffBestActiveTime
+                ? `${ffBestActiveTime.bu} leads active time at ${formatPercentNumber(ffBestActiveTime.activeTimePct, 1)}.`
+                : 'Insufficient BU active time signal.'}
+            </p>
+            <p className="mt-1 text-xs text-slate-700">
+              {ffLowestNoVisited
+                ? `${ffLowestNoVisited.bu} has the lowest non-visited ratio (${formatPercentNumber(ffLowestNoVisited.noVisitadosRatePct, 1)}).`
+                : 'Insufficient BU non-visited signal.'}
+            </p>
+          </div>
             {rxWorkingWithAnchor.map((row) => {
               const specialtySummary = specialtySummaryMap.get(specialtyKey(row.marketGroup, row.brandName));
               const weeklyMarket = weeklyTotalsByMarket.get(row.marketGroup);
@@ -2070,6 +2769,27 @@ function ScorecardInsightsPanel({
         <article className="rounded-[24px] border border-rose-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
           <p className="text-xs uppercase tracking-[0.16em] text-rose-700">What Needs To Improve</p>
           <div className="mt-3 space-y-2">
+          <div className="rounded-[12px] border border-rose-200 bg-rose-50/60 p-3">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.12em] text-blue-800">Field Force</span>
+              <p className="text-xs font-semibold text-rose-900">BU Signals (YTD | Coverage TFT)</p>
+            </div>
+            <p className="mt-1 text-xs text-slate-700">
+              {ffWorstCoverage
+                ? `${ffWorstCoverage.bu} is lagging in coverage at ${formatPercentNumber(ffWorstCoverage.coveragePct, 1)}.`
+                : 'Insufficient BU coverage risk signal.'}
+            </p>
+            <p className="mt-1 text-xs text-slate-700">
+              {ffWorstActiveTime
+                ? `${ffWorstActiveTime.bu} shows the lowest active time at ${formatPercentNumber(ffWorstActiveTime.activeTimePct, 1)}.`
+                : 'Insufficient BU active time risk signal.'}
+            </p>
+            <p className="mt-1 text-xs text-slate-700">
+              {ffHighestGap
+                ? `${ffHighestGap.bu} concentrates the largest objective gap (${new Intl.NumberFormat('en-US').format(Math.round(ffHighestGap.gap))} interactions).`
+                : 'Insufficient BU gap signal.'}
+            </p>
+          </div>
             {rxImproveWithAnchor.map((row) => {
               const specialtySummary = specialtySummaryMap.get(specialtyKey(row.marketGroup, row.brandName));
               const weeklyMarket = weeklyTotalsByMarket.get(row.marketGroup);
@@ -2124,6 +2844,27 @@ function ScorecardInsightsPanel({
         <p className="mt-1 text-xs text-slate-600">
           Weekly momentum ({weeklyScope === 'chiesi' ? 'Chiesi scope' : 'All market'}): {improvingWeeklyMarkets.length} markets growing WoW, {pressuredWeeklyMarkets.length} declining.
         </p>
+        <div className="mt-3 rounded-[12px] border border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.12em] text-blue-800">Field Force</span>
+            <p className="text-xs font-semibold text-slate-900">BU Priorities (YTD | Coverage TFT)</p>
+          </div>
+          <p className="mt-1 text-xs text-slate-700">
+            {ffWorstCoverage
+              ? `Prioritize low-coverage territories in ${ffWorstCoverage.bu} to recover execution consistency.`
+              : 'Prioritize territories with lower coverage.'}
+          </p>
+          <p className="mt-1 text-xs text-slate-700">
+            {ffWorstActiveTime
+              ? `Reduce TFT impact in ${ffWorstActiveTime.bu} to restore effective field time.`
+              : 'Reduce TFT impact in the BU with lowest active time.'}
+          </p>
+          <p className="mt-1 text-xs text-slate-700">
+            {ffBestCoverage
+              ? `Replicate ${ffBestCoverage.bu}'s execution playbook across the other BU.`
+              : 'Replicate best-performing BU practices.'}
+          </p>
+        </div>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {priorityWithAnchor.map((row, index) => (
             (() => {
@@ -2152,8 +2893,7 @@ function ScorecardInsightsPanel({
             })()
           ))}
         </div>
-      </article>
-    </div>
+      </article></div>
   );
 }
 
@@ -2281,6 +3021,13 @@ const getCachedBusinessUnitChannelRows = unstable_cache(
   { revalidate: 120 },
 );
 
+const getCachedFieldForceTopCardKpis = unstable_cache(
+  async (reportingVersionId: string, reportPeriodMonth: string) =>
+    getBusinessExcellenceFieldForceTopCardKpis(reportingVersionId || undefined, reportPeriodMonth),
+  ['business-excellence-field-force-top-card-v1'],
+  { revalidate: 120 },
+);
+
 export async function BusinessExcellenceView({
   viewMode,
   searchParams = {},
@@ -2289,10 +3036,11 @@ export async function BusinessExcellenceView({
   searchParams?: SearchParams;
 }) {
   const selectedReportingVersionId = searchParams.version ?? '';
-  const activeDashboardTab: 'market' | 'private' | 'public' =
+  const activeDashboardTab: 'market' | 'private' | 'public' | 'fieldforce' =
     searchParams.dashboardTab === 'market' ||
     searchParams.dashboardTab === 'private' ||
-    searchParams.dashboardTab === 'public'
+    searchParams.dashboardTab === 'public' ||
+    searchParams.dashboardTab === 'fieldforce'
       ? searchParams.dashboardTab
       : 'market';
   const latestPeriod = await getCachedLatestPeriod(selectedReportingVersionId);
@@ -2332,6 +3080,16 @@ export async function BusinessExcellenceView({
     searchParams.marketChannel === 'private' || searchParams.marketChannel === 'public'
       ? searchParams.marketChannel
       : 'total';
+  const activeFieldForceView: 'ytd' | 'mth' = searchParams.fieldForceView === 'mth' ? 'mth' : 'ytd';
+  const activeFieldForceCoverage: 'base' | 'adjusted' =
+    searchParams.fieldForceCoverage === 'base' ? 'base' : 'adjusted';
+  const activeFieldForceDetailMode: 'territory' | 'district' =
+    searchParams.fieldForceDetailMode === 'district' ? 'district' : 'territory';
+  const activeFieldForcePotential = (searchParams.fieldForcePotential ?? 'all').trim() || 'all';
+  const activeFieldForceBu: 'total' | 'air' | 'care' =
+    searchParams.fieldForceBu === 'air' || searchParams.fieldForceBu === 'care'
+      ? searchParams.fieldForceBu
+      : 'total';
   const [privatePrescriptionsOverview, privateSellOutData, auditSources] = await Promise.all([
     getCachedPrivatePrescriptionsOverview(selectedReportingVersionId),
     getCachedPrivateSellOutData(
@@ -2356,6 +3114,17 @@ export async function BusinessExcellenceView({
     privateSellOutData.overview?.sourceAsOfMonth ??
     auditHeader.sourceAsOfMonth ??
     latestPeriod;
+  const fieldForceTopCardKpis = await getCachedFieldForceTopCardKpis(
+    selectedReportingVersionId,
+    headerReportPeriod,
+  );
+  const fieldForceData =
+    viewMode === 'insights' || viewMode === 'scorecard' || (viewMode === 'dashboard' && activeDashboardTab === 'fieldforce')
+      ? await getBusinessExcellenceFieldForceExcellenceData(
+        selectedReportingVersionId,
+        headerReportPeriod,
+      )
+      : null;
 
   return (
     <section className="space-y-4 pb-8">
@@ -2382,6 +3151,7 @@ export async function BusinessExcellenceView({
           overview={privateSellOutData.overview}
           prescriptionsOverview={privatePrescriptionsOverview}
           publicOverview={publicMarketData?.overview ?? null}
+          fieldForceTopCardKpis={fieldForceTopCardKpis}
         />
       ) : null}
 
@@ -2427,6 +3197,16 @@ export async function BusinessExcellenceView({
               params={searchParams}
             />
           ) : null}
+          {activeDashboardTab === 'fieldforce' ? (
+            <FieldForceExcellencePanelClient
+              data={fieldForceData}
+              initialView={activeFieldForceView}
+              initialBu={activeFieldForceBu}
+              initialCoverage={activeFieldForceCoverage}
+              initialDetailMode={activeFieldForceDetailMode}
+              initialPotential={activeFieldForcePotential}
+            />
+          ) : null}
         </>
       ) : null}
 
@@ -2438,6 +3218,7 @@ export async function BusinessExcellenceView({
           publicRows={publicMarketData?.topProducts ?? []}
           businessUnitRows={businessUnitChannelRows}
           publicError={publicMarketData?.error ?? null}
+          fieldForceData={fieldForceData}
         />
       ) : null}
 
@@ -2449,6 +3230,7 @@ export async function BusinessExcellenceView({
           channelPerformance={privateSellOutData.channelPerformance}
           publicOverview={publicMarketData?.overview ?? null}
           publicRows={publicMarketData?.topProducts ?? []}
+          fieldForceData={fieldForceData}
         />
       ) : null}
 
@@ -2456,3 +3238,4 @@ export async function BusinessExcellenceView({
     </section>
   );
 }
+

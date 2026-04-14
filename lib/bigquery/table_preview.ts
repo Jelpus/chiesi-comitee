@@ -6,6 +6,7 @@ export const previewTables = {
     ddd: 'chiesi-committee.chiesi_committee_stg.vw_business_excellence_pmm_enriched',
     budget_sell_out: 'chiesi-committee.chiesi_committee_stg.vw_business_excellence_budget_sell_out_enriched',
     weekly: 'chiesi-committee.chiesi_committee_stg.vw_business_excellence_weekly_enriched',
+    field_force: 'chiesi-committee.chiesi_committee_stg.vw_business_excellence_field_force_enriched',
     private_sellout: 'chiesi-committee.chiesi_committee_mart.vw_private_sellout',
   },
   human_resources: {

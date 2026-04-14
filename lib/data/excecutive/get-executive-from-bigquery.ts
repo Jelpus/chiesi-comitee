@@ -161,8 +161,16 @@ async function getBusinessExcellenceExecutiveSnapshot(
     getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId),
     getBusinessExcellenceAuditSources(reportingVersionId),
   ]);
-  const targetUnits = new Set(['air', 'care']);
-  const scopedRows = rows.filter((row) => targetUnits.has(row.businessUnitName.trim().toLowerCase()));
+  const normalizeBu = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+  const isTargetBu = (value: string) => {
+    const normalized = normalizeBu(value);
+    return normalized.includes('air') || normalized.includes('care');
+  };
+  const scopedRowsInitial = rows.filter((row) => isTargetBu(row.businessUnitName));
+  const scopedRows =
+    scopedRowsInitial.length > 0
+      ? scopedRowsInitial
+      : rows.filter((row) => normalizeBu(row.businessUnitName) !== 'unclassified bu');
   const actual = scopedRows.reduce((sum, row) => sum + row.totalYtdUnits, 0);
   const target = scopedRows.reduce((sum, row) => sum + row.totalYtdBudgetUnits, 0);
   const variance = actual - target;

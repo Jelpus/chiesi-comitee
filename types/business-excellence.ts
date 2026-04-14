@@ -449,3 +449,103 @@ export type BusinessExcellenceBusinessUnitChannelRow = {
   totalMthBudgetUnits: number;
   totalMthCoveragePct: number | null;
 };
+
+export type BusinessExcellenceFieldForceExcellenceRow = {
+  bu: 'total' | 'air' | 'care';
+  totalTerritories: number;
+  portfolioAccounts: number;
+  targetVisitsYtd: number;
+  targetVisitsMth: number;
+  targetVisitsAdjustedYtd: number;
+  targetVisitsAdjustedMth: number;
+  sentInteractionsYtd: number;
+  sentInteractionsMth: number;
+  coverageYtdPct: number | null;
+  coverageMthPct: number | null;
+  coverageAdjustedYtdPct: number | null;
+  coverageAdjustedMthPct: number | null;
+  tftDaysYtd: number;
+  tftDaysMth: number;
+  workingDaysYtd: number;
+  workingDaysMth: number;
+  effectiveDaysYtd: number;
+  effectiveDaysMth: number;
+  avgDailyVisitsYtd: number | null;
+  avgDailyVisitsMth: number | null;
+  noVisitadosYtd: number;
+  noVisitadosMth: number;
+  subvisitadosYtd: number;
+  subvisitadosMth: number;
+  enObjetivoYtd: number;
+  enObjetivoMth: number;
+  sobrevisitadosYtd: number;
+  sobrevisitadosMth: number;
+  indiceEvolucionBuYtd: number | null;
+  indiceEvolucionBuMth: number | null;
+};
+
+export type BusinessExcellenceFieldForceSummaryRow = {
+  periodScope: 'YTD' | 'MTH';
+  aggregationLevel: 'territory' | 'district' | 'bu' | 'total';
+  bu: 'total' | 'air' | 'care';
+  district: string | null;
+  territoryName: string | null;
+  territoryNormalized: string | null;
+  clients: number;
+  objetivoBase: number;
+  objetivoAdjusted: number;
+  interacciones: number;
+  coberturaBasePct: number | null;
+  coberturaAdjustedPct: number | null;
+  diasFuera: number;
+  indiceEvolucionBuPct: number | null;
+};
+
+export type BusinessExcellenceFieldForceDoctorDetailRow = {
+  periodScope: 'YTD' | 'MTH';
+  bu: 'air' | 'care';
+  district: string | null;
+  territoryName: string | null;
+  territoryNormalized: string | null;
+  potencial: string | null;
+  clientName: string | null;
+  doctorId: string;
+  objetivoBase: number;
+  objetivoAdjusted: number;
+  interacciones: number;
+  coberturaBasePct: number | null;
+  coberturaAdjustedPct: number | null;
+  statusVisita: 'no_visitado' | 'subvisitado' | 'en_objetivo' | 'sobrevisitado' | 'sin_clasificacion';
+};
+
+export type BusinessExcellenceFieldForceInteractionMixRow = {
+  periodScope: 'YTD' | 'MTH';
+  bu: 'total' | 'air' | 'care';
+  channel: string;
+  visitType: string;
+  interactions: number;
+};
+
+export type BusinessExcellenceFieldForceExcellenceData = {
+  reportingVersionId: string;
+  reportPeriodMonth: string;
+  ficheroAsOfMonth: string | null;
+  interactionsAsOfMonth: string | null;
+  tftAsOfMonth: string | null;
+  effectiveAsOfMonth: string | null;
+  ytdStartMonth: string | null;
+  territoriesSnapshotMonth: string | null;
+  rawSentInteractionsYtdAllBu: number;
+  rawSentInteractionsMthAllBu: number;
+  usedSentInteractionsYtdAirCare: number;
+  usedSentInteractionsMthAirCare: number;
+  rows: BusinessExcellenceFieldForceExcellenceRow[];
+  summaryRows: BusinessExcellenceFieldForceSummaryRow[];
+  doctorDetailRows: BusinessExcellenceFieldForceDoctorDetailRow[];
+  interactionMixRows: BusinessExcellenceFieldForceInteractionMixRow[];
+};
+
+export type BusinessExcellenceFieldForceTopCardKpis = {
+  coverageYtdTftPct: number | null;
+  activeTimeYtdPct: number | null;
+};

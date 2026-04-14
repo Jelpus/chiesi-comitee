@@ -42,6 +42,22 @@ const EXPECTED_MODULES: Array<{ moduleCode: string; moduleLabel: string; area: s
   { moduleCode: 'business_excellence_brick_assignment', moduleLabel: 'Business Excellence - Brick Assignment', area: 'business_excellence' },
   { moduleCode: 'business_excellence_iqvia_weekly', moduleLabel: 'Business Excellence - Weekly Tracking', area: 'business_excellence' },
   { moduleCode: 'business_excellence_closeup', moduleLabel: 'Business Excellence - Closeup', area: 'business_excellence' },
+  { moduleCode: 'business_excellence_cuotas', moduleLabel: 'Business Excellence - Cuotas', area: 'business_excellence' },
+  {
+    moduleCode: 'business_excellence_salesforce_fichero_medico',
+    moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - Fichero Medico',
+    area: 'business_excellence',
+  },
+  {
+    moduleCode: 'business_excellence_salesforce_tft',
+    moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - TFT',
+    area: 'business_excellence',
+  },
+  {
+    moduleCode: 'business_excellence_salesforce_interacciones',
+    moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - Interacciones',
+    area: 'business_excellence',
+  },
   { moduleCode: 'human_resources_turnover', moduleLabel: 'Human Resources - Turnover', area: 'human_resources' },
   { moduleCode: 'human_resources_training', moduleLabel: 'Human Resources - Training', area: 'human_resources' },
   { moduleCode: 'commercial_operations_dso', moduleLabel: 'Commercial Operations - DSO', area: 'commercial_operations' },

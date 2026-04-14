@@ -118,6 +118,10 @@ type BusinessExcellenceSalesforceMedicalFileNormalizedRow = {
   rowNumber: number;
   onekeyId: string;
   territory: string;
+  territoryNormalized: string;
+  bu: string | null;
+  district: string | null;
+  imsId: string | null;
   fullName: string | null;
   specialtyConsolidated: string | null;
   periodMonth: string;
@@ -129,6 +133,7 @@ type BusinessExcellenceSalesforceMedicalFileNormalizedRow = {
 type BusinessExcellenceSalesforceTftNormalizedRow = {
   rowNumber: number;
   territorio: string;
+  territoryNormalized: string;
   territoryOwnerName: string | null;
   absenceType: string | null;
   absenceName: string | null;
@@ -144,6 +149,7 @@ type BusinessExcellenceSalesforceInteractionNormalizedRow = {
   interactionId: string;
   onekeyId: string;
   territory: string;
+  territoryNormalized: string;
   accountName: string | null;
   ownerName: string | null;
   channel: string | null;
@@ -722,6 +728,16 @@ function normalizeText(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+function normalizeTerritoryForKey(value: string | null) {
+  if (!value) return null;
+  const normalized = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+  return normalized.length > 0 ? normalized : null;
 }
 
 function deriveVisitedFromTerritory(value: string | null) {
@@ -3041,6 +3057,14 @@ function normalizeBusinessExcellenceSalesforceMedicalFile(rows: RawUploadRow[]) 
       pickValue(index, ['Onekey ID', 'OneKey ID', 'ONEKEY ID', 'OnEkey ID']),
     );
     const territory = asNullableString(pickValue(index, ['Territory', 'Territorio']));
+    const territoryNormalized = normalizeTerritoryForKey(territory);
+    const bu = asNullableString(
+      pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio', 'Unidad Negocio']),
+    );
+    const district = asNullableString(pickValue(index, ['District', 'Distrito']));
+    const imsId = asNullableString(
+      pickValue(index, ['IMS ID', 'IMS Id', 'IMD ID', 'IMD Id', 'IMDID', 'IMSID']),
+    );
     const fullName = asNullableString(pickValue(index, ['Full Name', 'Nombre completo']));
     const specialtyConsolidated = asNullableString(
       pickValue(index, ['Especialidad Consolidada', 'Specialty Consolidated']),
@@ -3052,6 +3076,7 @@ function normalizeBusinessExcellenceSalesforceMedicalFile(rows: RawUploadRow[]) 
 
     if (!onekeyId) errors.push('Missing required Onekey ID column.');
     if (!territory) errors.push('Missing required Territory column.');
+    if (!territoryNormalized) errors.push('Could not derive territorio_normalizado from Territory.');
     if (!periodMonth) errors.push('Missing or invalid Mes period value (expected mm/dd/yyyy).');
 
     const validationStatus: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
@@ -3067,6 +3092,10 @@ function normalizeBusinessExcellenceSalesforceMedicalFile(rows: RawUploadRow[]) 
       rowNumber: row.row_number,
       onekeyId: onekeyId!,
       territory: territory!,
+      territoryNormalized: territoryNormalized!,
+      bu,
+      district,
+      imsId,
       fullName,
       specialtyConsolidated,
       periodMonth: periodMonth!,
@@ -3092,6 +3121,10 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
         row_number INT64,
         onekey_id STRING,
         territory STRING,
+        territory_normalized STRING,
+        bu STRING,
+        district STRING,
+        ims_id STRING,
         full_name STRING,
         specialty_consolidated STRING,
         period_month DATE,
@@ -3100,6 +3133,34 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
         source_payload_json JSON,
         normalized_at TIMESTAMP
       )
+    `,
+  });
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
+      ADD COLUMN IF NOT EXISTS territory_normalized STRING
+    `,
+  });
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
+      ADD COLUMN IF NOT EXISTS bu STRING
+    `,
+  });
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
+      ADD COLUMN IF NOT EXISTS district STRING
+    `,
+  });
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
+      ADD COLUMN IF NOT EXISTS ims_id STRING
     `,
   });
 
@@ -3146,6 +3207,10 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
       row_number,
       onekey_id,
       territory,
+      territory_normalized,
+      bu,
+      district,
+      ims_id,
       full_name,
       specialty_consolidated,
       period_month,
@@ -3159,6 +3224,10 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
       row.row_number,
       row.onekey_id,
       row.territory,
+      NULLIF(row.territory_normalized, ''),
+      NULLIF(row.bu, ''),
+      NULLIF(row.district, ''),
+      NULLIF(row.ims_id, ''),
       NULLIF(row.full_name, ''),
       NULLIF(row.specialty_consolidated, ''),
       DATE(row.period_month),
@@ -3181,6 +3250,10 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
             row_number: row.rowNumber,
             onekey_id: row.onekeyId,
             territory: row.territory,
+            territory_normalized: row.territoryNormalized,
+            bu: row.bu ?? '',
+            district: row.district ?? '',
+            ims_id: row.imsId ?? '',
             full_name: row.fullName ?? '',
             specialty_consolidated: row.specialtyConsolidated ?? '',
             period_month: row.periodMonth,
@@ -3205,6 +3278,7 @@ function normalizeBusinessExcellenceSalesforceTft(rows: RawUploadRow[]) {
     const errors: string[] = [];
 
     const territorio = asNullableString(pickValue(index, ['Territorio', 'Territory', 'Territorio ']));
+    const territoryNormalized = normalizeTerritoryForKey(territorio);
     const territoryOwnerName = asNullableString(
       pickValue(index, ['Tiempo fuera de Territorio: Creado por', 'Creado por', 'Created By']),
     );
@@ -3220,6 +3294,7 @@ function normalizeBusinessExcellenceSalesforceTft(rows: RawUploadRow[]) {
     const periodMonth = parseDateFieldDayFirstNoTimezone(startDateRawValue);
 
     if (!territorio) errors.push('Missing required Territorio column.');
+    if (!territoryNormalized) errors.push('Could not derive territorio_normalizado from Territorio.');
     if (!periodMonth) errors.push('Missing or invalid Fecha de inicio (expected dd/mm/yyyy, hh:mm).');
 
     const validationStatus: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
@@ -3234,6 +3309,7 @@ function normalizeBusinessExcellenceSalesforceTft(rows: RawUploadRow[]) {
     normalizedRows.push({
       rowNumber: row.row_number,
       territorio: territorio!,
+      territoryNormalized: territoryNormalized!,
       territoryOwnerName,
       absenceType,
       absenceName,
@@ -3260,6 +3336,7 @@ async function loadBusinessExcellenceSalesforceTftStaging(
         upload_id STRING,
         row_number INT64,
         territorio STRING,
+        territory_normalized STRING,
         territory_owner_name STRING,
         absence_type STRING,
         absence_name STRING,
@@ -3270,6 +3347,13 @@ async function loadBusinessExcellenceSalesforceTftStaging(
         source_payload_json JSON,
         normalized_at TIMESTAMP
       )
+    `,
+  });
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft\`
+      ADD COLUMN IF NOT EXISTS territory_normalized STRING
     `,
   });
 
@@ -3315,6 +3399,7 @@ async function loadBusinessExcellenceSalesforceTftStaging(
       upload_id,
       row_number,
       territorio,
+      territory_normalized,
       territory_owner_name,
       absence_type,
       absence_name,
@@ -3329,6 +3414,7 @@ async function loadBusinessExcellenceSalesforceTftStaging(
       @uploadId,
       row.row_number,
       row.territorio,
+      NULLIF(row.territory_normalized, ''),
       NULLIF(row.territory_owner_name, ''),
       NULLIF(row.absence_type, ''),
       NULLIF(row.absence_name, ''),
@@ -3352,6 +3438,7 @@ async function loadBusinessExcellenceSalesforceTftStaging(
           rows: chunk.map((row) => ({
             row_number: row.rowNumber,
             territorio: row.territorio,
+            territory_normalized: row.territoryNormalized,
             territory_owner_name: row.territoryOwnerName ?? '',
             absence_type: row.absenceType ?? '',
             absence_name: row.absenceName ?? '',
@@ -3384,6 +3471,7 @@ function normalizeBusinessExcellenceSalesforceInteractions(rows: RawUploadRow[])
       pickValue(index, ['Cuenta: Código OneKey', 'Cuenta: Codigo OneKey', 'Codigo OneKey', 'Onekey ID']),
     );
     const territory = asNullableString(pickValue(index, ['Territorio', 'Territory']));
+    const territoryNormalized = normalizeTerritoryForKey(territory);
     const accountName = asNullableString(
       pickValue(index, ['Cuenta: Nombre de la cuenta', 'Cuenta: Nombre de la Cuenta', 'Account Name']),
     );
@@ -3402,6 +3490,7 @@ function normalizeBusinessExcellenceSalesforceInteractions(rows: RawUploadRow[])
     if (!interactionId) errors.push('Missing required Interaction: Id. / Call Name.');
     if (!onekeyId) errors.push('Missing required Cuenta: Codigo OneKey column.');
     if (!territory) errors.push('Missing required Territorio column.');
+    if (!territoryNormalized) errors.push('Could not derive territorio_normalizado from Territorio.');
     if (!interactionPeriodMonth) errors.push('Missing or invalid Fecha y Hora (expected dd/mm/yyyy, hh:mm).');
 
     const validationStatus: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
@@ -3418,6 +3507,7 @@ function normalizeBusinessExcellenceSalesforceInteractions(rows: RawUploadRow[])
       interactionId: interactionId!,
       onekeyId: onekeyId!,
       territory: territory!,
+      territoryNormalized: territoryNormalized!,
       accountName,
       ownerName,
       channel,
@@ -3447,6 +3537,7 @@ async function loadBusinessExcellenceSalesforceInteractionsStaging(
         interaction_id STRING,
         onekey_id STRING,
         territory STRING,
+        territory_normalized STRING,
         account_name STRING,
         owner_name STRING,
         channel STRING,
@@ -3458,6 +3549,13 @@ async function loadBusinessExcellenceSalesforceInteractionsStaging(
         source_payload_json JSON,
         normalized_at TIMESTAMP
       )
+    `,
+  });
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions\`
+      ADD COLUMN IF NOT EXISTS territory_normalized STRING
     `,
   });
 
@@ -3505,6 +3603,7 @@ async function loadBusinessExcellenceSalesforceInteractionsStaging(
       interaction_id,
       onekey_id,
       territory,
+      territory_normalized,
       account_name,
       owner_name,
       channel,
@@ -3522,6 +3621,7 @@ async function loadBusinessExcellenceSalesforceInteractionsStaging(
       row.interaction_id,
       row.onekey_id,
       row.territory,
+      NULLIF(row.territory_normalized, ''),
       NULLIF(row.account_name, ''),
       NULLIF(row.owner_name, ''),
       NULLIF(row.channel, ''),
@@ -3548,6 +3648,7 @@ async function loadBusinessExcellenceSalesforceInteractionsStaging(
             interaction_id: row.interactionId,
             onekey_id: row.onekeyId,
             territory: row.territory,
+            territory_normalized: row.territoryNormalized,
             account_name: row.accountName ?? '',
             owner_name: row.ownerName ?? '',
             channel: row.channel ?? '',

@@ -41,6 +41,12 @@ import type {
   BusinessExcellenceMarketRow,
   BusinessExcellenceProductRow,
   BusinessExcellenceResolvedFilters,
+  BusinessExcellenceFieldForceExcellenceData,
+  BusinessExcellenceFieldForceExcellenceRow,
+  BusinessExcellenceFieldForceTopCardKpis,
+  BusinessExcellenceFieldForceSummaryRow,
+  BusinessExcellenceFieldForceDoctorDetailRow,
+  BusinessExcellenceFieldForceInteractionMixRow,
   BusinessExcellenceSourceOverview,
   BusinessExcellenceSpecialtyRow,
 } from '@/types/business-excellence';
@@ -58,6 +64,14 @@ const SELL_OUT_ENRICHED_VIEW =
   'chiesi-committee.chiesi_committee_stg.vw_business_excellence_budget_sell_out_enriched';
 const BRICK_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_brick_assignment';
+const FIELD_FORCE_MEDICAL_SUMMARY_VIEW =
+  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_summary';
+const FIELD_FORCE_MEDICAL_DETAIL_VIEW =
+  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_doctor_detail';
+const FIELD_FORCE_MEDICAL_DETAIL_BY_BU_VIEW =
+  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_detail_by_bu';
+const FIELD_FORCE_MEDICAL_DOCTOR_ANALYSIS_VIEW =
+  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_doctor_analysis';
 const PRIVATE_SELLOUT_MART_VIEW =
   'chiesi-committee.chiesi_committee_mart.vw_private_sellout';
 const GOB360_PRODUCT_MAPPING_TABLE =
@@ -223,7 +237,19 @@ function buildSellOutConditions(
   alias: string,
   params: Record<string, string>,
 ) {
-  const conditions = [`${alias}.period_month = DATE(@periodMonth)`];
+  const effectivePeriodExpr = `
+    COALESCE(
+      (
+        SELECT MAX(src.period_month)
+        FROM \`${SELL_OUT_TABLE}\` src
+        JOIN latest_sell_out_uploads src_lu
+          ON src_lu.upload_id = src.upload_id
+        WHERE src.period_month <= DATE(@periodMonth)
+      ),
+      DATE(@periodMonth)
+    )
+  `;
+  const conditions = [`${alias}.period_month = ${effectivePeriodExpr}`];
   params.periodMonth = filters.periodMonth;
 
   if (filters.marketGroup) {
@@ -248,7 +274,16 @@ function buildBrickConditions(
   params: Record<string, string>,
 ) {
   params.periodMonth = filters.periodMonth;
-  return `${alias}.period_month = DATE(@periodMonth)`;
+  return `${alias}.period_month = COALESCE(
+    (
+      SELECT MAX(src.period_month)
+      FROM \`${BRICK_TABLE}\` src
+      JOIN latest_brick_uploads src_lu
+        ON src_lu.upload_id = src.upload_id
+      WHERE src.period_month <= DATE(@periodMonth)
+    ),
+    DATE(@periodMonth)
+  )`;
 }
 
 async function resolveReportingVersionId(reportingVersionId?: string) {
@@ -1189,6 +1224,53 @@ type GovernmentBudgetAggRow = {
   mthBudgetUnitsPy: number;
 };
 
+async function getGob360ClueDescriptionCatalog() {
+  const gobClient = getGob360BigQueryClient(true);
+  const { pcStructureTableId, scStructureTableId } = getGob360TableRefs();
+  const query = `
+    WITH clue_catalog AS (
+      SELECT
+        LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key,
+        NULLIF(TRIM(CAST(UNIDAD_O_ALMACEN AS STRING)), '') AS clue_description
+      FROM \`${pcStructureTableId}\`
+      WHERE CLUE IS NOT NULL
+        AND TRIM(CAST(CLUE AS STRING)) != ''
+      UNION ALL
+      SELECT
+        LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key,
+        NULLIF(TRIM(CAST(UNIDAD_O_ALMACEN AS STRING)), '') AS clue_description
+      FROM \`${scStructureTableId}\`
+      WHERE CLUE IS NOT NULL
+        AND TRIM(CAST(CLUE AS STRING)) != ''
+    ),
+    ranked AS (
+      SELECT
+        clue_key,
+        clue_description,
+        ROW_NUMBER() OVER (
+          PARTITION BY clue_key
+          ORDER BY
+            IF(clue_description IS NULL, 1, 0),
+            LENGTH(COALESCE(clue_description, '')) DESC,
+            clue_description
+        ) AS rn
+      FROM clue_catalog
+      WHERE clue_key IS NOT NULL
+        AND clue_key != ''
+    )
+    SELECT clue_key, clue_description
+    FROM ranked
+    WHERE rn = 1
+  `;
+  const [rows] = await gobClient.query({ query, location: 'US' });
+  return new Map(
+    (rows as Array<Record<string, unknown>>).map((row) => [
+      String(row.clue_key ?? ''),
+      row.clue_description ? String(row.clue_description) : '',
+    ]),
+  );
+}
+
 function parseYearMonthFromDateText(value: string | null | undefined) {
   if (!value) return { year: null as number | null, month: null as number | null };
   const [yearText, monthText] = String(value).split('-');
@@ -1925,7 +2007,10 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
   reportingVersionId?: string,
 ): Promise<BusinessExcellencePublicDimensionRankingRow[]> {
   const context = await getPublicMarketContext(reportingVersionId);
-  const mappingRows = await getGob360MappedClaves();
+  const [mappingRows, clueDescriptionCatalog] = await Promise.all([
+    getGob360MappedClaves(),
+    getGob360ClueDescriptionCatalog().catch(() => new Map<string, string>()),
+  ]);
   if (mappingRows.length === 0) return [];
 
   const mappingByClave = new Map(
@@ -1957,8 +2042,15 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
     const month = eventRef.month;
     const pieces = Number(row.pieces ?? 0);
 
+    const clueCode = row.clue || 'NO CLUE';
+    const clueKey = clueCode
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+    const clueDescription = clueDescriptionCatalog.get(clueKey);
+
     const labels: Array<{ dimension: 'clue' | 'clave' | 'ruta'; label: string }> = [
-      { dimension: 'clue', label: row.clue || 'NO CLUE' },
+      { dimension: 'clue', label: clueDescription && clueDescription.trim() ? clueDescription : clueCode },
       { dimension: 'clave', label: row.source_clave_raw || 'NO CLAVE' },
       { dimension: 'ruta', label: row.ruta || 'NO RUTA' },
     ];
@@ -2379,6 +2471,650 @@ export async function getBusinessExcellenceBusinessUnitChannelRows(
     }))
     .filter((row) => row.businessUnitName.trim().toLowerCase() !== 'unclassified bu')
     .sort((a, b) => b.totalYtdUnits - a.totalYtdUnits);
+}
+
+export async function getBusinessExcellenceFieldForceExcellenceData(
+  reportingVersionId?: string,
+  reportPeriodMonth?: string,
+): Promise<BusinessExcellenceFieldForceExcellenceData | null> {
+  const resolvedReportingVersionId = await resolveReportingVersionId(reportingVersionId);
+  if (!resolvedReportingVersionId) return null;
+  const client = getBigQueryClient();
+
+  const resolvedReportPeriodMonth = reportPeriodMonth
+    ?? (await getLatestPeriodDirect(REPORTING_VERSIONS_TABLE, resolvedReportingVersionId));
+  if (!resolvedReportPeriodMonth) return null;
+
+  const query = `
+    WITH source_meta AS (
+      SELECT
+        LOWER(TRIM(module_code)) AS module_code,
+        MAX(source_as_of_month) AS source_as_of_month
+      FROM \`${RAW_UPLOADS}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND status IN ('normalized', 'published')
+        AND LOWER(TRIM(module_code)) IN (
+          'business_excellence_salesforce_fichero_medico',
+          'business_excellence_fichero_medico',
+          'fichero_medico',
+          'business_excellence_salesforce_interacciones',
+          'business_excellence_interacciones',
+          'interacciones',
+          'business_excellence_salesforce_tft',
+          'business_excellence_tft',
+          'tft'
+        )
+      GROUP BY 1
+    ),
+    summary AS (
+      SELECT *
+      FROM \`${FIELD_FORCE_MEDICAL_SUMMARY_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND report_period_month = DATE(@reportPeriodMonth)
+        AND aggregation_level IN ('bu', 'total')
+    ),
+    pivoted AS (
+      SELECT
+        LOWER(bu) AS bu,
+        MAX(IF(period_scope = 'YTD', total_territorios, NULL)) AS total_territories_ytd,
+        MAX(IF(period_scope = 'MTH', total_territorios, NULL)) AS total_territories_mth,
+        MAX(IF(period_scope = 'YTD', clientes, NULL)) AS portfolio_accounts_ytd,
+        MAX(IF(period_scope = 'MTH', clientes, NULL)) AS portfolio_accounts_mth,
+        MAX(IF(period_scope = 'YTD', objetivo, NULL)) AS target_visits_ytd,
+        MAX(IF(period_scope = 'MTH', objetivo, NULL)) AS target_visits_mth,
+        MAX(IF(period_scope = 'YTD', objetivo_ajustado, NULL)) AS target_visits_adjusted_ytd,
+        MAX(IF(period_scope = 'MTH', objetivo_ajustado, NULL)) AS target_visits_adjusted_mth,
+        MAX(IF(period_scope = 'YTD', interacciones, NULL)) AS sent_interactions_ytd,
+        MAX(IF(period_scope = 'MTH', interacciones, NULL)) AS sent_interactions_mth,
+        MAX(IF(period_scope = 'YTD', cobertura, NULL)) AS coverage_ytd_ratio,
+        MAX(IF(period_scope = 'MTH', cobertura, NULL)) AS coverage_mth_ratio,
+        MAX(IF(period_scope = 'YTD', cobertura_ajustada, NULL)) AS coverage_adjusted_ytd_ratio,
+        MAX(IF(period_scope = 'MTH', cobertura_ajustada, NULL)) AS coverage_adjusted_mth_ratio,
+        MAX(IF(period_scope = 'YTD', dias_fuera, NULL)) AS tft_days_ytd,
+        MAX(IF(period_scope = 'MTH', dias_fuera, NULL)) AS tft_days_mth,
+        MAX(IF(period_scope = 'YTD', no_visitados, NULL)) AS no_visitados_ytd,
+        MAX(IF(period_scope = 'MTH', no_visitados, NULL)) AS no_visitados_mth,
+        MAX(IF(period_scope = 'YTD', subvisitados, NULL)) AS subvisitados_ytd,
+        MAX(IF(period_scope = 'MTH', subvisitados, NULL)) AS subvisitados_mth,
+        MAX(IF(period_scope = 'YTD', en_objetivo, NULL)) AS en_objetivo_ytd,
+        MAX(IF(period_scope = 'MTH', en_objetivo, NULL)) AS en_objetivo_mth,
+        MAX(IF(period_scope = 'YTD', sobrevisitados, NULL)) AS sobrevisitados_ytd,
+        MAX(IF(period_scope = 'MTH', sobrevisitados, NULL)) AS sobrevisitados_mth,
+        MAX(IF(period_scope = 'YTD', indice_evolucion_bu, NULL)) AS indice_evolucion_bu_ytd,
+        MAX(IF(period_scope = 'MTH', indice_evolucion_bu, NULL)) AS indice_evolucion_bu_mth
+      FROM summary
+      GROUP BY 1
+    )
+    SELECT
+      @reportPeriodMonth AS report_period_month,
+      CAST((SELECT DATE(EXTRACT(YEAR FROM DATE(@reportPeriodMonth)), 1, 1)) AS STRING) AS ytd_start_month,
+      CAST((
+        SELECT MAX(source_as_of_month)
+        FROM source_meta
+        WHERE module_code IN (
+          'business_excellence_salesforce_fichero_medico',
+          'business_excellence_fichero_medico',
+          'fichero_medico'
+        )
+      ) AS STRING) AS fichero_as_of_month,
+      CAST((
+        SELECT MAX(source_as_of_month)
+        FROM source_meta
+        WHERE module_code IN (
+          'business_excellence_salesforce_interacciones',
+          'business_excellence_interacciones',
+          'interacciones'
+        )
+      ) AS STRING) AS interactions_as_of_month,
+      CAST((
+        SELECT MAX(source_as_of_month)
+        FROM source_meta
+        WHERE module_code IN (
+          'business_excellence_salesforce_tft',
+          'business_excellence_tft',
+          'tft'
+        )
+      ) AS STRING) AS tft_as_of_month,
+      CAST(@reportPeriodMonth AS STRING) AS effective_as_of_month,
+      CAST((
+        SELECT MAX(source_as_of_month)
+        FROM source_meta
+        WHERE module_code IN (
+          'business_excellence_salesforce_fichero_medico',
+          'business_excellence_fichero_medico',
+          'fichero_medico'
+        )
+      ) AS STRING) AS territories_snapshot_month,
+      MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_ytd, 0) ELSE 0 END) AS raw_sent_interactions_ytd_all_bu,
+      MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_mth, 0) ELSE 0 END) AS raw_sent_interactions_mth_all_bu,
+      MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_ytd, 0) ELSE 0 END) AS used_sent_interactions_ytd_air_care,
+      MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_mth, 0) ELSE 0 END) AS used_sent_interactions_mth_air_care,
+      r.*
+    FROM pivoted r
+    WHERE r.bu IN ('air', 'care', 'total')
+    GROUP BY
+      report_period_month,
+      ytd_start_month,
+      fichero_as_of_month,
+      interactions_as_of_month,
+      tft_as_of_month,
+      effective_as_of_month,
+      territories_snapshot_month,
+      r.bu,
+      r.total_territories_ytd,
+      r.total_territories_mth,
+      r.portfolio_accounts_ytd,
+      r.portfolio_accounts_mth,
+      r.target_visits_ytd,
+      r.target_visits_mth,
+      r.target_visits_adjusted_ytd,
+      r.target_visits_adjusted_mth,
+      r.sent_interactions_ytd,
+      r.sent_interactions_mth,
+      r.coverage_ytd_ratio,
+      r.coverage_mth_ratio,
+      r.coverage_adjusted_ytd_ratio,
+      r.coverage_adjusted_mth_ratio,
+      r.tft_days_ytd,
+      r.tft_days_mth,
+      r.no_visitados_ytd,
+      r.no_visitados_mth,
+      r.subvisitados_ytd,
+      r.subvisitados_mth,
+      r.en_objetivo_ytd,
+      r.en_objetivo_mth,
+      r.sobrevisitados_ytd,
+      r.sobrevisitados_mth,
+      r.indice_evolucion_bu_ytd,
+      r.indice_evolucion_bu_mth
+    ORDER BY CASE r.bu WHEN 'total' THEN 0 WHEN 'air' THEN 1 WHEN 'care' THEN 2 ELSE 9 END
+  `;
+
+  const summaryRowsQuery = `
+    SELECT
+      period_scope,
+      CASE
+        WHEN LOWER(view_mode) = 'territory' THEN 'territory'
+        WHEN LOWER(view_mode) = 'district' THEN 'district'
+        ELSE 'total'
+      END AS aggregation_level,
+      LOWER(bu) AS bu,
+      CASE WHEN LOWER(view_mode) = 'district' THEN dimension_label ELSE NULL END AS district,
+      CASE WHEN LOWER(view_mode) = 'territory' THEN dimension_label ELSE NULL END AS territory_name,
+      NULL AS territory_normalized,
+      clients AS clientes,
+      objetivo_base AS objetivo,
+      objetivo_ajustado,
+      interacciones,
+      cobertura_base AS cobertura,
+      cobertura_ajustada,
+      0 AS dias_fuera,
+      NULL AS indice_evolucion_bu
+    FROM \`${FIELD_FORCE_MEDICAL_DETAIL_BY_BU_VIEW}\`
+    WHERE reporting_version_id = @reportingVersionId
+      AND report_period_month = DATE(@reportPeriodMonth)
+      AND LOWER(view_mode) IN ('territory', 'district')
+  `;
+
+  const doctorDetailRowsQuery = `
+    WITH ranked AS (
+      SELECT
+        period_scope,
+        LOWER(bu) AS bu,
+        district,
+        territory_name,
+        territory_normalized,
+        COALESCE(NULLIF(TRIM(potencial), ''), 'N/A') AS potencial,
+        client_name,
+        doctor_id,
+        objetivo_base AS objetivo,
+        objetivo_ajustado,
+        interacciones,
+        cobertura_base AS cobertura,
+        cobertura_ajustada,
+        status_visita,
+        ROW_NUMBER() OVER (
+          PARTITION BY period_scope, LOWER(bu), COALESCE(NULLIF(TRIM(potencial), ''), 'N/A'), status_visita
+          ORDER BY
+            CASE
+              WHEN status_visita = 'sobrevisitado' THEN interacciones - objetivo_base
+              WHEN status_visita = 'subvisitado' THEN objetivo_base - interacciones
+              ELSE interacciones
+            END DESC,
+            doctor_id
+        ) AS rn
+      FROM \`${FIELD_FORCE_MEDICAL_DOCTOR_ANALYSIS_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND report_period_month = DATE(@reportPeriodMonth)
+        AND LOWER(bu) IN ('total', 'air', 'care')
+        AND status_visita IN ('sobrevisitado', 'subvisitado', 'no_visitado')
+    )
+    SELECT
+      period_scope,
+      bu,
+      district,
+      territory_name,
+      territory_normalized,
+      potencial,
+      client_name,
+      doctor_id,
+      objetivo,
+      objetivo_ajustado,
+      interacciones,
+      cobertura,
+      cobertura_ajustada,
+      status_visita
+    FROM ranked
+    WHERE
+      (status_visita IN ('sobrevisitado', 'subvisitado') AND rn <= 20)
+      OR (status_visita = 'no_visitado' AND rn <= 200)
+  `;
+
+  const interactionMixRowsQuery = `
+    WITH reporting_context AS (
+      SELECT DATE(@reportPeriodMonth) AS report_period_month
+    ),
+    latest_interactions_upload AS (
+      SELECT u.upload_id
+      FROM \`${RAW_UPLOADS}\` u
+      JOIN reporting_context rc
+        ON TRUE
+      WHERE u.reporting_version_id = @reportingVersionId
+        AND u.status IN ('normalized', 'published')
+        AND LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_salesforce_interacciones',
+          'business_excellence_interacciones',
+          'interacciones'
+        )
+        AND COALESCE(u.source_as_of_month, u.period_month) <= rc.report_period_month
+      QUALIFY ROW_NUMBER() OVER (
+        ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
+      ) = 1
+    ),
+    doctor_map AS (
+      SELECT DISTINCT
+        reporting_version_id,
+        UPPER(COALESCE(NULLIF(TRIM(territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(territory_name, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
+        UPPER(REGEXP_REPLACE(TRIM(doctor_id), r'[^a-zA-Z0-9]+', '')) AS doctor_id,
+        LOWER(bu) AS bu
+      FROM \`${FIELD_FORCE_MEDICAL_DETAIL_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND report_period_month = DATE(@reportPeriodMonth)
+        AND period_scope = 'MTH'
+        AND LOWER(bu) IN ('air', 'care')
+    ),
+    interactions_base AS (
+      SELECT
+        i.submit_period_month AS event_month,
+        dm.bu,
+        COALESCE(NULLIF(TRIM(i.channel), ''), 'Unknown') AS channel,
+        COALESCE(NULLIF(TRIM(i.visit_type), ''), 'Unknown') AS visit_type,
+        i.interaction_id
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions\` i
+      JOIN latest_interactions_upload lu
+        ON lu.upload_id = i.upload_id
+      JOIN doctor_map dm
+        ON dm.reporting_version_id = @reportingVersionId
+       AND dm.territory_normalized = UPPER(COALESCE(NULLIF(TRIM(i.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(i.territory, '')), r'[^a-zA-Z0-9]+', '')))
+       AND dm.doctor_id = UPPER(REGEXP_REPLACE(TRIM(COALESCE(i.onekey_id, '')), r'[^a-zA-Z0-9]+', ''))
+      WHERE i.submit_period_month IS NOT NULL
+        AND i.submit_period_month BETWEEN DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AND DATE(@reportPeriodMonth)
+        AND LOWER(TRIM(COALESCE(
+          JSON_VALUE(i.source_payload_json, '$.Estado'),
+          JSON_VALUE(i.source_payload_json, '$.estado'),
+          JSON_VALUE(i.source_payload_json, '$.Status'),
+          JSON_VALUE(i.source_payload_json, '$.status'),
+          ''
+        ))) IN ('enviado', 'sent')
+    ),
+    grouped AS (
+      SELECT
+        'YTD' AS period_scope,
+        bu,
+        channel,
+        visit_type,
+        COUNT(DISTINCT interaction_id) AS interactions
+      FROM interactions_base
+      GROUP BY 1, 2, 3, 4
+      UNION ALL
+      SELECT
+        'MTH' AS period_scope,
+        bu,
+        channel,
+        visit_type,
+        COUNT(DISTINCT interaction_id) AS interactions
+      FROM interactions_base
+      WHERE event_month = DATE(@reportPeriodMonth)
+      GROUP BY 1, 2, 3, 4
+    )
+    SELECT period_scope, bu, channel, visit_type, interactions FROM grouped
+    UNION ALL
+    SELECT period_scope, 'total' AS bu, channel, visit_type, SUM(interactions) AS interactions
+    FROM grouped
+    GROUP BY 1, 2, 3, 4
+  `;
+
+  const params = {
+    reportingVersionId: resolvedReportingVersionId,
+    reportPeriodMonth: resolvedReportPeriodMonth,
+  };
+
+  const [mainResult, summaryResult, interactionMixResult] = await Promise.all([
+    client.query({ query, params }),
+    client.query({ query: summaryRowsQuery, params }),
+    client.query({ query: interactionMixRowsQuery, params }),
+  ]);
+
+  const doctorDetailRowsQueryFallback = `
+    WITH ranked AS (
+      SELECT
+        period_scope,
+        LOWER(bu) AS bu,
+        district,
+        territory_name,
+        territory_normalized,
+        COALESCE(NULLIF(TRIM(potencial), ''), 'N/A') AS potencial,
+        CAST(NULL AS STRING) AS client_name,
+        doctor_id,
+        objetivo_base AS objetivo,
+        objetivo_ajustado,
+        interacciones,
+        cobertura_base AS cobertura,
+        cobertura_ajustada,
+        status_visita,
+        ROW_NUMBER() OVER (
+          PARTITION BY period_scope, LOWER(bu), COALESCE(NULLIF(TRIM(potencial), ''), 'N/A'), status_visita
+          ORDER BY
+            CASE
+              WHEN status_visita = 'sobrevisitado' THEN interacciones - objetivo_base
+              WHEN status_visita = 'subvisitado' THEN objetivo_base - interacciones
+              ELSE interacciones
+            END DESC,
+            doctor_id
+        ) AS rn
+      FROM \`${FIELD_FORCE_MEDICAL_DOCTOR_ANALYSIS_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND report_period_month = DATE(@reportPeriodMonth)
+        AND LOWER(bu) IN ('total', 'air', 'care')
+        AND status_visita IN ('sobrevisitado', 'subvisitado', 'no_visitado')
+    )
+    SELECT
+      period_scope,
+      bu,
+      district,
+      territory_name,
+      territory_normalized,
+      potencial,
+      client_name,
+      doctor_id,
+      objetivo,
+      objetivo_ajustado,
+      interacciones,
+      cobertura,
+      cobertura_ajustada,
+      status_visita
+    FROM ranked
+    WHERE
+      (status_visita IN ('sobrevisitado', 'subvisitado') AND rn <= 20)
+      OR (status_visita = 'no_visitado' AND rn <= 200)
+  `;
+
+  let detailResult;
+  try {
+    detailResult = await client.query({ query: doctorDetailRowsQuery, params });
+  } catch (error) {
+    const message = String((error as Error)?.message ?? '').toLowerCase();
+    if (!message.includes('client_name')) throw error;
+    detailResult = await client.query({ query: doctorDetailRowsQueryFallback, params });
+  }
+
+  const [rows] = mainResult;
+  const [summaryRawRows] = summaryResult;
+  const [interactionMixRawRows] = interactionMixResult;
+  const [doctorRawRows] = detailResult;
+
+  const typedRows = rows as Array<Record<string, unknown>>;
+  if (typedRows.length === 0) return null;
+
+  const firstRow = typedRows[0];
+  const mappedRowsRaw: BusinessExcellenceFieldForceExcellenceRow[] = typedRows.map((row) => ({
+    bu:
+      String(row.bu ?? 'total').toLowerCase() === 'air'
+        ? 'air'
+        : String(row.bu ?? 'total').toLowerCase() === 'care'
+          ? 'care'
+          : 'total',
+    totalTerritories: Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0),
+    portfolioAccounts: Number(row.portfolio_accounts_ytd ?? row.portfolio_accounts_mth ?? 0),
+    targetVisitsYtd: Number(row.target_visits_ytd ?? 0),
+    targetVisitsMth: Number(row.target_visits_mth ?? 0),
+    targetVisitsAdjustedYtd: Number(row.target_visits_adjusted_ytd ?? 0),
+    targetVisitsAdjustedMth: Number(row.target_visits_adjusted_mth ?? 0),
+    sentInteractionsYtd: Number(row.sent_interactions_ytd ?? 0),
+    sentInteractionsMth: Number(row.sent_interactions_mth ?? 0),
+    coverageYtdPct:
+      row.coverage_ytd_ratio == null ? null : Number(row.coverage_ytd_ratio) * 100,
+    coverageMthPct:
+      row.coverage_mth_ratio == null ? null : Number(row.coverage_mth_ratio) * 100,
+    coverageAdjustedYtdPct:
+      row.coverage_adjusted_ytd_ratio == null ? null : Number(row.coverage_adjusted_ytd_ratio) * 100,
+    coverageAdjustedMthPct:
+      row.coverage_adjusted_mth_ratio == null ? null : Number(row.coverage_adjusted_mth_ratio) * 100,
+    tftDaysYtd: Number(row.tft_days_ytd ?? 0),
+    tftDaysMth: Number(row.tft_days_mth ?? 0),
+    workingDaysYtd: 20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)),
+    workingDaysMth: 20,
+    effectiveDaysYtd:
+      Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0) > 0
+        ? Math.max(
+          0,
+          (20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)))
+            - (Number(row.tft_days_ytd ?? 0) / Math.max(1, Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0))),
+        )
+        : 0,
+    effectiveDaysMth:
+      Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0) > 0
+        ? Math.max(
+          0,
+          20 - (Number(row.tft_days_mth ?? 0) / Math.max(1, Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0))),
+        )
+        : 0,
+    avgDailyVisitsYtd:
+      ((20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)))
+        * Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0)) - Number(row.tft_days_ytd ?? 0) > 0
+        ? Number(row.sent_interactions_ytd ?? 0)
+          / (((20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)))
+            * Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0)) - Number(row.tft_days_ytd ?? 0))
+        : null,
+    avgDailyVisitsMth:
+      (20 * Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0)) - Number(row.tft_days_mth ?? 0) > 0
+        ? Number(row.sent_interactions_mth ?? 0)
+          / ((20 * Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0)) - Number(row.tft_days_mth ?? 0))
+        : null,
+    noVisitadosYtd: Number(row.no_visitados_ytd ?? 0),
+    noVisitadosMth: Number(row.no_visitados_mth ?? 0),
+    subvisitadosYtd: Number(row.subvisitados_ytd ?? 0),
+    subvisitadosMth: Number(row.subvisitados_mth ?? 0),
+    enObjetivoYtd: Number(row.en_objetivo_ytd ?? 0),
+    enObjetivoMth: Number(row.en_objetivo_mth ?? 0),
+    sobrevisitadosYtd: Number(row.sobrevisitados_ytd ?? 0),
+    sobrevisitadosMth: Number(row.sobrevisitados_mth ?? 0),
+    indiceEvolucionBuYtd: row.indice_evolucion_bu_ytd == null ? null : Number(row.indice_evolucion_bu_ytd),
+    indiceEvolucionBuMth: row.indice_evolucion_bu_mth == null ? null : Number(row.indice_evolucion_bu_mth),
+  }));
+
+  const emptyRow = (bu: 'total' | 'air' | 'care'): BusinessExcellenceFieldForceExcellenceRow => ({
+    bu,
+    totalTerritories: 0,
+    portfolioAccounts: 0,
+    targetVisitsYtd: 0,
+    targetVisitsMth: 0,
+    targetVisitsAdjustedYtd: 0,
+    targetVisitsAdjustedMth: 0,
+    sentInteractionsYtd: 0,
+    sentInteractionsMth: 0,
+    coverageYtdPct: null,
+    coverageMthPct: null,
+    coverageAdjustedYtdPct: null,
+    coverageAdjustedMthPct: null,
+    tftDaysYtd: 0,
+    tftDaysMth: 0,
+    workingDaysYtd: 0,
+    workingDaysMth: 0,
+    effectiveDaysYtd: 0,
+    effectiveDaysMth: 0,
+    avgDailyVisitsYtd: null,
+    avgDailyVisitsMth: null,
+    noVisitadosYtd: 0,
+    noVisitadosMth: 0,
+    subvisitadosYtd: 0,
+    subvisitadosMth: 0,
+    enObjetivoYtd: 0,
+    enObjetivoMth: 0,
+    sobrevisitadosYtd: 0,
+    sobrevisitadosMth: 0,
+    indiceEvolucionBuYtd: null,
+    indiceEvolucionBuMth: null,
+  });
+
+  const byBu = new Map(mappedRowsRaw.map((row) => [row.bu, row]));
+  const mappedRows: BusinessExcellenceFieldForceExcellenceRow[] = (['total', 'air', 'care'] as const).map(
+    (bu) => byBu.get(bu) ?? emptyRow(bu),
+  );
+
+  const summaryRows: BusinessExcellenceFieldForceSummaryRow[] = (
+    summaryRawRows as Array<Record<string, unknown>>
+  ).map((row) => ({
+    periodScope: String(row.period_scope ?? 'YTD').toUpperCase() === 'MTH' ? 'MTH' : 'YTD',
+    aggregationLevel:
+      String(row.aggregation_level ?? 'total').toLowerCase() === 'territory'
+        ? 'territory'
+        : String(row.aggregation_level ?? 'total').toLowerCase() === 'district'
+          ? 'district'
+          : String(row.aggregation_level ?? 'total').toLowerCase() === 'bu'
+            ? 'bu'
+            : 'total',
+    bu:
+      String(row.bu ?? 'total').toLowerCase() === 'air'
+        ? 'air'
+        : String(row.bu ?? 'total').toLowerCase() === 'care'
+          ? 'care'
+          : 'total',
+    district: row.district ? String(row.district) : null,
+    territoryName: row.territory_name ? String(row.territory_name) : null,
+    territoryNormalized: row.territory_normalized ? String(row.territory_normalized) : null,
+    clients: Number(row.clientes ?? 0),
+    objetivoBase: Number(row.objetivo ?? 0),
+    objetivoAdjusted: Number(row.objetivo_ajustado ?? 0),
+    interacciones: Number(row.interacciones ?? 0),
+    coberturaBasePct: row.cobertura == null ? null : Number(row.cobertura) * 100,
+    coberturaAdjustedPct: row.cobertura_ajustada == null ? null : Number(row.cobertura_ajustada) * 100,
+    diasFuera: Number(row.dias_fuera ?? 0),
+    indiceEvolucionBuPct: row.indice_evolucion_bu == null ? null : Number(row.indice_evolucion_bu),
+  }));
+
+  const doctorDetailRows: BusinessExcellenceFieldForceDoctorDetailRow[] = (
+    doctorRawRows as Array<Record<string, unknown>>
+  ).map((row) => ({
+    periodScope: String(row.period_scope ?? 'YTD').toUpperCase() === 'MTH' ? 'MTH' : 'YTD',
+    bu: String(row.bu ?? 'air').toLowerCase() === 'care' ? 'care' : 'air',
+    district: row.district ? String(row.district) : null,
+    territoryName: row.territory_name ? String(row.territory_name) : null,
+    territoryNormalized: row.territory_normalized ? String(row.territory_normalized) : null,
+    potencial: row.potencial ? String(row.potencial) : null,
+    clientName: row.client_name ? String(row.client_name) : null,
+    doctorId: String(row.doctor_id ?? ''),
+    objetivoBase: Number(row.objetivo ?? 0),
+    objetivoAdjusted: Number(row.objetivo_ajustado ?? 0),
+    interacciones: Number(row.interacciones ?? 0),
+    coberturaBasePct: row.cobertura == null ? null : Number(row.cobertura) * 100,
+    coberturaAdjustedPct: row.cobertura_ajustada == null ? null : Number(row.cobertura_ajustada) * 100,
+    statusVisita:
+      String(row.status_visita ?? 'sin_clasificacion') === 'no_visitado'
+        ? 'no_visitado'
+        : String(row.status_visita ?? 'sin_clasificacion') === 'subvisitado'
+          ? 'subvisitado'
+          : String(row.status_visita ?? 'sin_clasificacion') === 'en_objetivo'
+            ? 'en_objetivo'
+            : String(row.status_visita ?? 'sin_clasificacion') === 'sobrevisitado'
+              ? 'sobrevisitado'
+              : 'sin_clasificacion',
+  }));
+
+  const interactionMixRows: BusinessExcellenceFieldForceInteractionMixRow[] = (
+    interactionMixRawRows as Array<Record<string, unknown>>
+  ).map((row) => ({
+    periodScope: String(row.period_scope ?? 'YTD').toUpperCase() === 'MTH' ? 'MTH' : 'YTD',
+    bu:
+      String(row.bu ?? 'total').toLowerCase() === 'air'
+        ? 'air'
+        : String(row.bu ?? 'total').toLowerCase() === 'care'
+          ? 'care'
+          : 'total',
+    channel: row.channel ? String(row.channel) : 'Unknown',
+    visitType: row.visit_type ? String(row.visit_type) : 'Unknown',
+    interactions: Number(row.interactions ?? 0),
+  }));
+
+  return {
+    reportingVersionId: resolvedReportingVersionId,
+    reportPeriodMonth: String(firstRow.report_period_month ?? resolvedReportPeriodMonth),
+    ficheroAsOfMonth: firstRow.fichero_as_of_month ? String(firstRow.fichero_as_of_month) : null,
+    interactionsAsOfMonth: firstRow.interactions_as_of_month ? String(firstRow.interactions_as_of_month) : null,
+    tftAsOfMonth: firstRow.tft_as_of_month ? String(firstRow.tft_as_of_month) : null,
+    effectiveAsOfMonth: firstRow.effective_as_of_month ? String(firstRow.effective_as_of_month) : null,
+    ytdStartMonth: firstRow.ytd_start_month ? String(firstRow.ytd_start_month) : null,
+    territoriesSnapshotMonth: firstRow.territories_snapshot_month ? String(firstRow.territories_snapshot_month) : null,
+    rawSentInteractionsYtdAllBu: Number(firstRow.raw_sent_interactions_ytd_all_bu ?? 0),
+    rawSentInteractionsMthAllBu: Number(firstRow.raw_sent_interactions_mth_all_bu ?? 0),
+    usedSentInteractionsYtdAirCare: Number(firstRow.used_sent_interactions_ytd_air_care ?? 0),
+    usedSentInteractionsMthAirCare: Number(firstRow.used_sent_interactions_mth_air_care ?? 0),
+    rows: mappedRows,
+    summaryRows,
+    doctorDetailRows,
+    interactionMixRows,
+  };
+}
+
+export async function getBusinessExcellenceFieldForceTopCardKpis(
+  reportingVersionId?: string,
+  reportPeriodMonth?: string,
+): Promise<BusinessExcellenceFieldForceTopCardKpis | null> {
+  const resolvedReportingVersionId = await resolveReportingVersionId(reportingVersionId);
+  if (!resolvedReportingVersionId) return null;
+  const client = getBigQueryClient();
+
+  const resolvedReportPeriodMonth = reportPeriodMonth
+    ?? (await getLatestPeriodDirect(REPORTING_VERSIONS_TABLE, resolvedReportingVersionId));
+  if (!resolvedReportPeriodMonth) return null;
+
+  const query = `
+    SELECT
+      cobertura_ajustada,
+      porcentaje_tiempo_activo
+    FROM \`${FIELD_FORCE_MEDICAL_SUMMARY_VIEW}\`
+    WHERE reporting_version_id = @reportingVersionId
+      AND report_period_month = DATE(@reportPeriodMonth)
+      AND period_scope = 'YTD'
+      AND aggregation_level = 'total'
+    LIMIT 1
+  `;
+
+  const [rows] = await client.query({
+    query,
+    params: {
+      reportingVersionId: resolvedReportingVersionId,
+      reportPeriodMonth: resolvedReportPeriodMonth,
+    },
+  });
+
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  if (!row) return null;
+
+  return {
+    coverageYtdTftPct: row.cobertura_ajustada == null ? null : Number(row.cobertura_ajustada) * 100,
+    activeTimeYtdPct: row.porcentaje_tiempo_activo == null ? null : Number(row.porcentaje_tiempo_activo) * 100,
+  };
 }
 
 export async function getBusinessExcellencePrivateSellOutMartRows(
