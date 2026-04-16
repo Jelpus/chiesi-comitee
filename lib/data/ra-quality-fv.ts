@@ -35,7 +35,22 @@ export type RaQualityFvData = {
 };
 
 function normalize(value: string | null | undefined) {
-  return (value ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+  return (value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function isAuditTopic(value: string | null | undefined) {
+  const key = normalize(value);
+  return key.includes('auditor') || key.includes('audit');
+}
+
+function isProcedureTopic(value: string | null | undefined) {
+  const key = normalize(value);
+  return key.includes('procedim') || key.includes('procedure');
 }
 
 function parseTopicTargetValue(targetText: string | null | undefined) {
@@ -63,6 +78,10 @@ function deriveEffectiveYtdCount(row: {
 }) {
   if (row.ytdCount != null) return row.ytdCount;
   const topicKey = normalize(row.topic);
+  if (isAuditTopic(topicKey)) {
+    if (row.activeCount != null) return row.activeCount;
+    return null;
+  }
   if (topicKey.includes('procedimientos')) {
     const hasProcedureInputs = row.activeCount != null || row.overdueCount != null;
     if (!hasProcedureInputs) return null;
@@ -90,7 +109,7 @@ function deriveTopicStatus(
 ): RaTopicStatus {
   const topicKey = normalize(topic);
 
-  if (topicKey.includes('procedimientos')) {
+  if (isProcedureTopic(topicKey)) {
     const active = row.activeCount ?? 0;
     const ytd = row.ytdCount ?? 0;
     if (ytd > 0) {
@@ -104,7 +123,7 @@ function deriveTopicStatus(
     return 'off_track';
   }
 
-  if (topicKey.includes('auditorias')) {
+  if (isAuditTopic(topicKey)) {
     const ytd = row.ytdCount ?? 0;
     const month = monthNumber(periodMonth);
     if (targetValue == null || month == null || month <= 0) {
@@ -149,12 +168,14 @@ export async function getRaQualityFvData(
     const text = target.kpiLabel?.trim() || target.kpiName;
     const value = target.targetValueNumeric ?? parseTopicTargetValue(target.targetValueText);
 
-    if (key.includes('liberaciones')) targetByTopic.set('liberaciones', { text, value });
-    if (key.includes('registros')) targetByTopic.set('registros sanitarios', { text, value });
-    if (key.includes('modificaciones')) targetByTopic.set('modificaciones regulatorias', { text, value });
-    if (key.includes('importacion')) targetByTopic.set('permisos de importacion', { text, value });
-    if (key.includes('procedimientos')) targetByTopic.set('procedimientos', { text, value });
-    if (key.includes('auditorias')) targetByTopic.set('auditorias externas', { text, value });
+    if (key.includes('liberaciones') || key.includes('release')) targetByTopic.set('liberaciones', { text, value });
+    if (key.includes('registros') || key.includes('registration')) targetByTopic.set('registros sanitarios', { text, value });
+    if (key.includes('modificaciones') || key.includes('modification')) targetByTopic.set('modificaciones regulatorias', { text, value });
+    if (key.includes('importacion') || key.includes('importation') || key.includes('import')) {
+      targetByTopic.set('permisos de importacion', { text, value });
+    }
+    if (key.includes('procedimientos') || key.includes('procedure')) targetByTopic.set('procedimientos', { text, value });
+    if (key.includes('auditorias') || key.includes('audit')) targetByTopic.set('auditorias externas', { text, value });
   }
 
   const scores: RaTopicScore[] = inputs.map((row) => {
