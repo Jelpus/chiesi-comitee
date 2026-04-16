@@ -764,8 +764,11 @@ function PublicPerformancePanel({
       const msPct = activeView === 'ytd' ? row.ytdMsPct : row.mthMsPct;
       const evolutionIndex = activeView === 'ytd' ? row.ytdEvolutionIndex : row.mthEvolutionIndex;
       const coveragePct = activeView === 'ytd' ? row.ytdCoverageVsBudgetPct : row.mthCoverageVsBudgetPct;
+      const isCurosurfSdr =
+        (row.marketGroup ?? '').trim().toLowerCase() === 'distrés respiratorio (sdr)'
+        && row.brandName.trim().toLowerCase() === 'curosurf';
       return {
-        label: `${row.marketGroup ?? 'No Market'} - ${row.brandName}`,
+        label: `${row.marketGroup ?? 'No Market'} - ${row.brandName}${isCurosurfSdr ? '*' : ''}`,
         units,
         budgetUnits,
         growthPct,
@@ -774,37 +777,7 @@ function PublicPerformancePanel({
         coveragePct,
       };
     });
-  const triplesRows = topProducts.filter(
-    (row) => isTriplesDoseMarketGroup(row.marketGroup) && isTrimbowBrand(row.brandName),
-  );
-  const triplesSyntheticRow =
-    triplesRows.length > 0
-      ? (() => {
-          const units = triplesRows.reduce(
-            (sum, row) => sum + (activeView === 'ytd' ? row.ytdPieces : row.mthPieces),
-            0,
-          );
-          const unitsPy = triplesRows.reduce(
-            (sum, row) => sum + (activeView === 'ytd' ? row.ytdPiecesPy : row.mthPiecesPy),
-            0,
-          );
-          const budgetUnits = triplesRows.reduce(
-            (sum, row) => sum + (activeView === 'ytd' ? row.ytdBudgetUnits : row.mthBudgetUnits),
-            0,
-          );
-          return {
-            label: `${TRIPLES_TOTAL_TRIMBOW_LABEL} - Trimbow`,
-            units,
-            budgetUnits,
-            growthPct: unitsPy > 0 ? ((units - unitsPy) / unitsPy) * 100 : null,
-            msPct: null,
-            evolutionIndex: null,
-            coveragePct: budgetUnits > 0 ? (units / budgetUnits) * 100 : null,
-          };
-        })()
-      : null;
-  const sortedDisplayRows = (triplesSyntheticRow ? [...displayRows, triplesSyntheticRow] : displayRows)
-    .sort((a, b) => b.units - a.units);
+  const sortedDisplayRows = [...displayRows].sort((a, b) => b.budgetUnits - a.budgetUnits);
 
   return (
     <SectionCard
@@ -932,9 +905,12 @@ function PublicPerformancePanel({
             </tbody>
           </table>
         </div>
+        <p className="mt-3 text-xs text-slate-500">
+          * Se han convertido las unidades de Curosurf 3ml a 2 unidades equivalentes de Curosurf 1.5 ml.
+        </p>
       </div>
 
-      <PublicMarketGroupAnalysis rows={topProducts} chartRows={chartRows} rankingRows={rankingRows} />
+      <PublicMarketGroupAnalysis rows={topProducts} chartRows={chartRows} rankingRows={rankingRows} activeView={activeView} />
     </SectionCard>
   );
 }
@@ -2964,7 +2940,7 @@ const getCachedPrivateSellOutData = unstable_cache(
       productRows,
     };
   },
-  ['business-excellence-private-sell-out-v14'],
+  ['business-excellence-private-sell-out-v15'],
   { revalidate: 45 },
 );
 
@@ -3011,7 +2987,7 @@ const getCachedPublicMarketData = unstable_cache(
       };
     }
   },
-  ['business-excellence-public-market-v6'],
+  ['business-excellence-public-market-v7'],
   { revalidate: 120 },
 );
 

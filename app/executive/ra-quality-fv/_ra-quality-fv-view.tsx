@@ -32,6 +32,73 @@ function topicDisplayLabel(item: { topic: string; targetText: string }) {
   return item.targetText && item.targetText !== 'Target not configured' ? item.targetText : item.topic;
 }
 
+function topicExecutionMix(item: {
+  topic: string;
+  targetValue: number | null;
+  onTimeCount: number | null;
+  lateCount: number | null;
+  pendingCount: number | null;
+  activeCount: number | null;
+  overdueCount: number | null;
+  ytdCount: number | null;
+}) {
+  const topic = item.topic.toLowerCase();
+
+  if (topic.includes('procedimientos')) {
+    const active = item.activeCount ?? 0;
+    const overdue = item.overdueCount ?? 0;
+    const total = active;
+    return {
+      primary: active,
+      secondary: overdue,
+      tertiary: 0,
+      total,
+      primaryPct: total > 0 ? (active / total) * 100 : 0,
+      secondaryPct: total > 0 ? (overdue / total) * 100 : 0,
+      tertiaryPct: 0,
+      totalLabel: `${total} total`,
+      secondaryClassName: 'bg-rose-500',
+      tertiaryClassName: 'bg-amber-400',
+    };
+  }
+
+  if (topic.includes('auditorias')) {
+    const ytd = Math.max(0, item.ytdCount ?? 0);
+    const target = Math.max(0, item.targetValue ?? 0);
+    const remaining = Math.max(0, target - ytd);
+    const total = Math.max(target, ytd);
+    return {
+      primary: ytd,
+      secondary: remaining,
+      tertiary: 0,
+      total,
+      primaryPct: total > 0 ? (ytd / total) * 100 : 0,
+      secondaryPct: total > 0 ? (remaining / total) * 100 : 0,
+      tertiaryPct: 0,
+      totalLabel: target > 0 ? `${ytd} / ${target} target` : `${ytd} YTD`,
+      secondaryClassName: 'bg-slate-300',
+      tertiaryClassName: 'bg-amber-400',
+    };
+  }
+
+  const onTime = item.onTimeCount ?? 0;
+  const late = item.lateCount ?? 0;
+  const pending = item.pendingCount ?? 0;
+  const total = onTime + late + pending;
+  return {
+    primary: onTime,
+    secondary: late,
+    tertiary: pending,
+    total,
+    primaryPct: total > 0 ? (onTime / total) * 100 : 0,
+    secondaryPct: total > 0 ? (late / total) * 100 : 0,
+    tertiaryPct: total > 0 ? (pending / total) * 100 : 0,
+    totalLabel: `${total} total`,
+    secondaryClassName: 'bg-rose-500',
+    tertiaryClassName: 'bg-amber-400',
+  };
+}
+
 function topicCompletionPct(item: {
   topic: string;
   targetValue: number | null;
@@ -448,25 +515,18 @@ export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQuality
                 <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Topic Execution Mix</p>
                 <div className="mt-3 space-y-2">
                   {data.scores.map((item) => {
-                    const isProcedimientos = item.topic.toLowerCase().includes('procedimientos');
-                    const onTime = isProcedimientos ? item.activeCount ?? 0 : item.onTimeCount ?? 0;
-                    const late = isProcedimientos ? item.overdueCount ?? 0 : item.lateCount ?? 0;
-                    const pending = isProcedimientos ? 0 : item.pendingCount ?? 0;
-                    const total = onTime + late + pending;
-                    const onPct = total > 0 ? (onTime / total) * 100 : 0;
-                    const latePct = total > 0 ? (late / total) * 100 : 0;
-                    const pendingPct = total > 0 ? (pending / total) * 100 : 0;
+                    const mix = topicExecutionMix(item);
                     return (
                       <div key={`mix-${item.topic}`}>
                         <div className="mb-1 flex items-center justify-between text-xs">
                           <span className="font-semibold text-slate-700">{topicDisplayLabel(item)}</span>
-                          <span className="text-slate-500">{total} total</span>
+                          <span className="text-slate-500">{mix.totalLabel}</span>
                         </div>
                         <div className="h-3 w-full overflow-hidden rounded-full border border-slate-200">
                           <div className="flex h-full w-full">
-                            <div className="bg-emerald-500" style={{ width: `${onPct}%` }} />
-                            <div className="bg-rose-500" style={{ width: `${latePct}%` }} />
-                            <div className="bg-amber-400" style={{ width: `${pendingPct}%` }} />
+                            <div className="bg-emerald-500" style={{ width: `${mix.primaryPct}%` }} />
+                            <div className={mix.secondaryClassName} style={{ width: `${mix.secondaryPct}%` }} />
+                            <div className={mix.tertiaryClassName} style={{ width: `${mix.tertiaryPct}%` }} />
                           </div>
                         </div>
                       </div>

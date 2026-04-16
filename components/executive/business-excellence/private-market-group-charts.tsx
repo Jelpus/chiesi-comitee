@@ -48,8 +48,8 @@ export function PrivateMarketGroupCharts({
   weeklyBenchmark,
   initialMarketGroup,
 }: PrivateMarketGroupChartsProps) {
-  const [rankingMode, setRankingMode] = useState<'pack' | 'state' | 'manager' | 'territory'>('pack');
-  const [prescriptionRankingMode, setPrescriptionRankingMode] = useState<'product' | 'specialty' | 'territory'>('product');
+  const [rankingMode, setRankingMode] = useState<'pack' | 'brand' | 'state' | 'manager' | 'territory'>('brand');
+  const [prescriptionRankingMode, setPrescriptionRankingMode] = useState<'product' | 'brand' | 'specialty' | 'territory'>('brand');
   const [dataScope, setDataScope] = useState<'all' | 'chiesi'>('all');
   const marketGroups = useMemo(
     () => Array.from(new Set(rows.map((row) => row.marketGroup))).sort(),
@@ -193,6 +193,7 @@ export function PrivateMarketGroupCharts({
             <div className="mt-2 inline-flex rounded-full border border-slate-200 bg-white p-1">
               {(
                 [
+                  { key: 'brand', label: 'Brand' },
                   { key: 'pack', label: 'Pack' },
                   { key: 'state', label: 'State' },
                   { key: 'manager', label: 'Manager' },
@@ -222,6 +223,8 @@ export function PrivateMarketGroupCharts({
                   <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                     {rankingMode === 'pack'
                       ? 'Pack'
+                      : rankingMode === 'brand'
+                        ? 'Brand'
                       : rankingMode === 'state'
                         ? 'State'
                         : rankingMode === 'manager'
@@ -290,6 +293,7 @@ export function PrivateMarketGroupCharts({
             <div className="mt-2 inline-flex rounded-full border border-slate-200 bg-white p-1">
               {(
                 [
+                  { key: 'brand', label: 'Brand' },
                   { key: 'product', label: 'Product' },
                   { key: 'specialty', label: 'Specialty' },
                   { key: 'territory', label: 'Territory' },
@@ -318,6 +322,8 @@ export function PrivateMarketGroupCharts({
                   <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                     {prescriptionRankingMode === 'product'
                       ? 'Product'
+                      : prescriptionRankingMode === 'brand'
+                        ? 'Brand'
                       : prescriptionRankingMode === 'specialty'
                         ? 'Specialty'
                         : 'Territory'}

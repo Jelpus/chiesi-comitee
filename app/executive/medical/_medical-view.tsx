@@ -33,6 +33,11 @@ function formatPercent(value: number | null) {
   return `${value.toFixed(1)}%`;
 }
 
+function formatInteger(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+
 function formatResult(value: number | null, qtyUnit: string, fallbackText: string) {
   if (value == null) return fallbackText || 'N/A';
   if (qtyUnit === '%') return `${value.toFixed(1)}%`;
@@ -152,12 +157,24 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
   const selectedVersion =
     versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];
 
-  const data = await getMedicalData(selectedVersion.reportingVersionId, selectedVersion.periodMonth);
-  const dashboardData =
-    viewMode === 'dashboard'
-      ? await getMedicalMslDashboardData(selectedVersion.reportingVersionId, selectedVersion.periodMonth)
-      : null;
+  const [data, dashboardData] = await Promise.all([
+    getMedicalData(selectedVersion.reportingVersionId, selectedVersion.periodMonth),
+    getMedicalMslDashboardData(selectedVersion.reportingVersionId, selectedVersion.periodMonth),
+  ]);
   const mslSummaryYtd = dashboardData?.summary.ytd ?? null;
+  const mslYtdRows = (dashboardData?.rows ?? []).filter((row) => row.periodScope === 'YTD');
+  const mslTopCoverage = [...mslYtdRows]
+    .filter((row) => row.coveragePct != null)
+    .sort((a, b) => (b.coveragePct ?? 0) - (a.coveragePct ?? 0))
+    .slice(0, 3);
+  const mslLowReach = [...mslYtdRows]
+    .filter((row) => row.reachPct != null)
+    .sort((a, b) => (a.reachPct ?? 0) - (b.reachPct ?? 0))
+    .slice(0, 3);
+  const mslLowCoverage = [...mslYtdRows]
+    .filter((row) => row.coveragePct != null)
+    .sort((a, b) => (a.coveragePct ?? 0) - (b.coveragePct ?? 0))
+    .slice(0, 3);
   const hasData = data.scores.length > 0;
   const working = data.scores.filter((item) => item.status === 'on_track');
   const needsImprove = data.scores.filter((item) => item.status === 'off_track');
@@ -215,7 +232,7 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
         />
 
         {viewMode === 'insights' && hasData ? (
-          <div className="grid gap-3 xl:grid-cols-2">
+          <div className="grid gap-3 xl:grid-cols-3">
             <article className="rounded-[18px] border border-slate-200 bg-white p-4">
               <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Medical Narrative</p>
               <p className="mt-2 text-sm text-slate-700">
@@ -277,6 +294,29 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
                 </div>
               </div>
             </article>
+            <article className="rounded-[18px] border border-slate-200 bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Medical Visit Strategy Narrative</p>
+              <div className="mt-2 space-y-2 text-sm text-slate-700">
+                <p>
+                  YTD MLS execution is running at <strong>{formatPercent(mslSummaryYtd?.coveragePct ?? null)}</strong> coverage
+                  and <strong>{formatPercent(mslSummaryYtd?.reachPct ?? null)}</strong> reach across{' '}
+                  <strong>{formatInteger(mslSummaryYtd?.totalMls ?? 0)}</strong> MLS.
+                </p>
+                <p>
+                  Best coverage momentum: {mslTopCoverage.length > 0
+                    ? mslTopCoverage.map((row) => `${row.mlsCode} (${formatPercent(row.coveragePct)})`).join(', ')
+                    : 'insufficient MLS data'}.
+                </p>
+                <p>
+                  Reach focus territories: {mslLowReach.length > 0
+                    ? mslLowReach.map((row) => `${row.mlsCode} (${formatPercent(row.reachPct)})`).join(', ')
+                    : 'insufficient MLS data'}.
+                </p>
+                <p>
+                  Priority: improve unique-client reach on low-reach MLS while sustaining target attainment on high-coverage MLS.
+                </p>
+              </div>
+            </article>
           </div>
         ) : null}
 
@@ -285,6 +325,20 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
             <article className="rounded-[18px] border border-emerald-200 bg-emerald-50/40 p-4">
               <p className="text-xs uppercase tracking-[0.14em] text-emerald-800">What Is Working</p>
               <div className="mt-2 space-y-2">
+                <div className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
+                  <p className="text-sm font-semibold text-slate-900">Medical Field Execution (YTD)</p>
+                  <p className="text-xs text-slate-700">
+                    Coverage {formatPercent(mslSummaryYtd?.coveragePct ?? null)} | Reach {formatPercent(mslSummaryYtd?.reachPct ?? null)} | MLS {formatInteger(mslSummaryYtd?.totalMls ?? 0)}
+                  </p>
+                </div>
+                {mslTopCoverage.map((row) => (
+                  <div key={`working-mls-${row.mlsCode}`} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
+                    <p className="text-sm font-semibold text-slate-900">{row.mlsCode}{row.mlsName ? ` - ${row.mlsName}` : ''}</p>
+                    <p className="text-xs text-slate-700">
+                      Coverage {formatPercent(row.coveragePct)} | Interactions {formatInteger(row.interactions)} | Target {formatInteger(row.target)}
+                    </p>
+                  </div>
+                ))}
                 {working.length > 0 ? (
                   working.map((item) => (
                     <div key={`${item.kpiLabel}-${item.kpiName}`} className="rounded-[10px] border border-emerald-200 bg-white px-3 py-2">
@@ -303,6 +357,22 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
             <article className="rounded-[18px] border border-rose-200 bg-rose-50/40 p-4">
               <p className="text-xs uppercase tracking-[0.14em] text-rose-800">What Needs To Improve</p>
               <div className="mt-2 space-y-2">
+                {mslLowReach.map((row) => (
+                  <div key={`improve-reach-${row.mlsCode}`} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
+                    <p className="text-sm font-semibold text-slate-900">{row.mlsCode}{row.mlsName ? ` - ${row.mlsName}` : ''}</p>
+                    <p className="text-xs text-slate-700">
+                      Reach {formatPercent(row.reachPct)} | Unique Reached {formatInteger(row.uniqueClientsReached)} / Clients {formatInteger(row.clients)}
+                    </p>
+                  </div>
+                ))}
+                {mslLowCoverage.map((row) => (
+                  <div key={`improve-cov-${row.mlsCode}`} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
+                    <p className="text-sm font-semibold text-slate-900">{row.mlsCode}{row.mlsName ? ` - ${row.mlsName}` : ''}</p>
+                    <p className="text-xs text-slate-700">
+                      Coverage {formatPercent(row.coveragePct)} | Interactions {formatInteger(row.interactions)} / Target {formatInteger(row.target)}
+                    </p>
+                  </div>
+                ))}
                 {needsImprove.length > 0 ? (
                   needsImprove.map((item) => (
                     <div key={`${item.kpiLabel}-${item.kpiName}`} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">

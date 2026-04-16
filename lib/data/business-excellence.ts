@@ -2087,7 +2087,7 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
   const latestMonth = latestRef.month;
   const pyYear = latestYear - 1;
 
-  const aggregate = new Map<string, { ytdUnits: number; ytdPyUnits: number }>();
+  const aggregate = new Map<string, { ytdUnits: number; ytdPyUnits: number; mthUnits: number; mthPyUnits: number }>();
 
   for (const row of sourceRows) {
     const mapping = mappingByClave.get(String(row.source_clave_normalized ?? ''));
@@ -2118,9 +2118,11 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
     for (const scope of scopes) {
       for (const item of labels) {
         const key = `${marketGroup}|||${scope}|||${item.dimension}|||${item.label}`;
-        const current = aggregate.get(key) ?? { ytdUnits: 0, ytdPyUnits: 0 };
+        const current = aggregate.get(key) ?? { ytdUnits: 0, ytdPyUnits: 0, mthUnits: 0, mthPyUnits: 0 };
         if (year === latestYear && month <= latestMonth) current.ytdUnits += pieces;
+        if (year === latestYear && month === latestMonth) current.mthUnits += pieces;
         if (year === pyYear && month <= latestMonth) current.ytdPyUnits += pieces;
+        if (year === pyYear && month === latestMonth) current.mthPyUnits += pieces;
         aggregate.set(key, current);
       }
     }
@@ -2137,6 +2139,8 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
       label,
       ytdUnits: values.ytdUnits,
       ytdPyUnits: values.ytdPyUnits,
+      mthUnits: values.mthUnits,
+      mthPyUnits: values.mthPyUnits,
       growthVsPyPct,
     };
   });
@@ -3895,21 +3899,42 @@ export async function getBusinessExcellencePrivateDddDimensionRanking(
 
   const client = getBigQueryClient();
   const query = `
-    WITH all_base AS (
+    WITH latest_period AS (
+      SELECT CAST(MAX(period_month) AS STRING) AS latest_period
+      FROM \`${PMM_ENRICHED_TABLE}\`
+      WHERE reporting_version_id = @reportingVersionId
+    ),
+    all_base AS (
       SELECT
         reporting_version_id,
         COALESCE(NULLIF(TRIM(market_group), ''), 'No Market') AS market_group,
         NULLIF(TRIM(resolved_product_id), '') AS resolved_product_id,
         NULLIF(TRIM(business_unit_name), '') AS business_unit_name,
         COALESCE(NULLIF(TRIM(pack_des_raw), ''), 'Unmapped Pack') AS pack_label,
+        COALESCE(
+          NULLIF(
+            INITCAP(LOWER(REGEXP_EXTRACT(COALESCE(NULLIF(TRIM(pack_des_raw), ''), 'Unmapped Pack'), r'^([[:alnum:]]+)'))),
+            ''
+          ),
+          'Unmapped Brand'
+        ) AS brand_label,
         COALESCE(NULLIF(TRIM(state), ''), 'Unmapped State') AS state_label,
         COALESCE(NULLIF(TRIM(manager), ''), 'Unmapped Manager') AS manager_label,
         COALESCE(NULLIF(TRIM(territory), ''), 'Unmapped Territory') AS territory_label,
-        COALESCE(is_ytd, FALSE) AS is_ytd,
-        COALESCE(is_ytd_py, FALSE) AS is_ytd_py,
+        COALESCE(
+          EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(lp.latest_period))
+          AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(lp.latest_period)),
+          FALSE
+        ) AS is_ytd,
+        COALESCE(
+          EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(lp.latest_period)) - 1
+          AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(lp.latest_period)),
+          FALSE
+        ) AS is_ytd_py,
         LOWER(TRIM(sales_group)) AS sales_group,
         amount_value
       FROM \`${PMM_ENRICHED_TABLE}\`
+      CROSS JOIN latest_period lp
       WHERE reporting_version_id = @reportingVersionId
     ),
     scoped_base AS (
@@ -3918,6 +3943,7 @@ export async function getBusinessExcellencePrivateDddDimensionRanking(
         market_group,
         'all' AS scope,
         pack_label,
+        brand_label,
         state_label,
         manager_label,
         territory_label,
@@ -3932,6 +3958,7 @@ export async function getBusinessExcellencePrivateDddDimensionRanking(
         market_group,
         'chiesi' AS scope,
         pack_label,
+        brand_label,
         state_label,
         manager_label,
         territory_label,
@@ -3950,6 +3977,18 @@ export async function getBusinessExcellencePrivateDddDimensionRanking(
         scope,
         'pack' AS dimension,
         pack_label AS label,
+        SUM(IF(is_ytd AND sales_group = 'units', amount_value, 0)) AS ytd_units,
+        SUM(IF(is_ytd_py AND sales_group = 'units', amount_value, 0)) AS ytd_py_units
+      FROM scoped_base
+      GROUP BY 1, 2, 3, 4, 5
+    ),
+    brand_rows AS (
+      SELECT
+        reporting_version_id,
+        market_group,
+        scope,
+        'brand' AS dimension,
+        brand_label AS label,
         SUM(IF(is_ytd AND sales_group = 'units', amount_value, 0)) AS ytd_units,
         SUM(IF(is_ytd_py AND sales_group = 'units', amount_value, 0)) AS ytd_py_units
       FROM scoped_base
@@ -3998,6 +4037,8 @@ export async function getBusinessExcellencePrivateDddDimensionRanking(
     all_rows AS (
       SELECT * FROM pack_rows
       UNION ALL
+      SELECT * FROM brand_rows
+      UNION ALL
       SELECT * FROM state_rows
       UNION ALL
       SELECT * FROM manager_rows
@@ -4034,7 +4075,7 @@ export async function getBusinessExcellencePrivateDddDimensionRanking(
       reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
       marketGroup: String(row.market_group ?? 'No Market'),
       scope: String(row.scope ?? 'all') as 'all' | 'chiesi',
-      dimension: String(row.dimension ?? 'pack') as 'pack' | 'state' | 'manager' | 'territory',
+      dimension: String(row.dimension ?? 'pack') as 'pack' | 'brand' | 'state' | 'manager' | 'territory',
       label: String(row.label ?? 'Unmapped Label'),
       ytdUnits,
       ytdPyUnits,
@@ -4058,6 +4099,13 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
         COALESCE(NULLIF(TRIM(market_group), ''), 'No Market') AS market_group,
         NULLIF(TRIM(resolved_product_id), '') AS resolved_product_id,
         COALESCE(NULLIF(TRIM(product_closeup_raw), ''), 'Unmapped Product') AS product_label,
+        COALESCE(
+          NULLIF(
+            INITCAP(LOWER(REGEXP_EXTRACT(COALESCE(NULLIF(TRIM(product_closeup_raw), ''), 'Unmapped Product'), r'^([[:alnum:]]+)'))),
+            ''
+          ),
+          'Unmapped Brand'
+        ) AS brand_label,
         COALESCE(NULLIF(TRIM(specialty), ''), 'Unmapped Specialty') AS specialty_label,
         COALESCE(NULLIF(TRIM(visited_source_raw), ''), 'Unmapped Territory') AS territory_label,
         COALESCE(is_ytd, FALSE) AS is_ytd,
@@ -4072,6 +4120,7 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
         market_group,
         'all' AS scope,
         product_label,
+        brand_label,
         specialty_label,
         territory_label,
         is_ytd,
@@ -4084,6 +4133,7 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
         market_group,
         'chiesi' AS scope,
         product_label,
+        brand_label,
         specialty_label,
         territory_label,
         is_ytd,
@@ -4099,6 +4149,18 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
         scope,
         'product' AS dimension,
         product_label AS label,
+        SUM(IF(is_ytd, recetas_value, 0)) AS ytd_rx,
+        SUM(IF(is_ytd_py, recetas_value, 0)) AS ytd_py_rx
+      FROM scoped_base
+      GROUP BY 1, 2, 3, 4, 5
+    ),
+    brand_rows AS (
+      SELECT
+        reporting_version_id,
+        market_group,
+        scope,
+        'brand' AS dimension,
+        brand_label AS label,
         SUM(IF(is_ytd, recetas_value, 0)) AS ytd_rx,
         SUM(IF(is_ytd_py, recetas_value, 0)) AS ytd_py_rx
       FROM scoped_base
@@ -4130,6 +4192,8 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
     ),
     all_rows AS (
       SELECT * FROM product_rows
+      UNION ALL
+      SELECT * FROM brand_rows
       UNION ALL
       SELECT * FROM specialty_rows
       UNION ALL
@@ -4164,7 +4228,7 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
       reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
       marketGroup: String(row.market_group ?? 'No Market'),
       scope: String(row.scope ?? 'all') as 'all' | 'chiesi',
-      dimension: String(row.dimension ?? 'product') as 'product' | 'specialty' | 'territory',
+      dimension: String(row.dimension ?? 'product') as 'product' | 'brand' | 'specialty' | 'territory',
       label: String(row.label ?? 'Unmapped Label'),
       ytdRx,
       ytdPyRx,

@@ -393,7 +393,7 @@ async function getHumanResourcesExecutiveSnapshot(
   fallback?: Pick<ExecutiveCardItem, 'module'>,
 ): Promise<ExecutiveCardItem> {
   const [turnover, training, auditSources] = await Promise.all([
-    getHumanResourcesTurnoverThemeData(reportingVersionId, 'total'),
+    getHumanResourcesTurnoverThemeData(reportingVersionId, 'voluntary'),
     getHumanResourcesTrainingThemeData(reportingVersionId, 'total'),
     getHumanResourcesAuditSources(reportingVersionId).catch(() => []),
   ]);

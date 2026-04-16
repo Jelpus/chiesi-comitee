@@ -114,6 +114,23 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
       </article>
 
       <article className="rounded-[18px] border border-slate-200 bg-white p-4">
+        <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Closing Inputs Completeness</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {statusData.closingInputs.map((row) => (
+            <div key={row.areaSlug} className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <p className="text-sm font-semibold text-slate-900">{row.label}</p>
+              <p className="mt-1 text-xs text-slate-600">
+                {row.completed}/{row.expected} completed
+              </p>
+              <div className="mt-2">
+                <AdminStatusBadge status={row.status === 'complete' ? 'published' : 'error'} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="rounded-[18px] border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Home Load Status</p>

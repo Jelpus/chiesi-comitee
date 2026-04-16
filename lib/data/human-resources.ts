@@ -1087,6 +1087,11 @@ function mapThemeItems(rows: Array<Record<string, unknown>>): HumanResourcesTurn
     previousYtdExits: Number(row.previous_ytd_exits ?? 0),
     growthVsPyPct: row.growth_vs_py_pct == null ? null : Number(row.growth_vs_py_pct),
     contributionPct: row.contribution_pct == null ? null : Number(row.contribution_pct),
+    sampleEmployeeNames: Array.isArray(row.sample_employee_names)
+      ? row.sample_employee_names
+          .map((value) => String(value ?? '').trim())
+          .filter((value) => value.length > 0)
+      : [],
   }));
 }
 
@@ -1298,6 +1303,7 @@ export async function getHumanResourcesTurnoverThemeData(
     scoped AS (
       SELECT
         last_working_day_month,
+        NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), '') AS employee_name,
         department,
         territory,
         manager,
@@ -1330,7 +1336,7 @@ export async function getHumanResourcesTurnoverThemeData(
     )
   `;
 
-  const [summaryRows, reasonRows, departmentRows, territoryRows, managerRows, seniorityRows, ageRows, genderRows, compensationRows, earlyAttritionRows, keyRoleRows, monthlyTrendRows] =
+  const [summaryRows, voluntaryTargetBaselineRows, reasonRows, departmentRows, territoryRows, managerRows, seniorityRows, ageRows, genderRows, compensationRows, earlyAttritionRows, keyRoleRows, monthlyTrendRows] =
     await Promise.all([
       client.query({
         query: `
@@ -1339,6 +1345,36 @@ export async function getHumanResourcesTurnoverThemeData(
             SUM(IF(year_value = context.current_year, 1, 0)) AS current_ytd_exits,
             SUM(IF(year_value = context.current_year - 1, 1, 0)) AS previous_ytd_exits
           FROM tagged, context
+        `,
+        params: { reportingVersionId: resolvedReportingVersionId },
+      }),
+      client.query({
+        query: `
+          WITH context AS (
+            SELECT
+              MAX(DATE(report_period_month)) AS max_report_period_month,
+              EXTRACT(YEAR FROM MAX(DATE(report_period_month))) AS current_year,
+              EXTRACT(MONTH FROM MAX(DATE(report_period_month))) AS current_month
+            FROM \`${TURNOVER_VIEW}\`
+            WHERE reporting_version_id = @reportingVersionId
+          )
+          SELECT
+            SUM(
+              IF(
+                EXTRACT(YEAR FROM DATE(last_working_day_month)) = context.current_year - 1,
+                1,
+                0
+              )
+            ) AS previous_voluntary_ytd_exits
+          FROM \`${TURNOVER_VIEW}\`, context
+          WHERE reporting_version_id = @reportingVersionId
+            AND (
+              LOWER(COALESCE(vol_non_vol, '')) LIKE '%vol%'
+              AND LOWER(COALESCE(vol_non_vol, '')) NOT LIKE '%non%'
+            )
+            AND last_working_day_month IS NOT NULL
+            AND EXTRACT(MONTH FROM DATE(last_working_day_month)) <= context.current_month
+            AND EXTRACT(YEAR FROM DATE(last_working_day_month)) = context.current_year - 1
         `,
         params: { reportingVersionId: resolvedReportingVersionId },
       }),
@@ -1357,7 +1393,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY current_ytd_exits DESC
@@ -1380,7 +1417,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY current_ytd_exits DESC
@@ -1403,7 +1441,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY current_ytd_exits DESC
@@ -1426,7 +1465,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY current_ytd_exits DESC
@@ -1449,7 +1489,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY
@@ -1485,7 +1526,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY
@@ -1514,7 +1556,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY current_ytd_exits DESC
@@ -1541,7 +1584,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY
@@ -1575,7 +1619,8 @@ export async function getHumanResourcesTurnoverThemeData(
               SUM(IF(year_value = context.current_year, 1, 0)) - SUM(IF(year_value = context.current_year - 1, 1, 0)),
               NULLIF(SUM(IF(year_value = context.current_year - 1, 1, 0)), 0)
             ) AS growth_vs_py_pct,
-            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct
+            SAFE_DIVIDE(SUM(IF(year_value = context.current_year, 1, 0)), NULLIF((SELECT current_total FROM totals), 0)) AS contribution_pct,
+            ARRAY_AGG(DISTINCT IF(year_value = context.current_year, employee_name, NULL) IGNORE NULLS LIMIT 5) AS sample_employee_names
           FROM tagged, context
           GROUP BY 1
           ORDER BY
@@ -1662,9 +1707,12 @@ export async function getHumanResourcesTurnoverThemeData(
     ]);
 
   const summaryRow = (summaryRows[0] as Array<Record<string, unknown>>)[0] ?? {};
+  const voluntaryTargetBaselineRow =
+    (voluntaryTargetBaselineRows[0] as Array<Record<string, unknown>>)[0] ?? {};
   const currentYtdExits = Number(summaryRow.current_ytd_exits ?? 0);
   const previousYtdExits = Number(summaryRow.previous_ytd_exits ?? 0);
-  const targetYtdExits = previousYtdExits * 0.85;
+  const previousVoluntaryYtdExits = Number(voluntaryTargetBaselineRow.previous_voluntary_ytd_exits ?? 0);
+  const targetYtdExits = previousVoluntaryYtdExits * 0.85;
   const varianceVsTarget = currentYtdExits - targetYtdExits;
   const varianceVsPy = currentYtdExits - previousYtdExits;
   const growthVsPyPct =

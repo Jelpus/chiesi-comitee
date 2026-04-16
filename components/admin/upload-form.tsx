@@ -187,6 +187,9 @@ export function UploadForm({ options }: UploadFormProps) {
   const [sheetOptions, setSheetOptions] = useState<string[]>([]);
   const [selectedSheetName, setSelectedSheetName] = useState('');
   const [headerRow, setHeaderRow] = useState('1');
+  const [opexJanPreviousCol, setOpexJanPreviousCol] = useState('');
+  const [opexJanBudgetCol, setOpexJanBudgetCol] = useState('');
+  const [opexJanCurrentCol, setOpexJanCurrentCol] = useState('');
   const [resultMessage, setResultMessage] = useState('');
   const [inspectMessage, setInspectMessage] = useState('');
   const [uiStage, setUiStage] = useState<UploadUiStage>('idle');
@@ -211,6 +214,7 @@ export function UploadForm({ options }: UploadFormProps) {
     moduleCode === 'business_excellence_sell_out' ||
     moduleCode === 'sell_out';
   const showsSourceSelector = isDddModule || isSellOutModule;
+  const isOpexByCcModule = moduleCode === 'opex_by_cc';
 
   useEffect(() => {
     try {
@@ -225,6 +229,9 @@ export function UploadForm({ options }: UploadFormProps) {
         sourceAsOfMonth: string;
         selectedSheetName: string;
         headerRow: string;
+        opexJanPreviousCol: string;
+        opexJanBudgetCol: string;
+        opexJanCurrentCol: string;
       }>;
 
       if (draft.selectedArea) setSelectedArea(draft.selectedArea);
@@ -235,6 +242,9 @@ export function UploadForm({ options }: UploadFormProps) {
       if (draft.sourceAsOfMonth) setSourceAsOfMonth(draft.sourceAsOfMonth);
       if (draft.selectedSheetName) setSelectedSheetName(draft.selectedSheetName);
       if (draft.headerRow) setHeaderRow(draft.headerRow);
+      if (draft.opexJanPreviousCol !== undefined) setOpexJanPreviousCol(draft.opexJanPreviousCol);
+      if (draft.opexJanBudgetCol !== undefined) setOpexJanBudgetCol(draft.opexJanBudgetCol);
+      if (draft.opexJanCurrentCol !== undefined) setOpexJanCurrentCol(draft.opexJanCurrentCol);
     } catch {
       // Ignore corrupt session draft and keep defaults.
     }
@@ -253,6 +263,9 @@ export function UploadForm({ options }: UploadFormProps) {
           sourceAsOfMonth,
           selectedSheetName,
           headerRow,
+          opexJanPreviousCol,
+          opexJanBudgetCol,
+          opexJanCurrentCol,
         }),
       );
     } catch {
@@ -267,6 +280,9 @@ export function UploadForm({ options }: UploadFormProps) {
     reportingVersionId,
     selectedSheetName,
     sourceAsOfMonth,
+    opexJanPreviousCol,
+    opexJanBudgetCol,
+    opexJanCurrentCol,
   ]);
 
   function inspectWorkbook(file: File) {
@@ -373,6 +389,9 @@ export function UploadForm({ options }: UploadFormProps) {
           periodMonth,
           sourceAsOfMonth,
           dddSource,
+          opexJanPreviousCol,
+          opexJanBudgetCol,
+          opexJanCurrentCol,
           selectedSheetName,
           headerRow,
           selectedFileName: selectedFile?.name ?? null,
@@ -563,6 +582,10 @@ export function UploadForm({ options }: UploadFormProps) {
           <input type="hidden" name="dddSource" value="" />
         )}
 
+        <input type="hidden" name="opexJanPreviousCol" value="" />
+        <input type="hidden" name="opexJanBudgetCol" value="" />
+        <input type="hidden" name="opexJanCurrentCol" value="" />
+
         <label className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
             Source file
@@ -592,22 +615,29 @@ export function UploadForm({ options }: UploadFormProps) {
 
         <label className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            Data sheet
+            {isOpexByCcModule ? 'Workbook sheets' : 'Data sheet'}
           </span>
-          <select
-            name="selectedSheetName"
-            value={selectedSheetName}
-            onChange={(e) => setSelectedSheetName(e.target.value)}
-            disabled={isBusy}
-            className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950"
-          >
-            <option value="">Auto (first sheet)</option>
-            {sheetOptions.map((sheetName) => (
-              <option key={sheetName} value={sheetName}>
-                {sheetName}
-              </option>
-            ))}
-          </select>
+          {isOpexByCcModule ? (
+            <div className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
+              Uses `Ant`, `Budget`, and `Current` automatically.
+            </div>
+          ) : (
+            <select
+              name="selectedSheetName"
+              value={selectedSheetName}
+              onChange={(e) => setSelectedSheetName(e.target.value)}
+              disabled={isBusy}
+              className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950"
+            >
+              <option value="">Auto (first sheet)</option>
+              {sheetOptions.map((sheetName) => (
+                <option key={sheetName} value={sheetName}>
+                  {sheetName}
+                </option>
+              ))}
+            </select>
+          )}
+          {isOpexByCcModule ? <input type="hidden" name="selectedSheetName" value={selectedSheetName} /> : null}
         </label>
 
         <label className="flex flex-col gap-2">

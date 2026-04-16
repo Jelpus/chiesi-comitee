@@ -172,6 +172,7 @@ export type HumanResourcesTurnoverThemeItem = {
   previousYtdExits: number;
   growthVsPyPct: number | null;
   contributionPct: number | null;
+  sampleEmployeeNames: string[];
 };
 
 export type HumanResourcesTurnoverMonthlyTrendRow = {

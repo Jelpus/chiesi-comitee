@@ -72,16 +72,17 @@ function getBudgetTone(coverage: number | null): {
   if (coverage == null) {
     return { label: 'No Target', className: 'border-slate-300 bg-slate-50 text-slate-700' };
   }
-  if (coverage >= 105) {
-    return { label: 'Above Plan', className: 'border-emerald-300 bg-emerald-50 text-emerald-800' };
+  const deviation = Math.abs(coverage - 100);
+  if (deviation <= 3) {
+    return { label: 'On Plan', className: 'border-teal-300 bg-teal-50 text-teal-800' };
   }
-  if (coverage >= 100) {
-    return { label: 'On Plan+', className: 'border-teal-300 bg-teal-50 text-teal-800' };
-  }
-  if (coverage >= 95) {
+  if (deviation <= 5) {
     return { label: 'Near Plan', className: 'border-amber-300 bg-amber-50 text-amber-800' };
   }
-  return { label: 'Below Plan', className: 'border-rose-300 bg-rose-50 text-rose-800' };
+  if (deviation <= 15) {
+    return { label: 'Out Plan', className: 'border-orange-300 bg-orange-50 text-orange-800' };
+  }
+  return { label: 'Critically Out Plan', className: 'border-rose-300 bg-rose-50 text-rose-800' };
 }
 
 export function OpexDashboardPanel({ rows }: OpexDashboardPanelProps) {
@@ -369,7 +370,7 @@ export function OpexDashboardPanel({ rows }: OpexDashboardPanelProps) {
           <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
             <p className="text-xs uppercase tracking-[0.12em] text-slate-500">PY vs Actual vs Budget</p>
             <p className="mt-1 text-xs text-slate-600">Total comparison ({periodMode.toUpperCase()})</p>
-            <div className="mt-4 flex h-56 items-end justify-around gap-6 rounded-[10px] border border-slate-200 bg-white p-4">
+            <div className="mt-4 flex h-40 items-end justify-around gap-6 rounded-[10px] border border-slate-200 bg-white p-4">
               {[
                 { label: 'PY', value: totals.py, color: 'bg-slate-400' },
                 { label: 'Actual', value: totals.actual, color: 'bg-blue-500' },
@@ -377,7 +378,7 @@ export function OpexDashboardPanel({ rows }: OpexDashboardPanelProps) {
               ].map((bar) => (
                 <div key={bar.label} className="flex w-24 flex-col items-center gap-2">
                   <span className="text-[10px] font-semibold text-slate-600">{formatAmount(bar.value)}</span>
-                  <div className="flex h-36 w-10 items-end rounded bg-slate-100">
+                  <div className="flex h-24 w-10 items-end rounded bg-slate-100">
                     <div
                       className={`w-full rounded-t ${bar.color}`}
                       style={{ height: `${Math.max(4, (bar.value / totalChartScaleMax) * 100)}%` }}
@@ -386,6 +387,55 @@ export function OpexDashboardPanel({ rows }: OpexDashboardPanelProps) {
                   <span className="text-[10px] uppercase tracking-[0.12em] text-slate-600">{bar.label}</span>
                 </div>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-[10px] border border-slate-200 bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Status Logic</p>
+              <p className="mt-1 text-xs text-slate-600">How the status badge is estimated from Budget Coverage.</p>
+              <div className="mt-3 grid gap-2 rounded-[10px] border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                <p className="font-semibold uppercase tracking-[0.12em] text-slate-500">Formula</p>
+                <p>
+                Budget Coverage = <span className="font-semibold text-slate-900">Actual / Budget</span>
+                </p>
+                <p>
+                Deviation = <span className="font-semibold text-slate-900">|Budget Coverage - 100%|</span>
+                </p>
+              </div>
+
+              <div className="mt-3 grid gap-2">
+                <div className="rounded-[10px] border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-900">
+                  <span className="font-semibold">On Plan</span>:
+                  {' '}
+                  up to <span className="font-semibold">3%</span>
+                  {' '}
+                  (`97% - 103%`)
+                </div>
+                <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <span className="font-semibold">Near Plan</span>:
+                  {' '}
+                  {`> 3%`} to <span className="font-semibold">5%</span>
+                  {' '}
+                  (`95% - 97%` or `103% - 105%`)
+                </div>
+                <div className="rounded-[10px] border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-900">
+                  <span className="font-semibold">Out Plan</span>:
+                  {' '}
+                  {`> 5%`} to <span className="font-semibold">15%</span>
+                  {' '}
+                  (`85% - 95%` or `105% - 115%`)
+                </div>
+                <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+                  <span className="font-semibold">Critically Out Plan</span>:
+                  {' '}
+                  {`> 15%`}
+                  {' '}
+                  (&lt; 85% or &gt; 115%)
+                </div>
+              </div>
+
+              <p className="mt-3 text-[11px] text-slate-500">
+                Applied consistently to the ranking table and detailed CeCo / Element views for the selected {periodMode.toUpperCase()} scope.
+              </p>
             </div>
           </div>
         </div>

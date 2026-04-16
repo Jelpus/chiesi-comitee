@@ -144,7 +144,7 @@ export type BusinessExcellencePrivateDddDimensionRankingRow = {
   reportingVersionId: string;
   marketGroup: string;
   scope: 'all' | 'chiesi';
-  dimension: 'pack' | 'state' | 'manager' | 'territory';
+  dimension: 'pack' | 'brand' | 'state' | 'manager' | 'territory';
   label: string;
   ytdUnits: number;
   ytdPyUnits: number;
@@ -155,7 +155,7 @@ export type BusinessExcellencePrivatePrescriptionDimensionRankingRow = {
   reportingVersionId: string;
   marketGroup: string;
   scope: 'all' | 'chiesi';
-  dimension: 'product' | 'specialty' | 'territory';
+  dimension: 'product' | 'brand' | 'specialty' | 'territory';
   label: string;
   ytdRx: number;
   ytdPyRx: number;
@@ -419,6 +419,8 @@ export type BusinessExcellencePublicDimensionRankingRow = {
   label: string;
   ytdUnits: number;
   ytdPyUnits: number;
+  mthUnits: number;
+  mthPyUnits: number;
   growthVsPyPct: number | null;
 };
 

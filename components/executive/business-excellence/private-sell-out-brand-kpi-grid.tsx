@@ -146,7 +146,8 @@ export function PrivateSellOutBrandKpiGrid({ rows }: PrivateSellOutBrandKpiGridP
         };
       })()
     : null;
-  const displayRows = triplesSyntheticRow ? [...rows, triplesSyntheticRow] : rows;
+  const displayRows = [...(triplesSyntheticRow ? [...rows, triplesSyntheticRow] : rows)]
+    .sort((a, b) => b.mthNetSales - a.mthNetSales);
 
   return (
     <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50/50 p-4">

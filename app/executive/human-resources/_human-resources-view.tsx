@@ -416,7 +416,7 @@ function TurnoverTargetPanel({
           <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(data.summary.previousYtdExits)}</p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Target YTD (-15% vs PY)</p>
+          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Target YTD (-15% vs PY Voluntary)</p>
           <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(data.summary.targetYtdExits)}</p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">

@@ -52,6 +52,28 @@ function monthNumber(periodMonth: string | null | undefined) {
   return date.getUTCMonth() + 1;
 }
 
+function deriveEffectiveYtdCount(row: {
+  topic: string;
+  ytdCount: number | null;
+  onTimeCount: number | null;
+  lateCount: number | null;
+  pendingCount: number | null;
+  activeCount: number | null;
+  overdueCount: number | null;
+}) {
+  if (row.ytdCount != null) return row.ytdCount;
+  const topicKey = normalize(row.topic);
+  if (topicKey.includes('procedimientos')) {
+    const hasProcedureInputs = row.activeCount != null || row.overdueCount != null;
+    if (!hasProcedureInputs) return null;
+    return (row.activeCount ?? 0) + (row.overdueCount ?? 0);
+  }
+  const hasExecutionMixInput =
+    row.onTimeCount != null || row.lateCount != null || row.pendingCount != null;
+  if (!hasExecutionMixInput) return null;
+  return (row.onTimeCount ?? 0) + (row.lateCount ?? 0) + (row.pendingCount ?? 0);
+}
+
 function deriveTopicStatus(
   topic: string,
   targetValue: number | null,
@@ -60,6 +82,7 @@ function deriveTopicStatus(
     onTimeCount: number | null;
     lateCount: number | null;
     pendingCount: number | null;
+    activeCount: number | null;
     overdueCount: number | null;
     ytdCount: number | null;
     resultText: string;
@@ -68,6 +91,13 @@ function deriveTopicStatus(
   const topicKey = normalize(topic);
 
   if (topicKey.includes('procedimientos')) {
+    const active = row.activeCount ?? 0;
+    const ytd = row.ytdCount ?? 0;
+    if (ytd > 0) {
+      const activeRate = active / ytd;
+      if (activeRate >= 0.8) return 'on_track';
+      return 'off_track';
+    }
     const overdue = row.overdueCount ?? 0;
     if (overdue <= 0) return 'on_track';
     if (overdue <= 2) return 'watch';
@@ -89,9 +119,9 @@ function deriveTopicStatus(
   const onTime = row.onTimeCount ?? 0;
   const late = row.lateCount ?? 0;
   const pending = row.pendingCount ?? 0;
-  const totalClosed = onTime + late;
-  if (totalClosed > 0) {
-    const onTimeRate = onTime / totalClosed;
+  const totalTracked = onTime + late + pending;
+  if (totalTracked > 0) {
+    const onTimeRate = onTime / totalTracked;
     if (late === 0 && pending <= 2) return 'on_track';
     if (onTimeRate >= 0.8) return 'watch';
     return 'off_track';
@@ -135,12 +165,22 @@ export async function getRaQualityFvData(
       null;
     const targetText = targetMatch?.text || row.targetLabel || 'Target not configured';
     const targetValue = targetMatch?.value ?? parseTopicTargetValue(row.targetLabel);
+    const effectiveYtdCount = deriveEffectiveYtdCount({
+      topic: row.topic,
+      ytdCount: row.ytdCount,
+      onTimeCount: row.onTimeCount,
+      lateCount: row.lateCount,
+      pendingCount: row.pendingCount,
+      activeCount: row.activeCount,
+      overdueCount: row.overdueCount,
+    });
     const status = deriveTopicStatus(row.topic, targetValue, row.periodMonth, {
       onTimeCount: row.onTimeCount,
       lateCount: row.lateCount,
       pendingCount: row.pendingCount,
+      activeCount: row.activeCount,
       overdueCount: row.overdueCount,
-      ytdCount: row.ytdCount,
+      ytdCount: effectiveYtdCount,
       resultText: row.resultSummary,
     });
 
@@ -159,7 +199,7 @@ export async function getRaQualityFvData(
       pendingCount: row.pendingCount,
       activeCount: row.activeCount,
       overdueCount: row.overdueCount,
-      ytdCount: row.ytdCount,
+      ytdCount: effectiveYtdCount,
       comment: row.comment,
     };
   });

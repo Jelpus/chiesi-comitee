@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import type { TooltipProps } from 'recharts';
 import {
   Bar,
   BarChart,
@@ -17,6 +18,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import type { NameType, ValueType } from 'recharts/types/component/DefaultTooltipContent';
 import type {
   HumanResourcesTrainingRankingRow,
   HumanResourcesTrainingThemeData,
@@ -79,6 +81,39 @@ function formatHours(value: unknown) {
   if (numeric == null) return '0.0';
   if (!Number.isFinite(numeric)) return 'N/A';
   return numeric.toFixed(1);
+}
+
+type ThemeTooltipPayloadRow = {
+  label?: string;
+  name?: string;
+  value?: number;
+  sampleEmployeeNames?: string[];
+};
+
+function ThemeItemTooltip({
+  active,
+  payload,
+  label,
+}: any) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const row = payload[0]?.payload as ThemeTooltipPayloadRow | undefined;
+  const title = row?.label ?? row?.name ?? (typeof label === 'string' ? label : '');
+  const names = row?.sampleEmployeeNames?.filter(Boolean) ?? [];
+  const value = payload[0]?.value;
+
+  return (
+    <div className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_30px_rgba(15,23,42,0.14)]">
+      <p className="text-xs font-semibold text-slate-900">{title || 'Detail'}</p>
+      <p className="mt-1 text-xs text-slate-600">Exits: <span className="font-semibold text-slate-900">{formatInt(value)}</span></p>
+      {names.length > 0 ? (
+        <div className="mt-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">People</p>
+          <p className="mt-1 max-w-[240px] text-xs leading-5 text-slate-700">{names.join(', ')}</p>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function TurnoverChartsPanel({
@@ -510,6 +545,7 @@ export function TopExitReasonsChart({ rows }: { rows: HumanResourcesTurnoverThem
       rows.slice(0, 6).map((row) => ({
         label: row.label,
         value: row.currentYtdExits,
+        sampleEmployeeNames: row.sampleEmployeeNames,
       })),
     [rows],
   );
@@ -523,7 +559,7 @@ export function TopExitReasonsChart({ rows }: { rows: HumanResourcesTurnoverThem
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis type="number" tick={{ fontSize: 11 }} />
             <YAxis dataKey="label" type="category" width={130} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => [formatInt(value), 'Exits']} />
+            <Tooltip content={<ThemeItemTooltip />} />
             <Bar dataKey="value" name="Exits" fill="#ef4444" radius={[0, 4, 4, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -542,6 +578,7 @@ export function DepartmentContributionChart({
       rows.slice(0, 6).map((row) => ({
         name: row.label,
         value: row.currentYtdExits,
+        sampleEmployeeNames: row.sampleEmployeeNames,
       })),
     [rows],
   );
@@ -557,7 +594,7 @@ export function DepartmentContributionChart({
                 <Cell key={`dep-slice-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip formatter={(value) => [formatInt(value), 'Exits']} />
+            <Tooltip content={<ThemeItemTooltip />} />
             <Legend />
           </PieChart>
         </ResponsiveContainer>
@@ -576,6 +613,7 @@ export function TopManagersImpactChart({
       rows.slice(0, 6).map((row) => ({
         label: row.label,
         value: row.currentYtdExits,
+        sampleEmployeeNames: row.sampleEmployeeNames,
       })),
     [rows],
   );
@@ -589,7 +627,7 @@ export function TopManagersImpactChart({
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis type="number" tick={{ fontSize: 11 }} />
             <YAxis dataKey="label" type="category" width={130} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => [formatInt(value), 'Exits']} />
+            <Tooltip content={<ThemeItemTooltip />} />
             <Bar dataKey="value" name="Exits" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -608,6 +646,7 @@ export function GenderMixChart({
       rows.map((row) => ({
         name: row.label,
         value: row.currentYtdExits,
+        sampleEmployeeNames: row.sampleEmployeeNames,
       })),
     [rows],
   );
@@ -623,7 +662,7 @@ export function GenderMixChart({
                 <Cell key={`gender-slice-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip formatter={(value) => [formatInt(value), 'Exits']} />
+            <Tooltip content={<ThemeItemTooltip />} />
             <Legend />
           </PieChart>
         </ResponsiveContainer>
@@ -646,6 +685,7 @@ export function ThemeHorizontalBarChart({
       rows.slice(0, 8).map((row) => ({
         label: row.label,
         value: row.currentYtdExits,
+        sampleEmployeeNames: row.sampleEmployeeNames,
       })),
     [rows],
   );
@@ -659,7 +699,7 @@ export function ThemeHorizontalBarChart({
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis type="number" tick={{ fontSize: 11 }} />
             <YAxis dataKey="label" type="category" width={130} tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(value) => [formatInt(value), 'Exits']} />
+            <Tooltip content={<ThemeItemTooltip />} />
             <Bar dataKey="value" name="Exits" fill={color} radius={[0, 4, 4, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -680,6 +720,7 @@ export function ThemePieChart({
       rows.map((row) => ({
         name: row.label,
         value: row.currentYtdExits,
+        sampleEmployeeNames: row.sampleEmployeeNames,
       })),
     [rows],
   );
@@ -695,7 +736,7 @@ export function ThemePieChart({
                 <Cell key={`theme-slice-${title}-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip formatter={(value) => [formatInt(value), 'Exits']} />
+            <Tooltip content={<ThemeItemTooltip />} />
             <Legend />
           </PieChart>
         </ResponsiveContainer>

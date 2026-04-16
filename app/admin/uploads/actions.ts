@@ -25,9 +25,45 @@ function isCsvFileName(fileName: string) {
     return /\.csv$/i.test(fileName.trim());
 }
 
+function normalizeWorkbookSheetName(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function resolveOpexRequiredSheets(sheetNames: string[]) {
+    const normalizedSheets = sheetNames.map((sheetName) => ({
+        original: sheetName,
+        normalized: normalizeWorkbookSheetName(sheetName),
+    }));
+
+    const findSheet = (aliases: string[]) =>
+        normalizedSheets.find((item) => aliases.some((alias) => item.normalized.includes(alias)))?.original ?? null;
+
+    const antSheet = findSheet(['ant', 'previous', 'prev', 'prior']);
+    const budgetSheet = findSheet(['budget', 'presupuesto', 'plan']);
+    const currentSheet = findSheet(['current', 'actual', 'real']);
+
+    const resolved = [antSheet, budgetSheet, currentSheet] as const;
+    const missing = [
+        antSheet ? null : 'ant',
+        budgetSheet ? null : 'budget',
+        currentSheet ? null : 'current',
+    ].filter((value): value is string => value !== null);
+
+    if (missing.length > 0) {
+        throw new Error(`OPEX by CC file is missing required sheets: ${missing.join(', ')}.`);
+    }
+    return resolved as [string, string, string];
+}
+
 let ensureUploadsAsOfColumnPromise: Promise<void> | null = null;
 let ensureUploadsErrorColumnPromise: Promise<void> | null = null;
 let ensureUploadsDddSourceColumnPromise: Promise<void> | null = null;
+let ensureUploadsOpexHintsColumnsPromise: Promise<void> | null = null;
 let ensureSellOutMappingTablePromise: Promise<void> | null = null;
 
 function sanitizeFileName(fileName: string) {
@@ -697,6 +733,11 @@ async function runWithRetry<T>(fn: () => Promise<T>, retries = 3) {
     throw lastError;
 }
 
+function isRequestEntityTooLargeError(error: unknown) {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return message.includes('request entity too large') || message.includes('413');
+}
+
 async function ensureUploadsAsOfColumn() {
     if (!ensureUploadsAsOfColumnPromise) {
         ensureUploadsAsOfColumnPromise = (async () => {
@@ -766,6 +807,41 @@ async function ensureUploadsDddSourceColumn() {
     await ensureUploadsDddSourceColumnPromise;
 }
 
+async function ensureUploadsOpexHintsColumns() {
+    if (!ensureUploadsOpexHintsColumnsPromise) {
+        ensureUploadsOpexHintsColumnsPromise = (async () => {
+            const client = getBigQueryClient();
+            try {
+                await client.query({
+                    query: `
+          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+          ADD COLUMN IF NOT EXISTS opex_jan_previous_col INT64
+        `,
+                });
+                await client.query({
+                    query: `
+          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+          ADD COLUMN IF NOT EXISTS opex_jan_budget_col INT64
+        `,
+                });
+                await client.query({
+                    query: `
+          ALTER TABLE \`chiesi-committee.chiesi_committee_raw.uploads\`
+          ADD COLUMN IF NOT EXISTS opex_jan_current_col INT64
+        `,
+                });
+            } catch (error) {
+                if (!isTableUpdateQuotaError(error)) throw error;
+                console.warn('[ensureUploadsOpexHintsColumns] skipped due to table update quota', {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        })();
+    }
+
+    await ensureUploadsOpexHintsColumnsPromise;
+}
+
 async function insertUploadRecord(params: {
     uploadId: string;
     moduleCode: string;
@@ -778,9 +854,13 @@ async function insertUploadRecord(params: {
     selectedHeaderRow: number;
     sourceAsOfMonth: string;
     dddSource: string;
+    opexJanPreviousCol: number | null;
+    opexJanBudgetCol: number | null;
+    opexJanCurrentCol: number | null;
 }) {
     await ensureUploadsAsOfColumn();
     await ensureUploadsDddSourceColumn();
+    await ensureUploadsOpexHintsColumns();
     const client = getBigQueryClient();
 
     const query = `
@@ -802,7 +882,10 @@ async function insertUploadRecord(params: {
       selected_sheet_name,
       selected_header_row,
       source_as_of_month,
-      ddd_source
+      ddd_source,
+      opex_jan_previous_col,
+      opex_jan_budget_col,
+      opex_jan_current_col
     )
     VALUES
     (
@@ -822,7 +905,10 @@ async function insertUploadRecord(params: {
       @selectedSheetName,
       @selectedHeaderRow,
       DATE(@sourceAsOfMonth),
-      NULLIF(@dddSource, '')
+      NULLIF(@dddSource, ''),
+      @opexJanPreviousCol,
+      @opexJanBudgetCol,
+      @opexJanCurrentCol
     )
   `;
 
@@ -845,8 +931,26 @@ async function insertUploadRecord(params: {
             selectedHeaderRow: params.selectedHeaderRow,
             sourceAsOfMonth: params.sourceAsOfMonth,
             dddSource: params.dddSource,
+            opexJanPreviousCol: params.opexJanPreviousCol,
+            opexJanBudgetCol: params.opexJanBudgetCol,
+            opexJanCurrentCol: params.opexJanCurrentCol,
+        },
+        types: {
+            opexJanPreviousCol: 'INT64',
+            opexJanBudgetCol: 'INT64',
+            opexJanCurrentCol: 'INT64',
         },
     });
+}
+
+function parseOptionalPositiveInt(value: FormDataEntryValue | null): number | null {
+    if (value == null) return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    const parsed = Number(text);
+    if (!Number.isFinite(parsed)) return null;
+    const intValue = Math.trunc(parsed);
+    return intValue > 0 ? intValue : null;
 }
 
 async function insertUploadRows(uploadId: string, rows: UploadRowParam[]) {
@@ -879,13 +983,8 @@ async function insertUploadRows(uploadId: string, rows: UploadRowParam[]) {
     const maxConcurrency = 3;
     let nextChunkIndex = 0;
 
-    async function worker() {
-        while (true) {
-            const chunkIndex = nextChunkIndex;
-            nextChunkIndex += 1;
-            if (chunkIndex >= chunks.length) return;
-
-            const chunk = chunks[chunkIndex];
+    async function insertChunkWithAdaptiveSplit(chunk: UploadRowParam[]): Promise<void> {
+        try {
             await runWithRetry(
                 () =>
                     client.query({
@@ -901,6 +1000,34 @@ async function insertUploadRows(uploadId: string, rows: UploadRowParam[]) {
                     }),
                 3,
             );
+        } catch (error) {
+            if (!isRequestEntityTooLargeError(error)) {
+                throw error;
+            }
+
+            if (chunk.length <= 1) {
+                const rowNumber = chunk[0]?.rowNumber ?? 'unknown';
+                throw new Error(
+                    `Raw row payload exceeds request limits even as a single-row chunk (row ${rowNumber}).`,
+                );
+            }
+
+            const middle = Math.ceil(chunk.length / 2);
+            const left = chunk.slice(0, middle);
+            const right = chunk.slice(middle);
+            await insertChunkWithAdaptiveSplit(left);
+            await insertChunkWithAdaptiveSplit(right);
+        }
+    }
+
+    async function worker() {
+        while (true) {
+            const chunkIndex = nextChunkIndex;
+            nextChunkIndex += 1;
+            if (chunkIndex >= chunks.length) return;
+
+            const chunk = chunks[chunkIndex];
+            await insertChunkWithAdaptiveSplit(chunk);
         }
     }
 
@@ -923,8 +1050,7 @@ async function clearUploadRawRows(uploadId: string) {
 
 async function writeRawRowsNdjsonToGcs(params: {
     uploadId: string;
-    selectedSheetName: string;
-    rows: Array<{ rowNumber: number; payload: Record<string, unknown> }>;
+    rows: Array<{ rowNumber: number; payload: Record<string, unknown>; sheetName: string }>;
     storagePath: string;
 }) {
     const { bucketName, objectPath } = parseGcsPath(params.storagePath);
@@ -946,7 +1072,7 @@ async function writeRawRowsNdjsonToGcs(params: {
             row_payload_json: row.payload,
             validation_status: 'pending',
             validation_error_json: [],
-            sheet_name: params.selectedSheetName,
+            sheet_name: row.sheetName,
         };
 
         const line = `${JSON.stringify(payload)}\n`;
@@ -1221,6 +1347,9 @@ export async function createUploadRecord(formData: FormData) {
   const periodMonth = String(formData.get('periodMonth') ?? '');
   const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? periodMonth);
   const dddSource = String(formData.get('dddSource') ?? '');
+  const opexJanPreviousCol = parseOptionalPositiveInt(formData.get('opexJanPreviousCol'));
+  const opexJanBudgetCol = parseOptionalPositiveInt(formData.get('opexJanBudgetCol'));
+  const opexJanCurrentCol = parseOptionalPositiveInt(formData.get('opexJanCurrentCol'));
   const selectedSheetName = String(formData.get('selectedSheetName') ?? '').trim();
   const headerRowValue = Number(formData.get('headerRow') ?? 1);
   const headerRow = Number.isFinite(headerRowValue) && headerRowValue > 0 ? headerRowValue : 1;
@@ -1231,6 +1360,9 @@ export async function createUploadRecord(formData: FormData) {
     periodMonth,
     sourceAsOfMonth,
     dddSource,
+    opexJanPreviousCol,
+    opexJanBudgetCol,
+    opexJanCurrentCol,
     selectedSheetName,
     headerRow,
     fileName: file instanceof File ? file.name : null,
@@ -1281,6 +1413,9 @@ export async function createUploadRecord(formData: FormData) {
           moduleCode === 'sell_out'
             ? dddSource
             : '',
+        opexJanPreviousCol: moduleCode === 'opex_by_cc' ? opexJanPreviousCol : null,
+        opexJanBudgetCol: moduleCode === 'opex_by_cc' ? opexJanBudgetCol : null,
+        opexJanCurrentCol: moduleCode === 'opex_by_cc' ? opexJanCurrentCol : null,
     });
 
     console.info('[createUploadRecord] upload record inserted', {
@@ -1305,6 +1440,9 @@ export async function createUploadRecord(formData: FormData) {
           reporting_version_id: reportingVersionId,
           selected_sheet_name: effectiveSelectedSheetName,
           header_row: String(headerRow),
+          opex_jan_previous_col: moduleCode === 'opex_by_cc' && opexJanPreviousCol != null ? String(opexJanPreviousCol) : '',
+          opex_jan_budget_col: moduleCode === 'opex_by_cc' && opexJanBudgetCol != null ? String(opexJanBudgetCol) : '',
+          opex_jan_current_col: moduleCode === 'opex_by_cc' && opexJanCurrentCol != null ? String(opexJanCurrentCol) : '',
         },
       },
     });
@@ -1432,24 +1570,58 @@ export async function processUpload(uploadId: string) {
         const { bucketName, objectPath } = parseGcsPath(context.storagePath);
         const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
 
-        const parsedRows = parseExcelRows(fileBuffer, {
-            sheetName: context.selectedSheetName,
-            headerRow: context.selectedHeaderRow,
-        });
-        if (parsedRows.length === 0) {
-            throw new Error(
-                'No rows were parsed from source file. Check delimiter/encoding and selected header row.',
-            );
-        }
-        const sampleCheck = validateSampleRows(moduleCode, parsedRows);
-        if (!sampleCheck.ok) {
-            throw new Error(sampleCheck.message);
-        }
-        sampleRowsChecked = sampleCheck.checked;
+        let rowsForRaw: Array<{ rowNumber: number; payload: Record<string, unknown>; sheetName: string }> = [];
 
-        let rowsForRaw = parsedRows;
+        if (moduleCode === 'opex_by_cc') {
+            const workbookSheets = inspectExcelWorkbook(fileBuffer);
+            const [antSheetName, budgetSheetName, currentSheetName] = resolveOpexRequiredSheets(workbookSheets);
+            const opexSheets = [antSheetName, budgetSheetName, currentSheetName];
+            let rowOffset = 0;
+
+            for (const sheetName of opexSheets) {
+                const parsedSheetRows = parseExcelRows(fileBuffer, {
+                    sheetName,
+                    headerRow: context.selectedHeaderRow,
+                });
+                if (parsedSheetRows.length === 0) {
+                    throw new Error(`No rows were parsed from OPEX sheet "${sheetName}".`);
+                }
+
+                rowsForRaw.push(
+                    ...parsedSheetRows.map((row) => ({
+                        rowNumber: row.rowNumber + rowOffset,
+                        payload: row.payload,
+                        sheetName,
+                    })),
+                );
+                rowOffset += 100000;
+            }
+            sampleRowsChecked = Math.min(rowsForRaw.length, 30);
+        } else {
+            const parsedRows = parseExcelRows(fileBuffer, {
+                sheetName: context.selectedSheetName,
+                headerRow: context.selectedHeaderRow,
+            });
+            if (parsedRows.length === 0) {
+                throw new Error(
+                    'No rows were parsed from source file. Check delimiter/encoding and selected header row.',
+                );
+            }
+            const sampleCheck = validateSampleRows(moduleCode, parsedRows);
+            if (!sampleCheck.ok) {
+                throw new Error(sampleCheck.message);
+            }
+            sampleRowsChecked = sampleCheck.checked;
+
+            rowsForRaw = parsedRows.map((row) => ({
+                rowNumber: row.rowNumber,
+                payload: row.payload,
+                sheetName: context.selectedSheetName,
+            }));
+        }
+
         if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
-            rowsForRaw = parsedRows;
+            rowsForRaw = rowsForRaw;
         }
         if (
             moduleCode === 'business_excellence_ddd' ||
@@ -1460,18 +1632,14 @@ export async function processUpload(uploadId: string) {
             moduleCode === 'business_excellence_sell_out' ||
             moduleCode === 'sell_out'
         ) {
-            rowsForRaw = parsedRows;
+            rowsForRaw = rowsForRaw;
         }
 
         await setUploadStatus(uploadId, 'loading_raw');
         await clearUploadRawRows(uploadId);
         const tempFile = await writeRawRowsNdjsonToGcs({
             uploadId,
-            selectedSheetName: context.selectedSheetName,
-            rows: rowsForRaw.map((row) => ({
-                rowNumber: row.rowNumber,
-                payload: row.payload,
-            })),
+            rows: rowsForRaw,
             storagePath: context.storagePath,
         });
         try {

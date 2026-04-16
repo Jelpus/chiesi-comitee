@@ -12,6 +12,7 @@ type PublicMarketGroupAnalysisProps = {
   rows: BusinessExcellencePublicMarketTopProductRow[];
   chartRows: BusinessExcellencePublicMarketChartPoint[];
   rankingRows: BusinessExcellencePublicDimensionRankingRow[];
+  activeView: 'ytd' | 'mth';
 };
 
 function formatPercent(value: number | null, digits = 1) {
@@ -36,8 +37,7 @@ function formatShortMonth(value: string) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit' }).format(date);
 }
 
-export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: PublicMarketGroupAnalysisProps) {
-  const [windowMode, setWindowMode] = useState<'ytd' | 'mth'>('ytd');
+export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows, activeView }: PublicMarketGroupAnalysisProps) {
   const [dataScope, setDataScope] = useState<'all' | 'chiesi'>('chiesi');
   const [rankingMode, setRankingMode] = useState<'clue' | 'clave' | 'ruta'>('clue');
 
@@ -56,14 +56,14 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
   const detail = useMemo(() => {
     if (!selectedRow) return null;
 
-    const chiesiUnits = windowMode === 'ytd' ? selectedRow.ytdPieces : selectedRow.mthPieces;
-    const chiesiUnitsPy = windowMode === 'ytd' ? selectedRow.ytdPiecesPy : selectedRow.mthPiecesPy;
-    const chiesiGrowthPct = windowMode === 'ytd' ? selectedRow.ytdGrowthPct : selectedRow.mthGrowthPct;
-    const msPct = windowMode === 'ytd' ? selectedRow.ytdMsPct : selectedRow.mthMsPct;
-    const msPctPy = windowMode === 'ytd' ? selectedRow.ytdMsPctPy : selectedRow.mthMsPctPy;
-    const ei = windowMode === 'ytd' ? selectedRow.ytdEvolutionIndex : selectedRow.mthEvolutionIndex;
-    const budgetUnits = windowMode === 'ytd' ? selectedRow.ytdBudgetUnits : selectedRow.mthBudgetUnits;
-    const coveragePct = windowMode === 'ytd' ? selectedRow.ytdCoverageVsBudgetPct : selectedRow.mthCoverageVsBudgetPct;
+    const chiesiUnits = activeView === 'ytd' ? selectedRow.ytdPieces : selectedRow.mthPieces;
+    const chiesiUnitsPy = activeView === 'ytd' ? selectedRow.ytdPiecesPy : selectedRow.mthPiecesPy;
+    const chiesiGrowthPct = activeView === 'ytd' ? selectedRow.ytdGrowthPct : selectedRow.mthGrowthPct;
+    const msPct = activeView === 'ytd' ? selectedRow.ytdMsPct : selectedRow.mthMsPct;
+    const msPctPy = activeView === 'ytd' ? selectedRow.ytdMsPctPy : selectedRow.mthMsPctPy;
+    const ei = activeView === 'ytd' ? selectedRow.ytdEvolutionIndex : selectedRow.mthEvolutionIndex;
+    const budgetUnits = activeView === 'ytd' ? selectedRow.ytdBudgetUnits : selectedRow.mthBudgetUnits;
+    const coveragePct = activeView === 'ytd' ? selectedRow.ytdCoverageVsBudgetPct : selectedRow.mthCoverageVsBudgetPct;
 
     const marketUnits = safeMarketUnits(chiesiUnits, msPct);
     const marketUnitsPy = safeMarketUnits(chiesiUnitsPy, msPctPy);
@@ -84,19 +84,19 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
       budgetUnits: dataScope === 'chiesi' ? budgetUnits : 0,
       coveragePct: dataScope === 'chiesi' ? coveragePct : null,
     };
-  }, [selectedRow, windowMode, dataScope]);
+  }, [selectedRow, activeView, dataScope]);
 
-  const trendRows = useMemo(
-    () =>
-      chartRows
-        .filter((row) => row.marketGroup === selectedMarketGroup && row.scope === dataScope)
-        .map((row) => ({
-          ...row,
-          periodLabel: formatShortMonth(row.periodMonth),
-        }))
-        .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth)),
-    [chartRows, selectedMarketGroup, dataScope],
-  );
+  const trendRows = useMemo(() => {
+    const rowsForTrend = chartRows
+      .filter((row) => row.marketGroup === selectedMarketGroup && row.scope === dataScope)
+      .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth))
+      .slice(-12);
+
+    return rowsForTrend.map((row) => ({
+      ...row,
+      periodLabel: formatShortMonth(row.periodMonth),
+    }));
+  }, [chartRows, selectedMarketGroup, dataScope]);
 
   const rankingDisplayRows = useMemo(
     () =>
@@ -107,9 +107,9 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
             row.scope === dataScope &&
             row.dimension === rankingMode,
         )
-        .sort((a, b) => b.ytdUnits - a.ytdUnits)
+        .sort((a, b) => (activeView === 'ytd' ? b.ytdUnits - a.ytdUnits : b.mthUnits - a.mthUnits))
         .slice(0, 30),
-    [rankingRows, selectedMarketGroup, dataScope, rankingMode],
+    [rankingRows, selectedMarketGroup, dataScope, rankingMode, activeView],
   );
 
   if (rows.length === 0) return null;
@@ -143,27 +143,6 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
             <option value="all">All Market</option>
           </select>
         </label>
-
-        <div className="inline-flex rounded-full border border-slate-200 bg-white p-1">
-          <button
-            type="button"
-            onClick={() => setWindowMode('ytd')}
-            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
-              windowMode === 'ytd' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            YTD
-          </button>
-          <button
-            type="button"
-            onClick={() => setWindowMode('mth')}
-            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
-              windowMode === 'mth' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            MTH
-          </button>
-        </div>
       </div>
 
       <div className="rounded-[16px] border border-slate-200 bg-white p-4">
@@ -242,8 +221,8 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
 
       <div className="rounded-[16px] border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Ranking Mode</p>
-          <div className="inline-flex rounded-full border border-slate-200 bg-white p-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Ranking Mode</p>
             {(
               [
                 { key: 'clave', label: 'CLAVE' },
@@ -258,11 +237,14 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
                 className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
                   rankingMode === item.key ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
                 }`}
-              >
-                {item.label}
-              </button>
-            ))}
+                >
+                  {item.label}
+                </button>
+              ))}
           </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            {activeView.toUpperCase()} view
+          </p>
         </div>
         <div className="mt-3 max-h-[260px] overflow-auto scrollbar-none rounded-[12px] border border-slate-200">
           <table className="min-w-full border-collapse text-xs">
@@ -271,8 +253,8 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
                 <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                   {rankingMode.toUpperCase()}
                 </th>
-                <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">YTD Units</th>
-                <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">YTD PY Units</th>
+                <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">{activeView.toUpperCase()} Units</th>
+                <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">{activeView.toUpperCase()} PY Units</th>
                 <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">Growth vs PY</th>
               </tr>
             </thead>
@@ -281,13 +263,18 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows }: Publ
                 <tr key={`${row.dimension}-${row.label}`} className="border-b border-slate-100 last:border-b-0">
                   <td className="max-w-[360px] truncate px-2 py-1.5 text-slate-800">{row.label}</td>
                   <td className="px-2 py-1.5 text-right font-semibold text-slate-900">
-                    {new Intl.NumberFormat('en-US').format(row.ytdUnits)}
+                    {new Intl.NumberFormat('en-US').format(activeView === 'ytd' ? row.ytdUnits : row.mthUnits)}
                   </td>
                   <td className="px-2 py-1.5 text-right text-slate-700">
-                    {new Intl.NumberFormat('en-US').format(row.ytdPyUnits)}
+                    {new Intl.NumberFormat('en-US').format(activeView === 'ytd' ? row.ytdPyUnits : row.mthPyUnits)}
                   </td>
                   <td className={`px-2 py-1.5 text-right font-semibold ${toneByValue(row.growthVsPyPct)}`}>
-                    {row.growthVsPyPct === null ? 'N/A' : formatPercent(row.growthVsPyPct, 1)}
+                    {(() => {
+                      const units = activeView === 'ytd' ? row.ytdUnits : row.mthUnits;
+                      const unitsPy = activeView === 'ytd' ? row.ytdPyUnits : row.mthPyUnits;
+                      const growthVsPyPct = unitsPy > 0 ? ((units - unitsPy) / unitsPy) * 100 : null;
+                      return growthVsPyPct === null ? 'N/A' : formatPercent(growthVsPyPct, 1);
+                    })()}
                   </td>
                 </tr>
               ))}

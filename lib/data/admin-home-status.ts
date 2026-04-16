@@ -4,6 +4,7 @@ import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getAdminTargets } from '@/lib/data/targets';
 import { RA_TOPICS } from '@/lib/data/ra-forms-schema';
 import { LEGAL_COMPLIANCE_KPIS } from '@/lib/data/legal-compliance-forms-schema';
+import { CLOSING_INPUT_AREAS } from '@/lib/data/closing-inputs-schema';
 
 export type AdminHomeModuleStatusRow = {
   moduleCode: string;
@@ -33,7 +34,24 @@ export type AdminHomeStatusData = {
     completed: number;
     status: 'complete' | 'incomplete' | 'missing';
   }[];
+  closingInputs: {
+    areaSlug: string;
+    label: string;
+    expected: number;
+    completed: number;
+    status: 'complete' | 'incomplete' | 'missing';
+  }[];
 };
+
+const CLOSING_INPUT_STATUS_AREAS = CLOSING_INPUT_AREAS.filter((area) =>
+  [
+    'business-excellence',
+    'commercial-operations',
+    'human-resources',
+    'opex',
+    'sales-internal',
+  ].includes(area.slug),
+);
 
 const EXPECTED_MODULES: Array<{ moduleCode: string; moduleLabel: string; area: string }> = [
   { moduleCode: 'sales_internal', moduleLabel: 'Internal Sales', area: 'internal_sales' },
@@ -167,6 +185,72 @@ async function getFormsStatus(params: { reportingVersionId: string; periodMonth:
   ];
 }
 
+async function getClosingInputsStatus(params: { reportingVersionId: string; periodMonth: string }) {
+  const client = getBigQueryClient();
+  const [rows] = await client.query({
+    query: `
+      WITH latest AS (
+        SELECT
+          area_slug,
+          message_1,
+          message_2,
+          message_3,
+          message_4,
+          message_5,
+          ROW_NUMBER() OVER (
+            PARTITION BY area_slug
+            ORDER BY COALESCE(updated_at, created_at) DESC
+          ) AS rn
+        FROM \`chiesi-committee.chiesi_committee_stg.stg_closing_inputs\`
+        WHERE reporting_version_id = @reportingVersionId
+          AND period_month = DATE(@periodMonth)
+      )
+      SELECT
+        area_slug,
+        message_1,
+        message_2,
+        message_3,
+        message_4,
+        message_5
+      FROM latest
+      WHERE rn = 1
+    `,
+    params: {
+      reportingVersionId: params.reportingVersionId,
+      periodMonth: params.periodMonth,
+    },
+  });
+
+  const rowByArea = new Map(
+    (rows as Array<Record<string, unknown>>).map((row) => [String(row.area_slug ?? ''), row]),
+  );
+
+  return CLOSING_INPUT_STATUS_AREAS.map((area) => {
+    const row = rowByArea.get(area.slug);
+    const messages = row
+      ? [
+          String(row.message_1 ?? '').trim(),
+          String(row.message_2 ?? '').trim(),
+          String(row.message_3 ?? '').trim(),
+          String(row.message_4 ?? '').trim(),
+          String(row.message_5 ?? '').trim(),
+        ]
+      : [];
+    const completed = messages.filter((value) => value.length > 0).length;
+    const expected = 5;
+    const status: 'complete' | 'incomplete' | 'missing' =
+      completed <= 0 ? 'missing' : completed >= expected ? 'complete' : 'incomplete';
+
+    return {
+      areaSlug: area.slug,
+      label: area.label,
+      expected,
+      completed,
+      status,
+    };
+  });
+}
+
 export async function getAdminHomeStatusData(params: {
   reportingVersionId: string;
   periodMonth: string;
@@ -228,7 +312,7 @@ export async function getAdminHomeStatusData(params: {
     };
   });
 
-  const forms = await getFormsStatus(params);
+  const [forms, closingInputs] = await Promise.all([getFormsStatus(params), getClosingInputsStatus(params)]);
   const formsTotalExpected = forms.reduce((sum, row) => sum + row.expected, 0);
   const formsTotalCompleted = forms.reduce((sum, row) => sum + Math.min(row.completed, row.expected), 0);
 
@@ -247,6 +331,7 @@ export async function getAdminHomeStatusData(params: {
     isReady: filesReadiness.isReady && formsReady,
     rows: statusRows,
     forms,
+    closingInputs,
   };
 }
 
@@ -325,6 +410,7 @@ export async function saveAdminHomeStatusSnapshot(params: {
       detailsJson: JSON.stringify({
         files: data.rows,
         forms: data.forms,
+        closingInputs: data.closingInputs,
       }),
       createdBy: params.createdBy,
     },

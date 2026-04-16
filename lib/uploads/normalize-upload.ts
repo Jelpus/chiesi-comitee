@@ -4,6 +4,7 @@ import { getBigQueryClient } from '@/lib/bigquery/client';
 type RawUploadRow = {
   row_number: number;
   row_payload_json: unknown;
+  sheet_name?: string | null;
 };
 
 type RowValidationResult = {
@@ -458,6 +459,11 @@ function isTableUpdateQuotaError(error: unknown) {
   );
 }
 
+function isRequestEntityTooLargeError(error: unknown) {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return message.includes('request entity too large') || message.includes('413');
+}
+
 async function runQueryWithRetryOnConcurrentUpdate<T>(
   fn: () => Promise<T>,
   retries = 10,
@@ -659,6 +665,7 @@ function asNullableNumber(value: unknown) {
   if (value == null || value === '') return null;
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const compact = raw
     .replace(/\s/g, '')
@@ -692,7 +699,9 @@ function asNullableNumber(value: unknown) {
     normalized = compact;
   }
 
-  const numberValue = Number(normalized);
+  const parsedValue = Number(normalized);
+  const numberValue =
+    Number.isFinite(parsedValue) && isAccountingNegative ? -Math.abs(parsedValue) : parsedValue;
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
@@ -700,6 +709,7 @@ function asNullableQuantityNumber(value: unknown) {
   if (value == null || value === '') return null;
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const compact = raw
     .replace(/\s/g, '')
@@ -921,6 +931,7 @@ function parseDateField(value: unknown): string | null {
 
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   // Headers coming from Excel-to-JSON can look like:
   // "Sun Feb 01 2026 00:00:44 GMT+0100 (...)"
@@ -994,6 +1005,7 @@ function parseDateFieldMonthFirst(value: unknown): string | null {
 
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const mmDdYyyy = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (mmDdYyyy) {
@@ -1026,6 +1038,7 @@ function parseDateMonthLocal(value: unknown, order: 'month-first' | 'day-first')
 
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const dateToken = raw
     .replace(',', ' ')
@@ -1066,6 +1079,7 @@ function parseMonthToken(value: unknown): string | null {
 
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const numericMatch = raw.match(/^\d{1,2}$/);
   if (numericMatch) {
@@ -1086,6 +1100,7 @@ function parseYearToken(value: unknown): number | null {
   if (value == null || value === '') return null;
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const fullYearMatch = raw.match(/^\d{4}$/);
   if (fullYearMatch) {
@@ -1113,6 +1128,7 @@ function parseCloseupPeriodField(value: unknown): string | null {
   if (value == null || value === '') return null;
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const parsedAsDate = parseDateField(raw);
   if (parsedAsDate) return parsedAsDate;
@@ -1161,6 +1177,7 @@ function parseWeeklyPeriodField(value: unknown): string | null {
 
   const raw = String(value).trim();
   if (!raw) return null;
+  const isAccountingNegative = raw.includes('(') && raw.includes(')') && !raw.includes('-');
 
   const compact = raw.replace(/\s+/g, '').toUpperCase();
   const sixDigit = compact.match(/^(\d{4})(\d{2})$/);
@@ -1216,6 +1233,42 @@ function isOpexSummaryValue(value: string | null) {
     normalized.startsWith('total ') ||
     normalized.startsWith('subtotal ')
   );
+}
+
+function normalizeOpexSheetName(value: string | null | undefined) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function matchesOpexSheetAlias(sheetName: string | null | undefined, aliases: string[]) {
+  const normalized = normalizeOpexSheetName(sheetName);
+  return aliases.some((alias) => normalized.includes(alias));
+}
+
+function resolveOpexMetricName(sheetName: string | null | undefined): OpexMovementNormalizedRow['metricName'] | null {
+  if (matchesOpexSheetAlias(sheetName, ['ant', 'previous', 'prev', 'prior'])) return 'actuals_2025';
+  if (matchesOpexSheetAlias(sheetName, ['budget', 'presupuesto', 'plan'])) return 'budget_2026';
+  if (matchesOpexSheetAlias(sheetName, ['current', 'actual', 'real'])) return 'actuals_2026';
+  return null;
+}
+
+function pickOpexMasterCatalogRows(rows: RawUploadRow[]) {
+  const preferredSheetOrder = [
+    ['ant', 'previous', 'prev', 'prior'],
+    ['budget', 'presupuesto', 'plan'],
+    ['current', 'actual', 'real'],
+  ] as const;
+
+  for (const aliases of preferredSheetOrder) {
+    const sheetRows = rows.filter((row) => matchesOpexSheetAlias(row.sheet_name, [...aliases]));
+    if (sheetRows.length > 0) return sheetRows;
+  }
+
+  return rows;
 }
 
 function normalizeOpexByCcMasterCatalog(rows: RawUploadRow[]) {
@@ -1305,204 +1358,34 @@ function normalizeOpexByCcMovements(rows: RawUploadRow[]) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: OpexMovementNormalizedRow[] = [];
   const dedup = new Set<string>();
-  const resolved2025MonthColumns: Array<{
-    periodMonth: string;
-    payloadKey: string;
-    columnIndex: number | null;
-  }> = Array.from({ length: 12 }, (_, index) => ({
-    periodMonth: `2025-${String(index + 1).padStart(2, '0')}-01`,
-    payloadKey: `column_${14 + index}`, // O:Z when B is column_1
-    columnIndex: 14 + index,
-  }));
-  let resolved2026BudgetMonthColumns:
-    | Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }>
-    | null = null;
-  let resolved2026ActualMonthColumns:
-    | Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }>
-    | null = null;
-
-  function parseColumnIndexFromPayloadKey(payloadKey: string): number | null {
-    const match = payloadKey.match(/^column_(\d+)$/i);
-    if (!match) return null;
-    const parsed = Number(match[1]);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  }
-
-  function resolveYearMonthColumns(
-    payload: Record<string, unknown>,
-    year: 2025 | 2026,
-    preferredMarkers: string[],
-    minColumnIndexExclusive?: number,
-  ) {
-    const monthCandidates = new Map<
-      string,
-      {
-        payloadKey: string;
-        columnIndex: number | null;
-        hasPreferredMarker: boolean;
-        keyLength: number;
-      }
-    >();
-
-    for (const key of Object.keys(payload)) {
-      const parsedPeriod =
-        parseMonthHeaderWithExcelSerial(key) ?? parseMonthHeaderFlexible(key);
-      if (!parsedPeriod || !parsedPeriod.startsWith(`${year}-`)) continue;
-
-      const normalizedHeader = normalizeText(key);
-      const hasPreferredMarker = preferredMarkers.some((marker) =>
-        normalizedHeader.includes(marker),
-      );
-      const columnIndex = parseColumnIndexFromPayloadKey(key);
-      if (
-        minColumnIndexExclusive != null &&
-        columnIndex != null &&
-        columnIndex <= minColumnIndexExclusive
-      ) {
-        continue;
-      }
-
-      const current = monthCandidates.get(parsedPeriod);
-      if (
-        !current ||
-        (hasPreferredMarker && !current.hasPreferredMarker) ||
-        (hasPreferredMarker === current.hasPreferredMarker &&
-          (columnIndex ?? Number.MAX_SAFE_INTEGER) <
-            (current.columnIndex ?? Number.MAX_SAFE_INTEGER)) ||
-        (hasPreferredMarker === current.hasPreferredMarker &&
-          columnIndex === current.columnIndex &&
-          key.length < current.keyLength)
-      ) {
-        monthCandidates.set(parsedPeriod, {
-          payloadKey: key,
-          columnIndex,
-          hasPreferredMarker,
-          keyLength: key.length,
-        });
-      }
-    }
-
-    const dynamicColumns = Array.from(monthCandidates.entries())
-      .map(([periodMonth, meta]) => ({
-        periodMonth,
-        payloadKey: meta.payloadKey,
-        columnIndex: meta.columnIndex,
-      }))
-      .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
-
-    if (dynamicColumns.length > 0) return dynamicColumns;
-
-    // Fallbacks by block:
-    // 2025 actuals: O:Z => column_15:column_26
-    // 2025 actuals: O:Z => column_14:column_25 (B is column_1)
-    // 2026 budget: AC:AN => column_28:column_39 (B is column_1)
-    if (year === 2025) {
-      return Array.from({ length: 12 }, (_, index) => ({
-        periodMonth: `2025-${String(index + 1).padStart(2, '0')}-01`,
-        payloadKey: `column_${14 + index}`,
-        columnIndex: 14 + index,
-      }));
-    }
-
-    return Array.from({ length: 12 }, (_, index) => ({
-      periodMonth: `2026-${String(index + 1).padStart(2, '0')}-01`,
-      payloadKey: `column_${28 + index}`,
-      columnIndex: 28 + index,
-    }));
-  }
-
-  function resolveContiguousYearBlockFromJan(
-    payload: Record<string, unknown>,
-    year: 2025 | 2026,
-    options?: {
-      preferredMarkers?: string[];
-      minColumnIndexExclusive?: number;
-    },
-  ): Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }> | null {
-    const janCandidates: Array<{ payloadKey: string; columnIndex: number; hasMarker: boolean }> = [];
-    for (const key of Object.keys(payload)) {
-      const parsedPeriod = parseMonthHeaderWithExcelSerial(key) ?? parseMonthHeaderFlexible(key);
-      if (parsedPeriod !== `${year}-01-01`) continue;
-      const columnIndex = parseColumnIndexFromPayloadKey(key);
-      if (!columnIndex) continue;
-      if (
-        options?.minColumnIndexExclusive != null &&
-        columnIndex <= options.minColumnIndexExclusive
-      ) {
-        continue;
-      }
-      const normalizedHeader = normalizeText(key);
-      const hasMarker =
-        (options?.preferredMarkers ?? []).some((marker) => normalizedHeader.includes(marker));
-      janCandidates.push({ payloadKey: key, columnIndex, hasMarker });
-    }
-
-    if (janCandidates.length === 0) return null;
-    janCandidates.sort((a, b) => {
-      if (a.hasMarker !== b.hasMarker) return a.hasMarker ? -1 : 1;
-      return a.columnIndex - b.columnIndex;
-    });
-    const chosen = janCandidates[0];
-    if (!chosen) return null;
-
-    const block = Array.from({ length: 12 }, (_, offset) => {
-      const month = String(offset + 1).padStart(2, '0');
-      const columnIndex = chosen.columnIndex + offset;
-      return {
-        periodMonth: `${year}-${month}-01`,
-        payloadKey: `column_${columnIndex}`,
-        columnIndex,
-      };
-    });
-    return block;
-  }
-
-  function resolveActuals2026ByFourthMonthOccurrence(
-    payload: Record<string, unknown>,
-  ): Array<{ periodMonth: string; payloadKey: string; columnIndex: number | null }> | null {
-    const monthKeyBuckets = new Map<string, Array<{ payloadKey: string; columnIndex: number | null }>>();
-
-    for (const key of Object.keys(payload)) {
-      const parsedPeriod = parseMonthHeaderWithExcelSerial(key) ?? parseMonthHeaderFlexible(key);
-      if (!parsedPeriod || !parsedPeriod.startsWith('2026-')) continue;
-      if (!monthKeyBuckets.has(parsedPeriod)) monthKeyBuckets.set(parsedPeriod, []);
-      monthKeyBuckets.get(parsedPeriod)?.push({
-        payloadKey: key,
-        columnIndex: parseColumnIndexFromPayloadKey(key),
-      });
-    }
-
-    const periodMonths = Array.from({ length: 12 }, (_, idx) => `2026-${String(idx + 1).padStart(2, '0')}-01`);
-    // Need the 4th Jan/Ene/01 occurrence equivalent for all months.
-    for (const periodMonth of periodMonths) {
-      const bucket = monthKeyBuckets.get(periodMonth) ?? [];
-      if (bucket.length < 4) return null;
-      bucket.sort((a, b) => (a.columnIndex ?? Number.MAX_SAFE_INTEGER) - (b.columnIndex ?? Number.MAX_SAFE_INTEGER));
-    }
-
-    const resolved = periodMonths.map((periodMonth) => {
-      const bucket = monthKeyBuckets.get(periodMonth)!;
-      return bucket[3];
-    });
-
-    const janHeaderNormalized = normalizeText(resolved[0].payloadKey);
-    const hasActualMarker =
-      janHeaderNormalized.includes('actual') ||
-      janHeaderNormalized.includes('act') ||
-      janHeaderNormalized.includes('real') ||
-      janHeaderNormalized.includes('current');
-    if (!hasActualMarker) return null;
-
-    return resolved.map((item, idx) => ({
-      periodMonth: `2026-${String(idx + 1).padStart(2, '0')}-01`,
-      payloadKey: item.payloadKey,
-      columnIndex: item.columnIndex,
-    }));
-  }
+  const monthColumns = [
+    ['Jan', '01'],
+    ['Feb', '02'],
+    ['Mar', '03'],
+    ['Apr', '04'],
+    ['May', '05'],
+    ['Jun', '06'],
+    ['Jul', '07'],
+    ['Aug', '08'],
+    ['Sep', '09'],
+    ['Oct', '10'],
+    ['Nov', '11'],
+    ['Dec', '12'],
+  ] as const;
 
   for (const row of rows) {
     const payload = toPayloadObject(row.row_payload_json);
     const index = buildPayloadIndex(payload);
+    const metricName = resolveOpexMetricName(row.sheet_name);
+
+    if (!metricName) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: row belongs to an unsupported OPEX sheet.'],
+      });
+      continue;
+    }
 
     const key1 = asNullableString(pickValue(index, ['Key1', 'Key 1', 'Llave 1']));
     if (!key1) {
@@ -1523,6 +1406,7 @@ function normalizeOpexByCcMovements(rows: RawUploadRow[]) {
       });
       continue;
     }
+
     const account = asNullableString(pickValue(index, ['Account', 'Cuenta']));
     if (isOpexSummaryValue(key1) || isOpexSummaryValue(key2) || isOpexSummaryValue(account)) {
       validations.push({
@@ -1532,43 +1416,16 @@ function normalizeOpexByCcMovements(rows: RawUploadRow[]) {
       });
       continue;
     }
+
+    const metricYear = metricName === 'actuals_2025' ? '2025' : '2026';
     let movementCount = 0;
 
-    if (!resolved2026BudgetMonthColumns) {
-      const maxActual2025ColumnIndex = resolved2025MonthColumns.reduce(
-        (max, item) =>
-          item.columnIndex != null && item.columnIndex > max ? item.columnIndex : max,
-        0,
-      );
-      resolved2026BudgetMonthColumns =
-        resolveContiguousYearBlockFromJan(payload, 2026, {
-          preferredMarkers: ['budget', 'presupuesto', 'plan', 'target', 'bud'],
-          minColumnIndexExclusive: maxActual2025ColumnIndex,
-        }) ??
-        resolveYearMonthColumns(
-          payload,
-          2026,
-          ['budget', 'presupuesto', 'plan', 'target', 'bud'],
-          maxActual2025ColumnIndex,
-        );
-    }
-    if (!resolved2026ActualMonthColumns) {
-      resolved2026ActualMonthColumns =
-        resolveActuals2026ByFourthMonthOccurrence(payload) ??
-        // Fallback fixed block BE:BP => column_56:column_67 => Jan..Dec 2026 (B is column_1)
-        Array.from({ length: 12 }, (_, index) => ({
-          periodMonth: `2026-${String(index + 1).padStart(2, '0')}-01`,
-          payloadKey: `column_${56 + index}`,
-          columnIndex: 56 + index,
-        }));
-    }
-
-    for (const monthColumn of resolved2025MonthColumns) {
-      const amountValue = asNullableNumber(payload[monthColumn.payloadKey]);
+    for (const [columnLabel, monthValue] of monthColumns) {
+      const amountValue = asNullableNumber(pickValue(index, [columnLabel]));
       if (amountValue == null) continue;
 
-      const periodMonth = monthColumn.periodMonth;
-      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|actuals_2025`;
+      const periodMonth = `${metricYear}-${monthValue}-01`;
+      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|${metricName}`;
       if (dedup.has(dedupKey)) continue;
       dedup.add(dedupKey);
 
@@ -1577,49 +1434,9 @@ function normalizeOpexByCcMovements(rows: RawUploadRow[]) {
         key1,
         key2,
         periodMonth,
-        metricName: 'actuals_2025',
+        metricName,
         amountValue,
-        payload: {},
-      });
-      movementCount += 1;
-    }
-    for (const monthColumn of resolved2026BudgetMonthColumns) {
-      const amountValue = asNullableNumber(payload[monthColumn.payloadKey]);
-      if (amountValue == null) continue;
-
-      const periodMonth = monthColumn.periodMonth;
-      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|budget_2026`;
-      if (dedup.has(dedupKey)) continue;
-      dedup.add(dedupKey);
-
-      normalizedRows.push({
-        rowNumber: row.row_number,
-        key1,
-        key2,
-        periodMonth,
-        metricName: 'budget_2026',
-        amountValue,
-        payload: {},
-      });
-      movementCount += 1;
-    }
-    for (const monthColumn of resolved2026ActualMonthColumns) {
-      const amountValue = asNullableNumber(payload[monthColumn.payloadKey]);
-      if (amountValue == null) continue;
-
-      const periodMonth = monthColumn.periodMonth;
-      const dedupKey = `${normalizeText(key1)}|${normalizeText(key2 ?? '')}|${periodMonth}|actuals_2026`;
-      if (dedup.has(dedupKey)) continue;
-      dedup.add(dedupKey);
-
-      normalizedRows.push({
-        rowNumber: row.row_number,
-        key1,
-        key2,
-        periodMonth,
-        metricName: 'actuals_2026',
-        amountValue,
-        payload: {},
+        payload,
       });
       movementCount += 1;
     }
@@ -1627,10 +1444,7 @@ function normalizeOpexByCcMovements(rows: RawUploadRow[]) {
     validations.push({
       rowNumber: row.row_number,
       validationStatus: movementCount > 0 ? 'valid' : 'skipped',
-      errors:
-        movementCount > 0
-          ? []
-          : ['Skipped: no monthly values found for 2025 ACT/Actual, 2026 Budget, or 2026 Actuals blocks.'],
+      errors: movementCount > 0 ? [] : ['Skipped: no monthly values found in Jan-Dec columns for this OPEX sheet.'],
     });
   }
 
@@ -1642,10 +1456,11 @@ async function getRawRows(uploadId: string): Promise<RawUploadRow[]> {
   const query = `
     SELECT
       row_number,
-      row_payload_json
+      row_payload_json,
+      sheet_name
     FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
     WHERE upload_id = @uploadId
-    ORDER BY row_number
+    ORDER BY sheet_name, row_number
   `;
 
   const [rows] = await client.query({ query, params: { uploadId } });
@@ -4767,10 +4582,16 @@ async function loadCommercialOperationsDeliveryOrdersStaging(
     FROM UNNEST(@rows) AS row
   `;
 
-  const chunks = chunkItems(rows, 1800);
-  await runChunksInParallel(
-    chunks,
-    async (chunk) => {
+  const chunks = chunkItemsByApproxBytes(rows, {
+    maxBytesPerChunk: 700_000,
+    maxItemsPerChunk: 300,
+    estimateBytes: (row) => Buffer.byteLength(JSON.stringify(row.payload ?? {}), 'utf8') + 1800,
+  });
+
+  async function insertChunkWithAdaptiveSplit(
+    chunk: CommercialOperationsDeliveryOrdersNormalizedRow[],
+  ): Promise<void> {
+    try {
       await runQueryWithRetryOnConcurrentUpdate(() =>
         client.query({
           query,
@@ -4838,6 +4659,26 @@ async function loadCommercialOperationsDeliveryOrdersStaging(
           },
         }),
       );
+    } catch (error) {
+      if (!isRequestEntityTooLargeError(error)) throw error;
+
+      if (chunk.length <= 1) {
+        const rowNumber = chunk[0]?.rowNumber ?? 'unknown';
+        throw new Error(
+          `Delivery orders normalized payload exceeds request limits even as a single-row chunk (row ${rowNumber}).`,
+        );
+      }
+
+      const middle = Math.ceil(chunk.length / 2);
+      await insertChunkWithAdaptiveSplit(chunk.slice(0, middle));
+      await insertChunkWithAdaptiveSplit(chunk.slice(middle));
+    }
+  }
+
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await insertChunkWithAdaptiveSplit(chunk);
     },
     1,
   );
@@ -6275,7 +6116,7 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
   }
 
   if (moduleCode === 'opex_by_cc' || moduleCode === 'opex_master_catalog') {
-    const master = normalizeOpexByCcMasterCatalog(rows);
+    const master = normalizeOpexByCcMasterCatalog(pickOpexMasterCatalogRows(rows));
     const movements = normalizeOpexByCcMovements(rows);
     await updateRawValidationStatus(uploadId, master.validations);
     await loadOpexMasterCatalogStaging(uploadId, master.normalizedRows);
@@ -6288,6 +6129,9 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
 
   throw new Error(`No normalizer configured for module "${moduleCode}".`);
 }
+
+
+
 
 
 

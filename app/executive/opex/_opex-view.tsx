@@ -28,7 +28,8 @@ function formatAmount(value: number | null) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
@@ -75,6 +76,14 @@ function resolveMetricMap(rows: Awaited<ReturnType<typeof getOpexRows>>) {
   return { currentActual, pyActual, currentBudget };
 }
 
+function resolveOpexCutoffMonth(rows: Awaited<ReturnType<typeof getOpexRows>>) {
+  const candidates = rows
+    .flatMap((row) => [row.sourceAsOfMonth, row.reportPeriodMonth, row.latestPeriodMonth])
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return candidates.at(-1) ?? null;
+}
+
 type GroupScoreRow = {
   group: string;
   actual: number;
@@ -84,60 +93,58 @@ type GroupScoreRow = {
   growthVsPyPct: number | null;
 };
 
-function buildCoverageCards(rows: Awaited<ReturnType<typeof getOpexRows>>) {
+function classifyPlanStatus(coverage: number | null) {
+  if (coverage == null || Number.isNaN(coverage)) return 'no_target';
+  const deviation = Math.abs(coverage - 100);
+  if (deviation <= 3) return 'on_plan';
+  if (deviation <= 5) return 'near_plan';
+  if (deviation <= 15) return 'out_plan';
+  return 'critically_out_plan';
+}
+
+function buildPeriodCards(rows: Awaited<ReturnType<typeof getOpexRows>>) {
   const metricMap = resolveMetricMap(rows);
+  const cutoffMonth = resolveOpexCutoffMonth(rows);
+  const currentYear = getMetricYear(metricMap.currentActual ?? '');
+  const cutoffMonthIndex = cutoffMonth ? Number(cutoffMonth.slice(5, 7)) : null;
+  const cutoffMonthPy =
+    currentYear != null && cutoffMonthIndex != null
+      ? `${currentYear - 1}-${String(cutoffMonthIndex).padStart(2, '0')}-01`
+      : null;
 
   let ytdActual = 0;
   let ytdBudget = 0;
+  let ytdPrevious = 0;
   let mthActual = 0;
   let mthBudget = 0;
-  let fyBudget = 0;
-  const ytdMonths = new Set<string>();
+  let mthPrevious = 0;
 
   for (const row of rows) {
     if (metricMap.currentActual && row.metricName === metricMap.currentActual) {
-      if (row.isYtd) {
-        ytdActual += row.amountValue;
-        ytdMonths.add(row.periodMonth.slice(0, 7));
-      }
-      if (row.isMth) mthActual += row.amountValue;
+      if (row.isYtd) ytdActual += row.amountValue;
+      if (cutoffMonth && row.periodMonth === cutoffMonth) mthActual += row.amountValue;
     }
     if (metricMap.currentBudget && row.metricName === metricMap.currentBudget) {
       if (row.isYtd) ytdBudget += row.amountValue;
-      if (row.isMth) mthBudget += row.amountValue;
-      if (row.periodMonth && metricMap.currentActual) {
-        const currentYear = getMetricYear(metricMap.currentActual);
-        if (currentYear != null && row.periodMonth.startsWith(String(currentYear))) {
-          fyBudget += row.amountValue;
-        }
-      }
+      if (cutoffMonth && row.periodMonth === cutoffMonth) mthBudget += row.amountValue;
+    }
+    if (metricMap.pyActual && row.metricName === metricMap.pyActual) {
+      if (row.isYtdPy) ytdPrevious += row.amountValue;
+      if (cutoffMonthPy && row.periodMonth === cutoffMonthPy) mthPrevious += row.amountValue;
     }
   }
-
-  const ytdCoverage = ytdBudget > 0 ? (ytdActual / ytdBudget) * 100 : null;
-  const mthCoverage = mthBudget > 0 ? (mthActual / mthBudget) * 100 : null;
-  const ytdExecutionRatePct = fyBudget > 0 ? (ytdActual / fyBudget) * 100 : null;
-  const monthsElapsed = ytdMonths.size > 0 ? ytdMonths.size : null;
-  const expectedPacePct = monthsElapsed ? (monthsElapsed / 12) * 100 : null;
-  const paceDeltaPct =
-    ytdExecutionRatePct != null && expectedPacePct != null ? ytdExecutionRatePct - expectedPacePct : null;
 
   return {
     ytd: {
       amount: ytdActual,
       target: ytdBudget,
-      varianceAmount: ytdActual - ytdBudget,
-      coveragePct: ytdCoverage,
+      previous: ytdPrevious,
     },
     mth: {
       amount: mthActual,
       target: mthBudget,
-      varianceAmount: mthActual - mthBudget,
-      coveragePct: mthCoverage,
+      previous: mthPrevious,
     },
-    ytdExecutionRatePct,
-    expectedPacePct,
-    paceDeltaPct,
   };
 }
 
@@ -201,12 +208,7 @@ function buildElementBudgetDeltaRows(rows: Awaited<ReturnType<typeof getOpexRows
 }
 
 function classifyBucket(row: GroupScoreRow) {
-  const coverage = row.coveragePct ?? -Infinity;
-  const growth = row.growthVsPyPct ?? -Infinity;
-  if (coverage >= 100 && growth >= 0) return 'scale_up';
-  if (coverage >= 100 && growth < 0) return 'defend_margin';
-  if (coverage < 100 && growth >= 0) return 'fix_plan';
-  return 'turnaround';
+  return classifyPlanStatus(row.coveragePct);
 }
 
 function renderBucketCard(
@@ -242,7 +244,7 @@ function renderBucketCard(
   );
 }
 
-function renderOpexNarrative(rows: GroupScoreRow[], coverageCards: ReturnType<typeof buildCoverageCards>) {
+function renderOpexNarrative(rows: GroupScoreRow[], periodCards: ReturnType<typeof buildPeriodCards>) {
   const totalActual = rows.reduce((sum, row) => sum + row.actual, 0);
   const totalBudget = rows.reduce((sum, row) => sum + row.budget, 0);
   const totalPy = rows.reduce((sum, row) => sum + row.py, 0);
@@ -279,18 +281,17 @@ function renderOpexNarrative(rows: GroupScoreRow[], coverageCards: ReturnType<ty
     .sort((a, b) => Math.abs(b.shareDeltaPp) - Math.abs(a.shareDeltaPp));
   const topShareShift = byShareShift[0];
 
-  const abovePlanCount = rows.filter((row) => (row.coveragePct ?? -Infinity) >= 100).length;
-  const nearPlanCount = rows.filter(
-    (row) => (row.coveragePct ?? -Infinity) >= 95 && (row.coveragePct ?? -Infinity) < 100,
+  const onPlanCount = rows.filter((row) => classifyPlanStatus(row.coveragePct) === 'on_plan').length;
+  const nearPlanCount = rows.filter((row) => classifyPlanStatus(row.coveragePct) === 'near_plan').length;
+  const outPlanCount = rows.filter((row) => classifyPlanStatus(row.coveragePct) === 'out_plan').length;
+  const criticallyOutPlanCount = rows.filter(
+    (row) => classifyPlanStatus(row.coveragePct) === 'critically_out_plan',
   ).length;
-  const belowPlanCount = rows.filter((row) => (row.coveragePct ?? Infinity) < 95).length;
 
   return {
     headline: `Total OPEX view: ${formatAmount(totalActual)} YTD, with ${formatPercent(totalCoverage)} budget coverage and ${formatSignedPercent(totalGrowth)} vs PY.`,
     bullets: [
-      coverageCards.ytdExecutionRatePct == null
-        ? 'Run-rate signal is not available because FY budget is missing for the current cut.'
-        : `Run-rate risk: YTD execution is ${formatPercent(coverageCards.ytdExecutionRatePct)} vs expected pace ${formatPercent(coverageCards.expectedPacePct)} (${formatSignedPercent(coverageCards.paceDeltaPct)} delta).`,
+      `YTD snapshot: Actual ${formatAmount(periodCards.ytd.amount)} vs Budget ${formatAmount(periodCards.ytd.target)} and PY ${formatAmount(periodCards.ytd.previous)}.`,
       `Concentration alert: top 3 CeCoGroups explain ${formatPercent(top3SharePct)} of total OPEX.`,
       mostOverBudget
         ? `Largest positive budget delta: ${mostOverBudget.group} by ${formatAmount(mostOverBudget.budgetDelta)} (${formatPercent(mostOverBudget.coveragePct)} coverage).`
@@ -301,7 +302,7 @@ function renderOpexNarrative(rows: GroupScoreRow[], coverageCards: ReturnType<ty
       topShareShift
         ? `Mix shift vs PY: ${topShareShift.group} moved ${formatSignedPercent(topShareShift.shareDeltaPp)} in share (${formatPercent(topShareShift.pySharePct)} -> ${formatPercent(topShareShift.currentSharePct)}).`
         : 'Mix shift vs PY is not available.',
-      `Execution discipline: ${abovePlanCount} groups above plan, ${nearPlanCount} near plan, ${belowPlanCount} below plan.`,
+      `Execution discipline: ${onPlanCount} groups on plan, ${nearPlanCount} near plan, ${outPlanCount} out plan, ${criticallyOutPlanCount} critically out plan.`,
     ],
   };
 }
@@ -340,14 +341,14 @@ export async function OpexView({ viewMode, searchParams = {} }: OpexViewProps) {
   const sourceAsOfMonth = rows.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
   const groupScores = buildGroupScoreRows(rows);
   const elementDeltaRows = buildElementBudgetDeltaRows(rows);
-  const coverageCards = buildCoverageCards(rows);
+  const periodCards = buildPeriodCards(rows);
   const bucketed = {
-    scaleUp: groupScores.filter((row) => classifyBucket(row) === 'scale_up'),
-    defendMargin: groupScores.filter((row) => classifyBucket(row) === 'defend_margin'),
-    fixPlan: groupScores.filter((row) => classifyBucket(row) === 'fix_plan'),
-    turnaround: groupScores.filter((row) => classifyBucket(row) === 'turnaround'),
+    onPlan: groupScores.filter((row) => classifyBucket(row) === 'on_plan'),
+    nearPlan: groupScores.filter((row) => classifyBucket(row) === 'near_plan'),
+    outPlan: groupScores.filter((row) => classifyBucket(row) === 'out_plan'),
+    criticallyOutPlan: groupScores.filter((row) => classifyBucket(row) === 'critically_out_plan'),
   };
-  const opexNarrative = renderOpexNarrative(groupScores, coverageCards);
+  const opexNarrative = renderOpexNarrative(groupScores, periodCards);
   const topAboveBudgetElements = [...elementDeltaRows]
     .filter((row) => row.delta > 0)
     .sort((a, b) => b.delta - a.delta)
@@ -379,26 +380,20 @@ export async function OpexView({ viewMode, searchParams = {} }: OpexViewProps) {
 
       <div className="grid gap-3 md:grid-cols-2">
         <article className="rounded-[18px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
-          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">YTD Budget Coverage</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-900">{formatPercent(coverageCards.ytd.coveragePct)}</p>
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">YTD</p>
           <div className="mt-2 flex flex-wrap gap-4 text-xs">
-            <span className="text-slate-600">Amount: <span className="font-semibold text-slate-900">{formatAmount(coverageCards.ytd.amount)}</span></span>
-            <span className="text-slate-600">Target: <span className="font-semibold text-slate-900">{formatAmount(coverageCards.ytd.target)}</span></span>
-            <span className={`${(coverageCards.ytd.varianceAmount ?? -Infinity) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-              Variance: <span className="font-semibold">{formatSignedAmount(coverageCards.ytd.varianceAmount)}</span>
-            </span>
+            <span className="text-slate-600">Amount: <span className="font-semibold text-slate-900">{formatAmount(periodCards.ytd.amount)}</span></span>
+            <span className="text-slate-600">Target: <span className="font-semibold text-slate-900">{formatAmount(periodCards.ytd.target)}</span></span>
+            <span className="text-slate-600">Previous: <span className="font-semibold text-slate-900">{formatAmount(periodCards.ytd.previous)}</span></span>
           </div>
         </article>
 
         <article className="rounded-[18px] border border-slate-200/80 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
-          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">MTH Budget Coverage</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-900">{formatPercent(coverageCards.mth.coveragePct)}</p>
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">MTH</p>
           <div className="mt-2 flex flex-wrap gap-4 text-xs">
-            <span className="text-slate-600">Amount: <span className="font-semibold text-slate-900">{formatAmount(coverageCards.mth.amount)}</span></span>
-            <span className="text-slate-600">Target: <span className="font-semibold text-slate-900">{formatAmount(coverageCards.mth.target)}</span></span>
-            <span className={`${(coverageCards.mth.varianceAmount ?? -Infinity) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-              Variance: <span className="font-semibold">{formatSignedAmount(coverageCards.mth.varianceAmount)}</span>
-            </span>
+            <span className="text-slate-600">Amount: <span className="font-semibold text-slate-900">{formatAmount(periodCards.mth.amount)}</span></span>
+            <span className="text-slate-600">Target: <span className="font-semibold text-slate-900">{formatAmount(periodCards.mth.target)}</span></span>
+            <span className="text-slate-600">Previous: <span className="font-semibold text-slate-900">{formatAmount(periodCards.mth.previous)}</span></span>
           </div>
         </article>
       </div>
@@ -409,12 +404,12 @@ export async function OpexView({ viewMode, searchParams = {} }: OpexViewProps) {
         <div className="space-y-4">
           <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
             <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Opex Performance Map</p>
-            <p className="mt-1 text-sm text-slate-600">Buckets combine Budget Coverage and Growth vs PY at CeCoGroup level.</p>
+            <p className="mt-1 text-sm text-slate-600">Buckets classify CeCoGroup budget coverage using the same tolerance bands as the dashboard.</p>
             <div className="mt-4 grid gap-3 xl:grid-cols-4">
-              {renderBucketCard('Scale Up', 'Coverage >= 100% and positive growth.', bucketed.scaleUp, 'emerald')}
-              {renderBucketCard('Defend Margin', 'Coverage >= 100% but negative growth.', bucketed.defendMargin, 'amber')}
-              {renderBucketCard('Fix Plan', 'Coverage < 100% but positive growth.', bucketed.fixPlan, 'sky')}
-              {renderBucketCard('Turnaround', 'Coverage < 100% and negative growth.', bucketed.turnaround, 'rose')}
+              {renderBucketCard('On Plan', 'Coverage within +/- 3% of plan.', bucketed.onPlan, 'emerald')}
+              {renderBucketCard('Near Plan', 'Coverage within +/- 5% of plan, outside On Plan.', bucketed.nearPlan, 'amber')}
+              {renderBucketCard('Out Plan', 'Coverage within +/- 15% of plan, outside Near Plan.', bucketed.outPlan, 'sky')}
+              {renderBucketCard('Critically Out Plan', 'Coverage deviation greater than +/- 15%.', bucketed.criticallyOutPlan, 'rose')}
             </div>
           </article>
 
