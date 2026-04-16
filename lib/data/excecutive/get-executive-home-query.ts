@@ -38,14 +38,43 @@ function toAbsoluteLandingUrl(href: string | null): string | null {
 
 export async function getExecutiveHomeQueryRows(params?: {
   reportingVersionId?: string;
+  periodMonth?: string;
   area?: string;
 }): Promise<ExecutiveHomeQueryRow[]> {
   const availableVersions = await getReportingVersions();
   if (availableVersions.length === 0) return [];
 
+  const requestedReportingVersionId = params?.reportingVersionId?.trim() ?? '';
+  const requestedPeriodMonth = params?.periodMonth?.trim() ?? '';
+
+  const versionById = requestedReportingVersionId
+    ? availableVersions.find((item) => item.reportingVersionId === requestedReportingVersionId)
+    : undefined;
+  const versionByPeriod = requestedPeriodMonth
+    ? availableVersions.find((item) => item.periodMonth === requestedPeriodMonth)
+    : undefined;
+
+  if (requestedReportingVersionId && !versionById) {
+    throw new Error(`Reporting version not found: ${requestedReportingVersionId}`);
+  }
+  if (requestedPeriodMonth && !versionByPeriod) {
+    throw new Error(`Period month not found in reporting versions: ${requestedPeriodMonth}`);
+  }
+
   const selectedVersion =
-    availableVersions.find((item) => item.reportingVersionId === params?.reportingVersionId) ??
-    availableVersions[0];
+    requestedReportingVersionId && requestedPeriodMonth
+      ? availableVersions.find(
+          (item) =>
+            item.reportingVersionId === requestedReportingVersionId &&
+            item.periodMonth === requestedPeriodMonth,
+        )
+      : versionById ?? versionByPeriod ?? availableVersions[0];
+
+  if (!selectedVersion) {
+    throw new Error(
+      `Reporting version-period mismatch: ${requestedReportingVersionId} / ${requestedPeriodMonth}`,
+    );
+  }
 
   const cards = await getExecutiveCardsFromBigQuery(
     selectedVersion.reportingVersionId,
