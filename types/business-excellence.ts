@@ -456,6 +456,8 @@ export type BusinessExcellenceFieldForceExcellenceRow = {
   bu: 'total' | 'air' | 'care';
   totalTerritories: number;
   portfolioAccounts: number;
+  portfolioAccountsYtd: number;
+  portfolioAccountsMth: number;
   targetVisitsYtd: number;
   targetVisitsMth: number;
   targetVisitsAdjustedYtd: number;

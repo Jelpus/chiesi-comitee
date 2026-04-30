@@ -2956,40 +2956,43 @@ const getCachedPrivatePrescriptionsOverview = unstable_cache(
   { revalidate: 45 },
 );
 
-const getCachedPublicMarketData = unstable_cache(
-  async (reportingVersionId: string) => {
-    try {
-      const [overview, topProducts, chartRows, rankingRows] = await Promise.all([
-        getBusinessExcellencePublicMarketOverview(reportingVersionId || undefined),
-        getBusinessExcellencePublicMarketTopProducts(500, reportingVersionId || undefined),
-        getBusinessExcellencePublicMarketChartPoints(reportingVersionId || undefined),
-        getBusinessExcellencePublicDimensionRankingRows(reportingVersionId || undefined),
-      ]);
-      const scFallbackNote =
-        overview?.scSourceIsFallback
-          ? `SC source for cutoff month unavailable; using SC from ${overview.scSourceMonth ?? 'previous available month'} projected into cutoff month.`
-          : null;
-      return {
-        overview,
-        topProducts,
-        chartRows,
-        rankingRows,
-        error: scFallbackNote as string | null,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load public market data.';
-      return {
-        overview: null as BusinessExcellencePublicMarketOverview | null,
-        topProducts: [] as BusinessExcellencePublicMarketTopProductRow[],
-        chartRows: [] as BusinessExcellencePublicMarketChartPoint[],
-        rankingRows: [] as BusinessExcellencePublicDimensionRankingRow[],
-        error: message,
-      };
-    }
-  },
-  ['business-excellence-public-market-v7'],
+const getCachedPublicMarketOverview = unstable_cache(
+  async (reportingVersionId: string) =>
+    getBusinessExcellencePublicMarketOverview(reportingVersionId || undefined),
+  ['business-excellence-public-market-overview-v1'],
   { revalidate: 120 },
 );
+
+async function getPublicMarketData(reportingVersionId: string) {
+  try {
+    const [overview, topProducts, chartRows, rankingRows] = await Promise.all([
+      getBusinessExcellencePublicMarketOverview(reportingVersionId || undefined),
+      getBusinessExcellencePublicMarketTopProducts(500, reportingVersionId || undefined),
+      getBusinessExcellencePublicMarketChartPoints(reportingVersionId || undefined),
+      getBusinessExcellencePublicDimensionRankingRows(reportingVersionId || undefined),
+    ]);
+    const scFallbackNote =
+      overview?.scSourceIsFallback
+        ? `SC source for cutoff month unavailable; using SC from ${overview.scSourceMonth ?? 'previous available month'} projected into cutoff month.`
+        : null;
+    return {
+      overview,
+      topProducts,
+      chartRows,
+      rankingRows,
+      error: scFallbackNote as string | null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load public market data.';
+    return {
+      overview: null as BusinessExcellencePublicMarketOverview | null,
+      topProducts: [] as BusinessExcellencePublicMarketTopProductRow[],
+      chartRows: [] as BusinessExcellencePublicMarketChartPoint[],
+      rankingRows: [] as BusinessExcellencePublicDimensionRankingRow[],
+      error: message,
+    };
+  }
+}
 
 const getCachedBusinessUnitChannelRows = unstable_cache(
   async (reportingVersionId: string) => getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId || undefined),
@@ -3077,10 +3080,19 @@ export async function BusinessExcellenceView({
     ),
     getCachedAuditSources(selectedReportingVersionId),
   ]);
-  const [publicMarketData, businessUnitChannelRows] = await Promise.all([
-    getCachedPublicMarketData(selectedReportingVersionId),
-    getCachedBusinessUnitChannelRows(selectedReportingVersionId),
+  const needsFullPublicMarketData =
+    viewMode === 'insights' ||
+    viewMode === 'scorecard' ||
+    (viewMode === 'dashboard' && (activeDashboardTab === 'public' || activeDashboardTab === 'market'));
+  const needsBusinessUnitChannelRows =
+    viewMode === 'insights' ||
+    (viewMode === 'dashboard' && activeDashboardTab === 'market');
+  const [publicMarketOverview, publicMarketData, businessUnitChannelRows] = await Promise.all([
+    getCachedPublicMarketOverview(selectedReportingVersionId),
+    needsFullPublicMarketData ? getPublicMarketData(selectedReportingVersionId) : null,
+    needsBusinessUnitChannelRows ? getCachedBusinessUnitChannelRows(selectedReportingVersionId) : Promise.resolve([]),
   ]);
+  const publicOverview = publicMarketData?.overview ?? publicMarketOverview ?? null;
   const auditHeader = resolveHeaderAuditContext(auditSources);
   const dddSourceAsOfMonth = resolveDddSourceAsOfMonth(auditSources);
   const headerReportPeriod =
@@ -3126,7 +3138,7 @@ export async function BusinessExcellenceView({
           martSummary={privateSellOutData.martSummary}
           overview={privateSellOutData.overview}
           prescriptionsOverview={privatePrescriptionsOverview}
-          publicOverview={publicMarketData?.overview ?? null}
+          publicOverview={publicOverview}
           fieldForceTopCardKpis={fieldForceTopCardKpis}
         />
       ) : null}
@@ -3164,7 +3176,7 @@ export async function BusinessExcellenceView({
             <MarketPerformancePanel
               privateSummary={privateSellOutData.martSummary}
               privateRows={privateSellOutData.martRows}
-              publicOverview={publicMarketData?.overview ?? null}
+              publicOverview={publicOverview}
               publicRows={publicMarketData?.topProducts ?? []}
               businessUnitRows={businessUnitChannelRows}
               publicError={publicMarketData?.error ?? null}
@@ -3190,7 +3202,7 @@ export async function BusinessExcellenceView({
         <InsightsPanel
           channelPerformance={privateSellOutData.channelPerformance}
           martRows={privateSellOutData.martRows}
-          publicOverview={publicMarketData?.overview ?? null}
+          publicOverview={publicOverview}
           publicRows={publicMarketData?.topProducts ?? []}
           businessUnitRows={businessUnitChannelRows}
           publicError={publicMarketData?.error ?? null}
@@ -3204,7 +3216,7 @@ export async function BusinessExcellenceView({
           specialtySignals={privateSellOutData.specialtySignals}
           weeklyBenchmark={privateSellOutData.weeklyBenchmark}
           channelPerformance={privateSellOutData.channelPerformance}
-          publicOverview={publicMarketData?.overview ?? null}
+          publicOverview={publicOverview}
           publicRows={publicMarketData?.topProducts ?? []}
           fieldForceData={fieldForceData}
         />

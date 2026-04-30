@@ -66,12 +66,12 @@ const BRICK_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_brick_assignment';
 const FIELD_FORCE_MEDICAL_SUMMARY_VIEW =
   'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_summary';
-const FIELD_FORCE_MEDICAL_DETAIL_VIEW =
-  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_doctor_detail';
-const FIELD_FORCE_MEDICAL_DETAIL_BY_BU_VIEW =
-  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_detail_by_bu';
-const FIELD_FORCE_MEDICAL_DOCTOR_ANALYSIS_VIEW =
-  'chiesi-committee.chiesi_committee_mart.vw_medical_coverage_doctor_analysis';
+const FIELD_FORCE_MEDICAL_FILE_TABLE =
+  'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file';
+const FIELD_FORCE_INTERACTIONS_TABLE =
+  'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions';
+const FIELD_FORCE_TFT_TABLE =
+  'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft';
 const PRIVATE_SELLOUT_MART_VIEW =
   'chiesi-committee.chiesi_committee_mart.vw_private_sellout';
 const GOB360_PRODUCT_MAPPING_TABLE =
@@ -1323,66 +1323,27 @@ async function getGob360OverviewFromMappedClaves(
         ) AS event_date,
         SAFE_CAST(PIEZAS AS NUMERIC) AS pieces
       FROM source_raw
-      WHERE UPPER(TRIM(CAST(DB AS STRING))) = 'DESPLAZAMIENTOS'
-        AND CLAVE IS NOT NULL
+      WHERE CLAVE IS NOT NULL
         AND TRIM(CAST(CLAVE AS STRING)) != ''
-    ),
-    sc_month_candidates AS (
-      SELECT DISTINCT DATE_TRUNC(event_date, MONTH) AS sc_month
-      FROM source_clean
-      WHERE source_db = 'sc'
-        AND source_clave_normalized IN UNNEST(@mappedClaves)
-        AND event_date IS NOT NULL
-        AND (@cutoffDate IS NULL OR event_date <= DATE(@cutoffDate))
-    ),
-    sc_selected AS (
-      SELECT
-        CASE
-          WHEN @cutoffDate IS NULL THEN MAX(sc_month)
-          ELSE COALESCE(
-            MAX(IF(sc_month = DATE_TRUNC(DATE(@cutoffDate), MONTH), sc_month, NULL)),
-            MAX(sc_month)
-          )
-        END AS sc_selected_month
-      FROM sc_month_candidates
     ),
     mapped AS (
       SELECT
         s.source_db,
         s.clue,
         s.source_clave_normalized,
-        DATE_ADD(
-          s.event_date,
-          INTERVAL IF(
-            s.source_db = 'sc'
-            AND @cutoffDate IS NOT NULL
-            AND sc.sc_selected_month IS NOT NULL
-            AND sc.sc_selected_month < DATE_TRUNC(DATE(@cutoffDate), MONTH),
-            DATE_DIFF(DATE_TRUNC(DATE(@cutoffDate), MONTH), sc.sc_selected_month, MONTH),
-            0
-          ) MONTH
-        ) AS event_date,
-        s.pieces,
-        sc.sc_selected_month
+        DATE_TRUNC(s.event_date, MONTH) AS event_date,
+        s.pieces
       FROM source_clean s
-      CROSS JOIN sc_selected sc
       WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
         AND s.event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
-        AND (
-          s.source_db = 'pc'
-          OR (
-            s.source_db = 'sc'
-            AND sc.sc_selected_month IS NOT NULL
-            AND DATE_TRUNC(s.event_date, MONTH) IN (
-              sc.sc_selected_month,
-              DATE_SUB(sc.sc_selected_month, INTERVAL 1 YEAR)
-            )
-          )
-        )
     ),
     latest_ctx AS (
-      SELECT MAX(event_date) AS latest_date
+      SELECT
+        CASE
+          WHEN @cutoffDate IS NULL THEN MAX(event_date)
+          ELSE DATE_TRUNC(DATE(@cutoffDate), MONTH)
+        END AS latest_date
       FROM mapped
     ),
     base AS (
@@ -1393,12 +1354,8 @@ async function getGob360OverviewFromMappedClaves(
     )
     SELECT
       CAST(MAX(latest_date) AS STRING) AS latest_date,
-      CAST(MAX(sc_selected_month) AS STRING) AS sc_selected_month,
-      IF(
-        @cutoffDate IS NULL OR MAX(sc_selected_month) IS NULL,
-        FALSE,
-        MAX(sc_selected_month) < DATE_TRUNC(DATE(@cutoffDate), MONTH)
-      ) AS sc_is_fallback,
+      CAST(MAX(IF(source_db = 'sc', event_date, NULL)) AS STRING) AS sc_selected_month,
+      FALSE AS sc_is_fallback,
       COALESCE(SUM(IF(EXTRACT(YEAR FROM event_date) = EXTRACT(YEAR FROM latest_date), pieces, 0)), 0) AS ytd_pieces,
       COALESCE(SUM(IF(EXTRACT(YEAR FROM event_date) = EXTRACT(YEAR FROM DATE_SUB(latest_date, INTERVAL 1 YEAR))
                       AND EXTRACT(MONTH FROM event_date) <= EXTRACT(MONTH FROM latest_date), pieces, 0)), 0) AS ytd_pieces_py,
@@ -1412,6 +1369,7 @@ async function getGob360OverviewFromMappedClaves(
         WHERE c.latest_date IS NOT NULL
           AND EXTRACT(YEAR FROM s.event_date) = EXTRACT(YEAR FROM c.latest_date)
           AND EXTRACT(MONTH FROM s.event_date) <= EXTRACT(MONTH FROM c.latest_date)
+          AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
       ) AS clues_total_ytd,
       (
         SELECT COUNT(DISTINCT cm.clue)
@@ -1454,64 +1412,27 @@ async function getGob360AggRowsByClave(mappedClaves: string[], cutoffDate: strin
         ) AS event_date,
         SAFE_CAST(PIEZAS AS NUMERIC) AS pieces
       FROM source_raw
-      WHERE UPPER(TRIM(CAST(DB AS STRING))) = 'DESPLAZAMIENTOS'
-        AND CLAVE IS NOT NULL
+      WHERE CLAVE IS NOT NULL
         AND TRIM(CAST(CLAVE AS STRING)) != ''
-    ),
-    sc_month_candidates AS (
-      SELECT DISTINCT DATE_TRUNC(event_date, MONTH) AS sc_month
-      FROM source_clean
-      WHERE source_db = 'sc'
-        AND source_clave_normalized IN UNNEST(@mappedClaves)
-        AND event_date IS NOT NULL
-        AND (@cutoffDate IS NULL OR event_date <= DATE(@cutoffDate))
-    ),
-    sc_selected AS (
-      SELECT
-        CASE
-          WHEN @cutoffDate IS NULL THEN MAX(sc_month)
-          ELSE COALESCE(
-            MAX(IF(sc_month = DATE_TRUNC(DATE(@cutoffDate), MONTH), sc_month, NULL)),
-            MAX(sc_month)
-          )
-        END AS sc_selected_month
-      FROM sc_month_candidates
     ),
     mapped AS (
       SELECT
         s.source_db,
         s.source_clave_normalized,
-        DATE_ADD(
-          s.event_date,
-          INTERVAL IF(
-            s.source_db = 'sc'
-            AND @cutoffDate IS NOT NULL
-            AND sc.sc_selected_month IS NOT NULL
-            AND sc.sc_selected_month < DATE_TRUNC(DATE(@cutoffDate), MONTH),
-            DATE_DIFF(DATE_TRUNC(DATE(@cutoffDate), MONTH), sc.sc_selected_month, MONTH),
-            0
-          ) MONTH
-        ) AS event_date,
+        DATE_TRUNC(s.event_date, MONTH) AS event_date,
         s.pieces
       FROM source_clean s
-      CROSS JOIN sc_selected sc
       WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
         AND s.event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
-        AND (
-          s.source_db = 'pc'
-          OR (
-            s.source_db = 'sc'
-            AND sc.sc_selected_month IS NOT NULL
-            AND DATE_TRUNC(s.event_date, MONTH) IN (
-              sc.sc_selected_month,
-              DATE_SUB(sc.sc_selected_month, INTERVAL 1 YEAR)
-            )
-          )
-        )
     ),
     ctx AS (
-      SELECT MAX(event_date) AS latest_date FROM mapped
+      SELECT
+        CASE
+          WHEN @cutoffDate IS NULL THEN MAX(event_date)
+          ELSE DATE_TRUNC(DATE(@cutoffDate), MONTH)
+        END AS latest_date
+      FROM mapped
     ),
     filtered AS (
       SELECT m.*, c.latest_date
@@ -1561,28 +1482,8 @@ async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: s
         ) AS event_date,
         SAFE_CAST(PIEZAS AS NUMERIC) AS pieces
       FROM source_raw
-      WHERE UPPER(TRIM(CAST(DB AS STRING))) = 'DESPLAZAMIENTOS'
-        AND CLAVE IS NOT NULL
+      WHERE CLAVE IS NOT NULL
         AND TRIM(CAST(CLAVE AS STRING)) != ''
-    ),
-    sc_month_candidates AS (
-      SELECT DISTINCT DATE_TRUNC(event_date, MONTH) AS sc_month
-      FROM source_clean
-      WHERE source_db = 'sc'
-        AND source_clave_normalized IN UNNEST(@mappedClaves)
-        AND event_date IS NOT NULL
-        AND (@cutoffDate IS NULL OR event_date <= DATE(@cutoffDate))
-    ),
-    sc_selected AS (
-      SELECT
-        CASE
-          WHEN @cutoffDate IS NULL THEN MAX(sc_month)
-          ELSE COALESCE(
-            MAX(IF(sc_month = DATE_TRUNC(DATE(@cutoffDate), MONTH), sc_month, NULL)),
-            MAX(sc_month)
-          )
-        END AS sc_selected_month
-      FROM sc_month_candidates
     ),
     mapped AS (
       SELECT
@@ -1591,37 +1492,20 @@ async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: s
         s.source_clave_raw,
         s.source_clave_normalized,
         s.ruta,
-        DATE_ADD(
-          s.event_date,
-          INTERVAL IF(
-            s.source_db = 'sc'
-            AND @cutoffDate IS NOT NULL
-            AND sc.sc_selected_month IS NOT NULL
-            AND sc.sc_selected_month < DATE_TRUNC(DATE(@cutoffDate), MONTH),
-            DATE_DIFF(DATE_TRUNC(DATE(@cutoffDate), MONTH), sc.sc_selected_month, MONTH),
-            0
-          ) MONTH
-        ) AS event_date,
+        DATE_TRUNC(s.event_date, MONTH) AS event_date,
         s.pieces
       FROM source_clean s
-      CROSS JOIN sc_selected sc
       WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
         AND s.event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
-        AND (
-          s.source_db = 'pc'
-          OR (
-            s.source_db = 'sc'
-            AND sc.sc_selected_month IS NOT NULL
-            AND DATE_TRUNC(s.event_date, MONTH) IN (
-              sc.sc_selected_month,
-              DATE_SUB(sc.sc_selected_month, INTERVAL 1 YEAR)
-            )
-          )
-        )
     ),
     ctx AS (
-      SELECT MAX(event_date) AS latest_date FROM mapped
+      SELECT
+        CASE
+          WHEN @cutoffDate IS NULL THEN MAX(event_date)
+          ELSE DATE_TRUNC(DATE(@cutoffDate), MONTH)
+        END AS latest_date
+      FROM mapped
     ),
     filtered AS (
       SELECT m.*, c.latest_date
@@ -2541,6 +2425,231 @@ export async function getBusinessExcellenceBusinessUnitChannelRows(
     .sort((a, b) => b.totalYtdUnits - a.totalYtdUnits);
 }
 
+function fieldForceRawCtes() {
+  return `
+    reporting_context AS (
+      SELECT
+        DATE(@reportPeriodMonth) AS report_period_month,
+        DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AS ytd_start_month
+    ),
+    latest_medical_upload AS (
+      SELECT u.upload_id
+      FROM \`${RAW_UPLOADS}\` u
+      JOIN reporting_context rc ON TRUE
+      WHERE u.reporting_version_id = @reportingVersionId
+        AND u.status IN ('normalized', 'published')
+        AND LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_salesforce_fichero_medico',
+          'business_excellence_fichero_medico',
+          'fichero_medico'
+        )
+        AND COALESCE(u.source_as_of_month, u.period_month) <= rc.report_period_month
+      QUALIFY ROW_NUMBER() OVER (
+        ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
+      ) = 1
+    ),
+    latest_interactions_upload AS (
+      SELECT u.upload_id
+      FROM \`${RAW_UPLOADS}\` u
+      JOIN reporting_context rc ON TRUE
+      WHERE u.reporting_version_id = @reportingVersionId
+        AND u.status IN ('normalized', 'published')
+        AND LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_salesforce_interacciones',
+          'business_excellence_interacciones',
+          'interacciones'
+        )
+        AND COALESCE(u.source_as_of_month, u.period_month) <= rc.report_period_month
+      QUALIFY ROW_NUMBER() OVER (
+        ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
+      ) = 1
+    ),
+    latest_tft_upload AS (
+      SELECT u.upload_id
+      FROM \`${RAW_UPLOADS}\` u
+      JOIN reporting_context rc ON TRUE
+      WHERE u.reporting_version_id = @reportingVersionId
+        AND u.status IN ('normalized', 'published')
+        AND LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_salesforce_tft',
+          'business_excellence_tft',
+          'tft'
+        )
+        AND COALESCE(u.source_as_of_month, u.period_month) <= rc.report_period_month
+      QUALIFY ROW_NUMBER() OVER (
+        ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
+      ) = 1
+    ),
+    medical_base AS (
+      SELECT
+        m.period_month,
+        LOWER(TRIM(m.bu)) AS bu,
+        NULLIF(TRIM(m.district), '') AS district,
+        NULLIF(TRIM(m.territory), '') AS territory_name,
+        UPPER(COALESCE(NULLIF(TRIM(m.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(m.territory, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
+        COALESCE(NULLIF(TRIM(m.potencial), ''), 'N/A') AS potencial,
+        NULLIF(TRIM(m.full_name), '') AS client_name,
+        UPPER(REGEXP_REPLACE(TRIM(COALESCE(NULLIF(m.onekey_id, ''), NULLIF(m.ims_id, ''))), r'[^a-zA-Z0-9]+', '')) AS doctor_key,
+        UPPER(REGEXP_REPLACE(TRIM(COALESCE(m.onekey_id, '')), r'[^a-zA-Z0-9]+', '')) AS onekey_key,
+        UPPER(REGEXP_REPLACE(TRIM(COALESCE(m.ims_id, '')), r'[^a-zA-Z0-9]+', '')) AS ims_key,
+        SAFE_CAST(m.objetivo AS NUMERIC) AS objetivo
+      FROM \`${FIELD_FORCE_MEDICAL_FILE_TABLE}\` m
+      JOIN latest_medical_upload lu ON lu.upload_id = m.upload_id
+      JOIN reporting_context rc ON TRUE
+      WHERE m.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+        AND LOWER(TRIM(m.bu)) IN ('air', 'care')
+        AND SAFE_CAST(m.objetivo AS NUMERIC) > 0
+        AND COALESCE(NULLIF(TRIM(m.onekey_id), ''), NULLIF(TRIM(m.ims_id), '')) IS NOT NULL
+    ),
+    doctor_month AS (
+      SELECT
+        period_month,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
+        doctor_key,
+        ANY_VALUE(onekey_key) AS onekey_key,
+        ANY_VALUE(ims_key) AS ims_key,
+        MAX(objetivo) AS objetivo
+      FROM medical_base
+      WHERE doctor_key != ''
+      GROUP BY 1, 2, 3, 4, 5, 6, 8
+    ),
+    tft_month AS (
+      SELECT
+        t.period_month,
+        UPPER(COALESCE(NULLIF(TRIM(t.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(t.territorio, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
+        SUM(SAFE_CAST(t.days_value AS NUMERIC)) AS tft_days
+      FROM \`${FIELD_FORCE_TFT_TABLE}\` t
+      JOIN latest_tft_upload lu ON lu.upload_id = t.upload_id
+      JOIN reporting_context rc ON TRUE
+      WHERE t.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+      GROUP BY 1, 2
+    ),
+    doctor_month_adjusted AS (
+      SELECT
+        dm.*,
+        COALESCE(tm.tft_days, 0) AS tft_days,
+        dm.objetivo * GREATEST(0, SAFE_DIVIDE(20 - COALESCE(tm.tft_days, 0), 20)) AS objetivo_ajustado
+      FROM doctor_month dm
+      LEFT JOIN tft_month tm
+        ON tm.period_month = dm.period_month
+       AND tm.territory_normalized = dm.territory_normalized
+    ),
+    interactions_base AS (
+      SELECT
+        i.interaction_period_month AS event_month,
+        UPPER(REGEXP_REPLACE(TRIM(COALESCE(i.onekey_id, '')), r'[^a-zA-Z0-9]+', '')) AS interaction_key,
+        COALESCE(NULLIF(TRIM(i.channel), ''), 'Unknown') AS channel,
+        COALESCE(NULLIF(TRIM(i.visit_type), ''), 'Unknown') AS visit_type,
+        COALESCE(NULLIF(TRIM(i.interaction_id), ''), CONCAT('row:', CAST(i.row_number AS STRING))) AS interaction_id
+      FROM \`${FIELD_FORCE_INTERACTIONS_TABLE}\` i
+      JOIN latest_interactions_upload lu ON lu.upload_id = i.upload_id
+      JOIN reporting_context rc ON TRUE
+      WHERE i.interaction_period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+        AND i.onekey_id IS NOT NULL
+        AND TRIM(i.onekey_id) != ''
+        AND LOWER(TRIM(COALESCE(
+          JSON_VALUE(i.source_payload_json, '$.Estado'),
+          JSON_VALUE(i.source_payload_json, '$.estado'),
+          JSON_VALUE(i.source_payload_json, '$.Status'),
+          JSON_VALUE(i.source_payload_json, '$.status'),
+          ''
+        ))) IN ('enviado', 'sent')
+    ),
+    interactions_matched AS (
+      SELECT
+        dm.period_month,
+        dm.bu,
+        dm.district,
+        dm.territory_name,
+        dm.territory_normalized,
+        dm.potencial,
+        dm.client_name,
+        dm.doctor_key,
+        ib.channel,
+        ib.visit_type,
+        ib.interaction_id
+      FROM interactions_base ib
+      JOIN doctor_month_adjusted dm
+        ON dm.period_month = ib.event_month
+       AND ib.interaction_key IN (dm.onekey_key, dm.ims_key)
+    ),
+    interaction_counts_month AS (
+      SELECT
+        period_month,
+        bu,
+        doctor_key,
+        COUNT(DISTINCT interaction_id) AS interacciones
+      FROM interactions_matched
+      GROUP BY 1, 2, 3
+    ),
+    doctor_month_metrics AS (
+      SELECT
+        dm.*,
+        COALESCE(ic.interacciones, 0) AS interacciones
+      FROM doctor_month_adjusted dm
+      LEFT JOIN interaction_counts_month ic
+        ON ic.period_month = dm.period_month
+       AND ic.bu = dm.bu
+       AND ic.doctor_key = dm.doctor_key
+    ),
+    period_scoped_doctors AS (
+      SELECT
+        'YTD' AS period_scope,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        client_name,
+        doctor_key,
+        SUM(objetivo) AS objetivo,
+        SUM(objetivo_ajustado) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones
+      FROM doctor_month_metrics
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+      UNION ALL
+      SELECT
+        'MTH' AS period_scope,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        client_name,
+        doctor_key,
+        SUM(objetivo) AS objetivo,
+        SUM(objetivo_ajustado) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones
+      FROM doctor_month_metrics
+      WHERE period_month = (SELECT report_period_month FROM reporting_context)
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+    ),
+    period_scoped_territories AS (
+      SELECT DISTINCT 'YTD' AS period_scope, bu, period_month, territory_normalized FROM doctor_month_metrics
+      UNION DISTINCT
+      SELECT DISTINCT 'MTH' AS period_scope, bu, period_month, territory_normalized
+      FROM doctor_month_metrics
+      WHERE period_month = (SELECT report_period_month FROM reporting_context)
+    ),
+    tft_scoped AS (
+      SELECT
+        pst.period_scope,
+        pst.bu,
+        SUM(COALESCE(tm.tft_days, 0)) AS tft_days
+      FROM period_scoped_territories pst
+      LEFT JOIN tft_month tm
+        ON tm.period_month = pst.period_month
+       AND tm.territory_normalized = pst.territory_normalized
+      GROUP BY 1, 2
+    )
+  `;
+}
+
 export async function getBusinessExcellenceFieldForceExcellenceData(
   reportingVersionId?: string,
   reportPeriodMonth?: string,
@@ -2574,16 +2683,80 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         )
       GROUP BY 1
     ),
-    summary AS (
-      SELECT *
-      FROM \`${FIELD_FORCE_MEDICAL_SUMMARY_VIEW}\`
-      WHERE reporting_version_id = @reportingVersionId
-        AND report_period_month = DATE(@reportPeriodMonth)
-        AND aggregation_level IN ('bu', 'total')
+    ${fieldForceRawCtes()},
+    status_counts AS (
+      SELECT
+        period_scope,
+        bu,
+        COUNTIF(interacciones = 0) AS no_visitados,
+        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) < 0.8) AS subvisitados,
+        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) BETWEEN 0.8 AND 1.2) AS en_objetivo,
+        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) > 1.2) AS sobrevisitados
+      FROM period_scoped_doctors
+      GROUP BY 1, 2
+      UNION ALL
+      SELECT
+        period_scope,
+        'total' AS bu,
+        COUNTIF(interacciones = 0) AS no_visitados,
+        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) < 0.8) AS subvisitados,
+        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) BETWEEN 0.8 AND 1.2) AS en_objetivo,
+        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) > 1.2) AS sobrevisitados
+      FROM period_scoped_doctors
+      GROUP BY 1, 2
+    ),
+    bu_summary AS (
+      SELECT
+        psd.period_scope,
+        psd.bu,
+        COUNT(DISTINCT psd.territory_normalized) AS total_territorios,
+        COUNT(DISTINCT psd.doctor_key) AS clientes,
+        SUM(psd.objetivo) AS objetivo,
+        SUM(psd.objetivo_ajustado) AS objetivo_ajustado,
+        SUM(psd.interacciones) AS interacciones,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo), 0)) AS cobertura,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo_ajustado), 0)) AS cobertura_ajustada,
+        COALESCE(MAX(t.tft_days), 0) AS dias_fuera,
+        COALESCE(MAX(sc.no_visitados), 0) AS no_visitados,
+        COALESCE(MAX(sc.subvisitados), 0) AS subvisitados,
+        COALESCE(MAX(sc.en_objetivo), 0) AS en_objetivo,
+        COALESCE(MAX(sc.sobrevisitados), 0) AS sobrevisitados
+      FROM period_scoped_doctors psd
+      LEFT JOIN tft_scoped t
+        ON t.period_scope = psd.period_scope
+       AND t.bu = psd.bu
+      LEFT JOIN status_counts sc
+        ON sc.period_scope = psd.period_scope
+       AND sc.bu = psd.bu
+      GROUP BY 1, 2
+      UNION ALL
+      SELECT
+        psd.period_scope,
+        'total' AS bu,
+        COUNT(DISTINCT psd.territory_normalized) AS total_territorios,
+        COUNT(DISTINCT psd.doctor_key) AS clientes,
+        SUM(psd.objetivo) AS objetivo,
+        SUM(psd.objetivo_ajustado) AS objetivo_ajustado,
+        SUM(psd.interacciones) AS interacciones,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo), 0)) AS cobertura,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo_ajustado), 0)) AS cobertura_ajustada,
+        COALESCE(SUM(DISTINCT t.tft_days), 0) AS dias_fuera,
+        COALESCE(MAX(sc.no_visitados), 0) AS no_visitados,
+        COALESCE(MAX(sc.subvisitados), 0) AS subvisitados,
+        COALESCE(MAX(sc.en_objetivo), 0) AS en_objetivo,
+        COALESCE(MAX(sc.sobrevisitados), 0) AS sobrevisitados
+      FROM period_scoped_doctors psd
+      LEFT JOIN tft_scoped t
+        ON t.period_scope = psd.period_scope
+       AND t.bu = psd.bu
+      LEFT JOIN status_counts sc
+        ON sc.period_scope = psd.period_scope
+       AND sc.bu = 'total'
+      GROUP BY 1, 2
     ),
     pivoted AS (
       SELECT
-        LOWER(bu) AS bu,
+        bu,
         MAX(IF(period_scope = 'YTD', total_territorios, NULL)) AS total_territories_ytd,
         MAX(IF(period_scope = 'MTH', total_territorios, NULL)) AS total_territories_mth,
         MAX(IF(period_scope = 'YTD', clientes, NULL)) AS portfolio_accounts_ytd,
@@ -2607,57 +2780,25 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         MAX(IF(period_scope = 'YTD', en_objetivo, NULL)) AS en_objetivo_ytd,
         MAX(IF(period_scope = 'MTH', en_objetivo, NULL)) AS en_objetivo_mth,
         MAX(IF(period_scope = 'YTD', sobrevisitados, NULL)) AS sobrevisitados_ytd,
-        MAX(IF(period_scope = 'MTH', sobrevisitados, NULL)) AS sobrevisitados_mth,
-        MAX(IF(period_scope = 'YTD', indice_evolucion_bu, NULL)) AS indice_evolucion_bu_ytd,
-        MAX(IF(period_scope = 'MTH', indice_evolucion_bu, NULL)) AS indice_evolucion_bu_mth
-      FROM summary
+        MAX(IF(period_scope = 'MTH', sobrevisitados, NULL)) AS sobrevisitados_mth
+      FROM bu_summary
       GROUP BY 1
     )
     SELECT
       @reportPeriodMonth AS report_period_month,
-      CAST((SELECT DATE(EXTRACT(YEAR FROM DATE(@reportPeriodMonth)), 1, 1)) AS STRING) AS ytd_start_month,
-      CAST((
-        SELECT MAX(source_as_of_month)
-        FROM source_meta
-        WHERE module_code IN (
-          'business_excellence_salesforce_fichero_medico',
-          'business_excellence_fichero_medico',
-          'fichero_medico'
-        )
-      ) AS STRING) AS fichero_as_of_month,
-      CAST((
-        SELECT MAX(source_as_of_month)
-        FROM source_meta
-        WHERE module_code IN (
-          'business_excellence_salesforce_interacciones',
-          'business_excellence_interacciones',
-          'interacciones'
-        )
-      ) AS STRING) AS interactions_as_of_month,
-      CAST((
-        SELECT MAX(source_as_of_month)
-        FROM source_meta
-        WHERE module_code IN (
-          'business_excellence_salesforce_tft',
-          'business_excellence_tft',
-          'tft'
-        )
-      ) AS STRING) AS tft_as_of_month,
+      CAST((SELECT ytd_start_month FROM reporting_context) AS STRING) AS ytd_start_month,
+      CAST((SELECT MAX(source_as_of_month) FROM source_meta WHERE module_code IN ('business_excellence_salesforce_fichero_medico', 'business_excellence_fichero_medico', 'fichero_medico')) AS STRING) AS fichero_as_of_month,
+      CAST((SELECT MAX(source_as_of_month) FROM source_meta WHERE module_code IN ('business_excellence_salesforce_interacciones', 'business_excellence_interacciones', 'interacciones')) AS STRING) AS interactions_as_of_month,
+      CAST((SELECT MAX(source_as_of_month) FROM source_meta WHERE module_code IN ('business_excellence_salesforce_tft', 'business_excellence_tft', 'tft')) AS STRING) AS tft_as_of_month,
       CAST(@reportPeriodMonth AS STRING) AS effective_as_of_month,
-      CAST((
-        SELECT MAX(source_as_of_month)
-        FROM source_meta
-        WHERE module_code IN (
-          'business_excellence_salesforce_fichero_medico',
-          'business_excellence_fichero_medico',
-          'fichero_medico'
-        )
-      ) AS STRING) AS territories_snapshot_month,
+      CAST((SELECT MAX(source_as_of_month) FROM source_meta WHERE module_code IN ('business_excellence_salesforce_fichero_medico', 'business_excellence_fichero_medico', 'fichero_medico')) AS STRING) AS territories_snapshot_month,
       MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_ytd, 0) ELSE 0 END) AS raw_sent_interactions_ytd_all_bu,
       MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_mth, 0) ELSE 0 END) AS raw_sent_interactions_mth_all_bu,
       MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_ytd, 0) ELSE 0 END) AS used_sent_interactions_ytd_air_care,
       MAX(CASE WHEN r.bu = 'total' THEN COALESCE(r.sent_interactions_mth, 0) ELSE 0 END) AS used_sent_interactions_mth_air_care,
-      r.*
+      r.*,
+      CAST(NULL AS NUMERIC) AS indice_evolucion_bu_ytd,
+      CAST(NULL AS NUMERIC) AS indice_evolucion_bu_mth
     FROM pivoted r
     WHERE r.bu IN ('air', 'care', 'total')
     GROUP BY
@@ -2692,70 +2833,83 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
       r.en_objetivo_ytd,
       r.en_objetivo_mth,
       r.sobrevisitados_ytd,
-      r.sobrevisitados_mth,
-      r.indice_evolucion_bu_ytd,
-      r.indice_evolucion_bu_mth
+      r.sobrevisitados_mth
     ORDER BY CASE r.bu WHEN 'total' THEN 0 WHEN 'air' THEN 1 WHEN 'care' THEN 2 ELSE 9 END
   `;
 
   const summaryRowsQuery = `
+    WITH ${fieldForceRawCtes()},
+    scoped AS (
+      SELECT
+        period_scope,
+        'territory' AS aggregation_level,
+        bu,
+        CAST(NULL AS STRING) AS district,
+        COALESCE(NULLIF(territory_name, ''), territory_normalized, 'N/A') AS territory_name,
+        territory_normalized,
+        COUNT(DISTINCT doctor_key) AS clientes,
+        SUM(objetivo) AS objetivo,
+        SUM(objetivo_ajustado) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones
+      FROM period_scoped_doctors
+      GROUP BY 1, 2, 3, 4, 5, 6
+      UNION ALL
+      SELECT
+        period_scope,
+        'district' AS aggregation_level,
+        bu,
+        COALESCE(NULLIF(district, ''), 'N/A') AS district,
+        CAST(NULL AS STRING) AS territory_name,
+        CAST(NULL AS STRING) AS territory_normalized,
+        COUNT(DISTINCT doctor_key) AS clientes,
+        SUM(objetivo) AS objetivo,
+        SUM(objetivo_ajustado) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones
+      FROM period_scoped_doctors
+      GROUP BY 1, 2, 3, 4, 5, 6
+    )
     SELECT
       period_scope,
-      CASE
-        WHEN LOWER(view_mode) = 'territory' THEN 'territory'
-        WHEN LOWER(view_mode) = 'district' THEN 'district'
-        ELSE 'total'
-      END AS aggregation_level,
-      LOWER(bu) AS bu,
-      CASE WHEN LOWER(view_mode) = 'district' THEN dimension_label ELSE NULL END AS district,
-      CASE WHEN LOWER(view_mode) = 'territory' THEN dimension_label ELSE NULL END AS territory_name,
-      NULL AS territory_normalized,
-      clients AS clientes,
-      objetivo_base AS objetivo,
+      aggregation_level,
+      bu,
+      district,
+      territory_name,
+      territory_normalized,
+      clientes,
+      objetivo,
       objetivo_ajustado,
       interacciones,
-      cobertura_base AS cobertura,
-      cobertura_ajustada,
+      SAFE_DIVIDE(interacciones, NULLIF(objetivo, 0)) AS cobertura,
+      SAFE_DIVIDE(interacciones, NULLIF(objetivo_ajustado, 0)) AS cobertura_ajustada,
       0 AS dias_fuera,
       NULL AS indice_evolucion_bu
-    FROM \`${FIELD_FORCE_MEDICAL_DETAIL_BY_BU_VIEW}\`
-    WHERE reporting_version_id = @reportingVersionId
-      AND report_period_month = DATE(@reportPeriodMonth)
-      AND LOWER(view_mode) IN ('territory', 'district')
+    FROM scoped
   `;
 
   const doctorDetailRowsQuery = `
-    WITH ranked AS (
+    WITH ${fieldForceRawCtes()},
+    doctor_status AS (
       SELECT
         period_scope,
-        LOWER(bu) AS bu,
+        bu,
         district,
         territory_name,
         territory_normalized,
         COALESCE(NULLIF(TRIM(potencial), ''), 'N/A') AS potencial,
         client_name,
-        doctor_id,
-        objetivo_base AS objetivo,
+        doctor_key AS doctor_id,
+        objetivo,
         objetivo_ajustado,
         interacciones,
-        cobertura_base AS cobertura,
-        cobertura_ajustada,
-        status_visita,
-        ROW_NUMBER() OVER (
-          PARTITION BY period_scope, LOWER(bu), COALESCE(NULLIF(TRIM(potencial), ''), 'N/A'), status_visita
-          ORDER BY
-            CASE
-              WHEN status_visita = 'sobrevisitado' THEN interacciones - objetivo_base
-              WHEN status_visita = 'subvisitado' THEN objetivo_base - interacciones
-              ELSE interacciones
-            END DESC,
-            doctor_id
-        ) AS rn
-      FROM \`${FIELD_FORCE_MEDICAL_DOCTOR_ANALYSIS_VIEW}\`
-      WHERE reporting_version_id = @reportingVersionId
-        AND report_period_month = DATE(@reportPeriodMonth)
-        AND LOWER(bu) IN ('total', 'air', 'care')
-        AND status_visita IN ('sobrevisitado', 'subvisitado', 'no_visitado')
+        SAFE_DIVIDE(interacciones, NULLIF(objetivo, 0)) AS cobertura,
+        SAFE_DIVIDE(interacciones, NULLIF(objetivo_ajustado, 0)) AS cobertura_ajustada,
+        CASE
+          WHEN interacciones = 0 THEN 'no_visitado'
+          WHEN SAFE_DIVIDE(interacciones, objetivo) < 0.8 THEN 'subvisitado'
+          WHEN SAFE_DIVIDE(interacciones, objetivo) <= 1.2 THEN 'en_objetivo'
+          ELSE 'sobrevisitado'
+        END AS status_visita
+      FROM period_scoped_doctors
     )
     SELECT
       period_scope,
@@ -2772,69 +2926,11 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
       cobertura,
       cobertura_ajustada,
       status_visita
-    FROM ranked
-    WHERE
-      (status_visita IN ('sobrevisitado', 'subvisitado') AND rn <= 20)
-      OR (status_visita = 'no_visitado' AND rn <= 200)
+    FROM doctor_status
   `;
 
   const interactionMixRowsQuery = `
-    WITH reporting_context AS (
-      SELECT DATE(@reportPeriodMonth) AS report_period_month
-    ),
-    latest_interactions_upload AS (
-      SELECT u.upload_id
-      FROM \`${RAW_UPLOADS}\` u
-      JOIN reporting_context rc
-        ON TRUE
-      WHERE u.reporting_version_id = @reportingVersionId
-        AND u.status IN ('normalized', 'published')
-        AND LOWER(TRIM(u.module_code)) IN (
-          'business_excellence_salesforce_interacciones',
-          'business_excellence_interacciones',
-          'interacciones'
-        )
-        AND COALESCE(u.source_as_of_month, u.period_month) <= rc.report_period_month
-      QUALIFY ROW_NUMBER() OVER (
-        ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
-      ) = 1
-    ),
-    doctor_map AS (
-      SELECT DISTINCT
-        reporting_version_id,
-        UPPER(COALESCE(NULLIF(TRIM(territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(territory_name, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
-        UPPER(REGEXP_REPLACE(TRIM(doctor_id), r'[^a-zA-Z0-9]+', '')) AS doctor_id,
-        LOWER(bu) AS bu
-      FROM \`${FIELD_FORCE_MEDICAL_DETAIL_VIEW}\`
-      WHERE reporting_version_id = @reportingVersionId
-        AND report_period_month = DATE(@reportPeriodMonth)
-        AND period_scope = 'MTH'
-        AND LOWER(bu) IN ('air', 'care')
-    ),
-    interactions_base AS (
-      SELECT
-        i.submit_period_month AS event_month,
-        dm.bu,
-        COALESCE(NULLIF(TRIM(i.channel), ''), 'Unknown') AS channel,
-        COALESCE(NULLIF(TRIM(i.visit_type), ''), 'Unknown') AS visit_type,
-        i.interaction_id
-      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions\` i
-      JOIN latest_interactions_upload lu
-        ON lu.upload_id = i.upload_id
-      JOIN doctor_map dm
-        ON dm.reporting_version_id = @reportingVersionId
-       AND dm.territory_normalized = UPPER(COALESCE(NULLIF(TRIM(i.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(i.territory, '')), r'[^a-zA-Z0-9]+', '')))
-       AND dm.doctor_id = UPPER(REGEXP_REPLACE(TRIM(COALESCE(i.onekey_id, '')), r'[^a-zA-Z0-9]+', ''))
-      WHERE i.submit_period_month IS NOT NULL
-        AND i.submit_period_month BETWEEN DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AND DATE(@reportPeriodMonth)
-        AND LOWER(TRIM(COALESCE(
-          JSON_VALUE(i.source_payload_json, '$.Estado'),
-          JSON_VALUE(i.source_payload_json, '$.estado'),
-          JSON_VALUE(i.source_payload_json, '$.Status'),
-          JSON_VALUE(i.source_payload_json, '$.status'),
-          ''
-        ))) IN ('enviado', 'sent')
-    ),
+    WITH ${fieldForceRawCtes()},
     grouped AS (
       SELECT
         'YTD' AS period_scope,
@@ -2842,7 +2938,7 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         channel,
         visit_type,
         COUNT(DISTINCT interaction_id) AS interactions
-      FROM interactions_base
+      FROM interactions_matched
       GROUP BY 1, 2, 3, 4
       UNION ALL
       SELECT
@@ -2851,8 +2947,8 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         channel,
         visit_type,
         COUNT(DISTINCT interaction_id) AS interactions
-      FROM interactions_base
-      WHERE event_month = DATE(@reportPeriodMonth)
+      FROM interactions_matched
+      WHERE period_month = DATE(@reportPeriodMonth)
       GROUP BY 1, 2, 3, 4
     )
     SELECT period_scope, bu, channel, visit_type, interactions FROM grouped
@@ -2873,68 +2969,7 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
     client.query({ query: interactionMixRowsQuery, params }),
   ]);
 
-  const doctorDetailRowsQueryFallback = `
-    WITH ranked AS (
-      SELECT
-        period_scope,
-        LOWER(bu) AS bu,
-        district,
-        territory_name,
-        territory_normalized,
-        COALESCE(NULLIF(TRIM(potencial), ''), 'N/A') AS potencial,
-        CAST(NULL AS STRING) AS client_name,
-        doctor_id,
-        objetivo_base AS objetivo,
-        objetivo_ajustado,
-        interacciones,
-        cobertura_base AS cobertura,
-        cobertura_ajustada,
-        status_visita,
-        ROW_NUMBER() OVER (
-          PARTITION BY period_scope, LOWER(bu), COALESCE(NULLIF(TRIM(potencial), ''), 'N/A'), status_visita
-          ORDER BY
-            CASE
-              WHEN status_visita = 'sobrevisitado' THEN interacciones - objetivo_base
-              WHEN status_visita = 'subvisitado' THEN objetivo_base - interacciones
-              ELSE interacciones
-            END DESC,
-            doctor_id
-        ) AS rn
-      FROM \`${FIELD_FORCE_MEDICAL_DOCTOR_ANALYSIS_VIEW}\`
-      WHERE reporting_version_id = @reportingVersionId
-        AND report_period_month = DATE(@reportPeriodMonth)
-        AND LOWER(bu) IN ('total', 'air', 'care')
-        AND status_visita IN ('sobrevisitado', 'subvisitado', 'no_visitado')
-    )
-    SELECT
-      period_scope,
-      bu,
-      district,
-      territory_name,
-      territory_normalized,
-      potencial,
-      client_name,
-      doctor_id,
-      objetivo,
-      objetivo_ajustado,
-      interacciones,
-      cobertura,
-      cobertura_ajustada,
-      status_visita
-    FROM ranked
-    WHERE
-      (status_visita IN ('sobrevisitado', 'subvisitado') AND rn <= 20)
-      OR (status_visita = 'no_visitado' AND rn <= 200)
-  `;
-
-  let detailResult;
-  try {
-    detailResult = await client.query({ query: doctorDetailRowsQuery, params });
-  } catch (error) {
-    const message = String((error as Error)?.message ?? '').toLowerCase();
-    if (!message.includes('client_name')) throw error;
-    detailResult = await client.query({ query: doctorDetailRowsQueryFallback, params });
-  }
+  const detailResult = await client.query({ query: doctorDetailRowsQuery, params });
 
   const [rows] = mainResult;
   const [summaryRawRows] = summaryResult;
@@ -2954,6 +2989,8 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
           : 'total',
     totalTerritories: Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0),
     portfolioAccounts: Number(row.portfolio_accounts_ytd ?? row.portfolio_accounts_mth ?? 0),
+    portfolioAccountsYtd: Number(row.portfolio_accounts_ytd ?? 0),
+    portfolioAccountsMth: Number(row.portfolio_accounts_mth ?? 0),
     targetVisitsYtd: Number(row.target_visits_ytd ?? 0),
     targetVisitsMth: Number(row.target_visits_mth ?? 0),
     targetVisitsAdjustedYtd: Number(row.target_visits_adjusted_ytd ?? 0),
@@ -3015,6 +3052,8 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
     bu,
     totalTerritories: 0,
     portfolioAccounts: 0,
+    portfolioAccountsYtd: 0,
+    portfolioAccountsMth: 0,
     targetVisitsYtd: 0,
     targetVisitsMth: 0,
     targetVisitsAdjustedYtd: 0,
@@ -3157,15 +3196,23 @@ export async function getBusinessExcellenceFieldForceTopCardKpis(
   if (!resolvedReportPeriodMonth) return null;
 
   const query = `
+    WITH ${fieldForceRawCtes()},
+    ytd_summary AS (
+      SELECT
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo_ajustado), 0)) AS cobertura_ajustada,
+        EXTRACT(MONTH FROM DATE(@reportPeriodMonth)) AS months_in_scope,
+        COUNT(DISTINCT psd.territory_normalized) AS territories_in_scope,
+        COALESCE((SELECT SUM(tft_days) FROM tft_scoped WHERE period_scope = 'YTD'), 0) AS tft_days
+      FROM period_scoped_doctors psd
+      WHERE psd.period_scope = 'YTD'
+    )
     SELECT
       cobertura_ajustada,
-      porcentaje_tiempo_activo
-    FROM \`${FIELD_FORCE_MEDICAL_SUMMARY_VIEW}\`
-    WHERE reporting_version_id = @reportingVersionId
-      AND report_period_month = DATE(@reportPeriodMonth)
-      AND period_scope = 'YTD'
-      AND aggregation_level = 'total'
-    LIMIT 1
+      SAFE_DIVIDE(
+        (20 * months_in_scope * territories_in_scope) - COALESCE(tft_days, 0),
+        NULLIF(20 * months_in_scope * territories_in_scope, 0)
+      ) AS porcentaje_tiempo_activo
+    FROM ytd_summary
   `;
 
   const [rows] = await client.query({

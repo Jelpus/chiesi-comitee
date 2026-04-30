@@ -57,6 +57,14 @@ function formatSigned(value: number | null | undefined) {
   return `${value > 0 ? '+' : ''}${value.toFixed(1)}`;
 }
 
+function formatCompactNumber(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 function tagMetricLine(text: string) {
   const isDoh = text.startsWith('[DOH] ');
   const isGcp = text.startsWith('[GCP] ');
@@ -342,9 +350,22 @@ type StockChannelSummary = {
 };
 
 type GovernmentContractsSummary = {
-  progress2026Pct: number | null;
-  target2026Pct: number | null;
-  variancePp: number | null;
+  progress2526Pct: number | null;
+  deliveredFrom2025: number;
+  total2526: number;
+};
+
+type GovernmentContractGroupSummary = {
+  label: string;
+  maxQtyTotal: number;
+  deliveredFrom2025: number;
+  maxQtyPy: number;
+  delivered2025: number;
+  maxQtyCy: number;
+  delivered2026: number;
+  progressPctPyCy: number | null;
+  progressPctPy: number | null;
+  progressPctCy: number | null;
 };
 
 type DeliveryGlobalSummary = {
@@ -461,31 +482,42 @@ function normalizeGovernmentStage(value: string | null | undefined): 'ordenado' 
   return 'other';
 }
 
+function getSanitizedGovernmentDenominators(row: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>[number]) {
+  const rawPy = row.maxQuantity2025Safe ?? row.maxQuantity2025 ?? null;
+  const rawCy = row.maxQuantity2026Safe ?? row.maxQuantity2026 ?? null;
+  const rawTotal = row.maxContractQuantitySafe ?? row.maxContractQuantity ?? row.contractTotalQuantity ?? null;
+  const fallbackPy = row.total2025 ?? null;
+  const fallbackCy = row.total2026 ?? null;
+  const fallbackTotal =
+    (row.total2025 ?? 0) + (row.total2026 ?? 0) > 0
+      ? (row.total2025 ?? 0) + (row.total2026 ?? 0)
+      : null;
+  const isUnrealistic = (value: number | null) =>
+    value != null && (!Number.isFinite(value) || value <= 0 || value > 10_000_000_000_000);
+
+  let py = rawPy;
+  if (isUnrealistic(py)) py = fallbackPy;
+
+  let cy = rawCy;
+  if (isUnrealistic(cy)) cy = fallbackCy;
+
+  let total = rawTotal;
+  if (isUnrealistic(total)) total = fallbackTotal;
+
+  return {
+    maxQtyPy: py ?? 0,
+    maxQtyCy: cy ?? 0,
+    maxQtyTotal: total ?? 0,
+  };
+}
+
 function buildGovernmentContractsSummary(
   rows: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>,
 ): GovernmentContractsSummary {
-  let scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'ordenado');
-  if (scopedRows.length === 0) scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'entregado');
-  if (scopedRows.length === 0) scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'facturado');
+  const scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'ordenado');
   if (scopedRows.length === 0) {
-    return { progress2026Pct: null, target2026Pct: null, variancePp: null };
+    return { progress2526Pct: null, deliveredFrom2025: 0, total2526: 0 };
   }
-
-  const currentYear = (() => {
-    const anchor =
-      scopedRows.map((row) => row.reportPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ??
-      scopedRows.map((row) => row.latestPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ??
-      null;
-    if (!anchor) return null;
-    const parsed = new Date(`${anchor}T00:00:00Z`);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return String(parsed.getUTCFullYear());
-  })();
-  const yearPrefix = currentYear ? `${currentYear}-` : null;
-
-  const delivered2026 = scopedRows
-    .filter((row) => row.isYtd && (!yearPrefix || row.periodMonth.startsWith(yearPrefix)))
-    .reduce((sum, row) => sum + row.deliveredQuantity, 0);
 
   const denominatorSnapshotMonth =
     scopedRows
@@ -493,25 +525,104 @@ function buildGovernmentContractsSummary(
       .filter((value) => Boolean(value))
       .sort()
       .at(0) ?? null;
-  const max2026 = denominatorSnapshotMonth
+  const denominatorRows = denominatorSnapshotMonth
     ? scopedRows
-        .filter((row) => row.periodMonth === denominatorSnapshotMonth)
-        .reduce((sum, row) => sum + (row.maxQuantity2026Safe ?? row.maxQuantity2026 ?? 0), 0)
-    : 0;
-  const progress2026Pct = max2026 > 0 ? (delivered2026 / max2026) * 100 : null;
-
-  const ytdMonths = new Set(
-    scopedRows
-      .filter((row) => row.isYtd && (!yearPrefix || row.periodMonth.startsWith(yearPrefix)))
-      .map((row) => row.periodMonth),
-  ).size;
-  const target2026Pct = ytdMonths > 0 ? (ytdMonths / 12) * 100 : null;
+      .filter((row) => row.periodMonth === denominatorSnapshotMonth)
+    : [];
+  const deliveredFrom2025 = denominatorRows.reduce(
+    (sum, row) => sum + (row.total2025 ?? 0) + (row.total2026 ?? 0),
+    0,
+  );
+  const total2526 = denominatorRows.reduce((sum, row) => sum + getSanitizedGovernmentDenominators(row).maxQtyTotal, 0);
 
   return {
-    progress2026Pct,
-    target2026Pct,
-    variancePp:
-      progress2026Pct != null && target2026Pct != null ? progress2026Pct - target2026Pct : null,
+    progress2526Pct: total2526 > 0 ? (deliveredFrom2025 / total2526) * 100 : null,
+    deliveredFrom2025,
+    total2526,
+  };
+}
+
+function getGovernmentContractTypeLabel(value: string | null | undefined) {
+  return (value ?? '').trim() || 'Unassigned';
+}
+
+function buildGovernmentContractGroupSummaries(
+  rows: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>,
+  stage: 'ordenado' | 'entregado' | 'facturado' = 'ordenado',
+) {
+  const stageRows = rows.filter((row) => normalizeGovernmentStage(row.category) === stage);
+  const denominatorSnapshotMonth =
+    stageRows
+      .map((row) => row.periodMonth)
+      .filter((value) => Boolean(value))
+      .sort()
+      .at(0) ?? null;
+  const byType = new Map<
+    string,
+    Omit<GovernmentContractGroupSummary, 'progressPctPyCy' | 'progressPctPy' | 'progressPctCy'>
+  >();
+
+  for (const row of stageRows) {
+    if (!denominatorSnapshotMonth || row.periodMonth !== denominatorSnapshotMonth) continue;
+    const label = getGovernmentContractTypeLabel(row.contractType);
+    const current = byType.get(label) ?? {
+      label,
+      maxQtyTotal: 0,
+      deliveredFrom2025: 0,
+      maxQtyPy: 0,
+      delivered2025: 0,
+      maxQtyCy: 0,
+      delivered2026: 0,
+    };
+    const den = getSanitizedGovernmentDenominators(row);
+    current.maxQtyTotal += den.maxQtyTotal;
+    current.maxQtyPy += den.maxQtyPy;
+    current.maxQtyCy += den.maxQtyCy;
+    current.delivered2025 += row.total2025 ?? 0;
+    current.delivered2026 += row.total2026 ?? 0;
+    current.deliveredFrom2025 += (row.total2025 ?? 0) + (row.total2026 ?? 0);
+    byType.set(label, current);
+  }
+
+  const groups: GovernmentContractGroupSummary[] = [...byType.values()]
+    .map((row) => ({
+      ...row,
+      progressPctPyCy: row.maxQtyTotal > 0 ? (row.deliveredFrom2025 / row.maxQtyTotal) * 100 : null,
+      progressPctPy: row.maxQtyPy > 0 ? (row.delivered2025 / row.maxQtyPy) * 100 : null,
+      progressPctCy: row.maxQtyCy > 0 ? (row.delivered2026 / row.maxQtyCy) * 100 : null,
+    }))
+    .sort((a, b) => b.maxQtyTotal - a.maxQtyTotal);
+
+  const totalBase = groups.reduce(
+    (acc, row) => {
+      acc.maxQtyTotal += row.maxQtyTotal;
+      acc.deliveredFrom2025 += row.deliveredFrom2025;
+      acc.maxQtyPy += row.maxQtyPy;
+      acc.delivered2025 += row.delivered2025;
+      acc.maxQtyCy += row.maxQtyCy;
+      acc.delivered2026 += row.delivered2026;
+      return acc;
+    },
+    {
+      label: 'Grand Total',
+      maxQtyTotal: 0,
+      deliveredFrom2025: 0,
+      maxQtyPy: 0,
+      delivered2025: 0,
+      maxQtyCy: 0,
+      delivered2026: 0,
+    },
+  );
+
+  return {
+    groups,
+    total: {
+      ...totalBase,
+      progressPctPyCy:
+        totalBase.maxQtyTotal > 0 ? (totalBase.deliveredFrom2025 / totalBase.maxQtyTotal) * 100 : null,
+      progressPctPy: totalBase.maxQtyPy > 0 ? (totalBase.delivered2025 / totalBase.maxQtyPy) * 100 : null,
+      progressPctCy: totalBase.maxQtyCy > 0 ? (totalBase.delivered2026 / totalBase.maxQtyCy) * 100 : null,
+    } satisfies GovernmentContractGroupSummary,
   };
 }
 
@@ -578,20 +689,19 @@ function buildDeliveryGlobalSummary(
 
 function DsoGlobalCards({
   rows,
-  stockTotalSummary,
+  stockChannelSummaries,
   governmentContractsSummary,
   deliveryGlobalSummary,
 }: {
   rows: DsoScorecardRow[];
-  stockTotalSummary: StockTotalSummary;
+  stockChannelSummaries: StockChannelSummary[];
   governmentContractsSummary: GovernmentContractsSummary;
   deliveryGlobalSummary: DeliveryGlobalSummary;
 }) {
   const normalizeLabel = (value: string) => value.toLowerCase().trim().replace(/\s+/g, ' ');
   const annualGeneral = rows.find((row) => normalizeLabel(row.groupName) === normalizeLabel('Anual / General')) ?? null;
-  const totalCurrent = stockTotalSummary.currentDoh;
-  const totalTarget = stockTotalSummary.targetDoh;
-  const totalVariance = stockTotalSummary.variance;
+  const privateDoh = stockChannelSummaries.find((item) => item.scope === 'private') ?? null;
+  const publicDoh = stockChannelSummaries.find((item) => item.scope === 'public') ?? null;
 
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -604,36 +714,37 @@ function DsoGlobalCards({
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Total DOH</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatOneDecimal(totalCurrent)}</p>
-        <p className={`mt-2 text-sm ${totalVariance == null ? 'text-slate-600' : totalVariance <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-          Target: {formatOneDecimal(totalTarget)} | Variance: {totalVariance == null ? 'N/A' : `${totalVariance > 0 ? '+' : ''}${totalVariance.toFixed(1)}`}
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">DOH</p>
+        <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+          Private {formatOneDecimal(privateDoh?.currentDoh ?? null)} | Public {formatOneDecimal(publicDoh?.currentDoh ?? null)}
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          Target PVT {formatOneDecimal(privateDoh?.targetDoh ?? null)} | PUB {formatOneDecimal(publicDoh?.targetDoh ?? null)}
+        </p>
+        <p className="text-xs text-slate-600">
+          Var PVT{' '}
+          <span className={privateDoh?.variance == null ? 'text-slate-600' : privateDoh.variance <= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+            {privateDoh?.variance == null ? 'N/A' : `${privateDoh.variance > 0 ? '+' : ''}${privateDoh.variance.toFixed(1)}`}
+          </span>
+          {' | '}PUB{' '}
+          <span className={publicDoh?.variance == null ? 'text-slate-600' : publicDoh.variance <= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+            {publicDoh?.variance == null ? 'N/A' : `${publicDoh.variance > 0 ? '+' : ''}${publicDoh.variance.toFixed(1)}`}
+          </span>
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Government Contracts</p>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          {governmentContractsSummary.progress2026Pct == null
+          {governmentContractsSummary.progress2526Pct == null
             ? 'N/A'
-            : `${governmentContractsSummary.progress2026Pct.toFixed(1)}%`}
+            : `${governmentContractsSummary.progress2526Pct.toFixed(1)}%`}
         </p>
-        <p
-          className={`mt-2 text-sm ${
-            governmentContractsSummary.variancePp == null
-              ? 'text-slate-600'
-              : governmentContractsSummary.variancePp >= 0
-                ? 'text-emerald-700'
-                : 'text-rose-700'
-          }`}
-        >
-          Target:{' '}
-          {governmentContractsSummary.target2026Pct == null
-            ? 'N/A'
-            : `${governmentContractsSummary.target2026Pct.toFixed(1)}%`}{' '}
-          | Variance:{' '}
-          {governmentContractsSummary.variancePp == null
-            ? 'N/A'
-            : `${governmentContractsSummary.variancePp > 0 ? '+' : ''}${governmentContractsSummary.variancePp.toFixed(1)}pp`}
+        <p className="mt-2 text-sm text-slate-600">
+          Ordered | Progress 2025-2026
+        </p>
+        <p className="text-xs text-slate-600">
+          Qty {formatCompactNumber(governmentContractsSummary.deliveredFrom2025)} /{' '}
+          {formatCompactNumber(governmentContractsSummary.total2526)}
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
@@ -908,6 +1019,39 @@ function DsoInsightsPanel({
   })();
 
   const governmentNarrative: string[] = [];
+  const orderedContractGroups = buildGovernmentContractGroupSummaries(governmentContractRows, 'ordenado');
+  const completedGroups = orderedContractGroups.groups.filter((row) => (row.progressPctPyCy ?? 0) >= 100);
+  const largestGroup = orderedContractGroups.groups[0] ?? null;
+  const laggingGroups = orderedContractGroups.groups
+    .filter((row) => row.progressPctPyCy != null && row.progressPctPyCy < 100 && row.maxQtyTotal > 0)
+    .sort((a, b) => (a.progressPctPyCy ?? Infinity) - (b.progressPctPyCy ?? Infinity));
+
+  governmentNarrative.push(
+    `Ordered Progress ${governmentPreviousYear ?? 'PY'}-${governmentCurrentYear ?? 'CY'} is ${
+      orderedContractGroups.total.progressPctPyCy == null
+        ? 'N/A'
+        : `${orderedContractGroups.total.progressPctPyCy.toFixed(1)}%`
+    } (${formatInteger(orderedContractGroups.total.deliveredFrom2025)} / ${formatInteger(orderedContractGroups.total.maxQtyTotal)}).`,
+  );
+  if (largestGroup) {
+    governmentNarrative.push(
+      `Largest contract group is ${largestGroup.label}: ${formatInteger(largestGroup.deliveredFrom2025)} / ${formatInteger(largestGroup.maxQtyTotal)} (${largestGroup.progressPctPyCy == null ? 'N/A' : `${largestGroup.progressPctPyCy.toFixed(1)}%`}).`,
+    );
+  }
+  if (completedGroups.length > 0) {
+    governmentNarrative.push(
+      `Groups at or above 100%: ${completedGroups.map((row) => `${row.label} (${row.progressPctPyCy?.toFixed(1)}%)`).join(' | ')}.`,
+    );
+  }
+  if (laggingGroups.length > 0) {
+    const lagging = laggingGroups.slice(0, 2);
+    governmentNarrative.push(
+      `Main ordered backlog by contract group: ${lagging
+        .map((row) => `${row.label} (${row.progressPctPyCy?.toFixed(1)}%, remaining ${formatInteger(row.maxQtyTotal - row.deliveredFrom2025)})`)
+        .join(' | ')}.`,
+    );
+  }
+
   const funnelRow = (rowsByBu: Array<{ progressPct: number | null }>) =>
     rowsByBu.length > 0
       ? rowsByBu
@@ -1162,6 +1306,11 @@ function DsoScorecardPanel({
   const orderedSummary = stageSummary('ordenado');
   const deliveredSummary = stageSummary('entregado');
   const invoicedSummary = stageSummary('facturado');
+  const orderedContractGroups = buildGovernmentContractGroupSummaries(governmentContractRows, 'ordenado');
+  const orderedGroupsCompleted = orderedContractGroups.groups.filter((row) => (row.progressPctPyCy ?? 0) >= 100);
+  const orderedGroupsLagging = orderedContractGroups.groups
+    .filter((row) => row.progressPctPyCy != null && row.progressPctPyCy < 100 && row.maxQtyTotal > 0)
+    .sort((a, b) => (a.progressPctPyCy ?? Infinity) - (b.progressPctPyCy ?? Infinity));
   const deliveredByInstitution = buildProgressByDimension('entregado', (row) => (row.institution ?? '').trim());
   const deliveredByBrand = buildProgressByDimension(
     'entregado',
@@ -1342,17 +1491,31 @@ function DsoScorecardPanel({
     );
   }
 
-  if (deliveredSummary?.variancePp != null) {
-    if (deliveredSummary.variancePp >= 0) {
-      working.push(
-        `[GCP] Delivered progress is above proportional target by +${deliveredSummary.variancePp.toFixed(1)}pp (${deliveredSummary.progress2026Pct?.toFixed(1)}% vs target ${deliveredSummary.target2026Pct?.toFixed(1)}%).`,
-      );
+  if (orderedContractGroups.total.progressPctPyCy != null) {
+    const progressLine = `[GCP] Ordered Progress 2025-2026 is ${orderedContractGroups.total.progressPctPyCy.toFixed(1)}% (${formatInteger(orderedContractGroups.total.deliveredFrom2025)} / ${formatInteger(orderedContractGroups.total.maxQtyTotal)}).`;
+    if (orderedContractGroups.total.progressPctPyCy >= 100) {
+      working.push(progressLine);
     } else {
-      improve.push(
-        `[GCP] Delivered progress is below proportional target by ${deliveredSummary.variancePp.toFixed(1)}pp (${deliveredSummary.progress2026Pct?.toFixed(1)}% vs target ${deliveredSummary.target2026Pct?.toFixed(1)}%).`,
-      );
+      improve.push(progressLine);
     }
   }
+  if (orderedGroupsCompleted.length > 0) {
+    working.push(
+      `[GCP] Contract groups at or above 100%: ${orderedGroupsCompleted
+        .map((row) => `${row.label} (${row.progressPctPyCy?.toFixed(1)}%)`)
+        .join(' | ')}.`,
+    );
+  }
+  if (orderedGroupsLagging.length > 0) {
+    improve.push(
+      `[GCP] Contract group backlog: ${orderedGroupsLagging
+        .slice(0, 3)
+        .map((row) => `${row.label} (${row.progressPctPyCy?.toFixed(1)}%, remaining ${formatInteger(row.maxQtyTotal - row.deliveredFrom2025)})`)
+        .join(' | ')}.`,
+    );
+    actions.push('[GCP] Use the Contract Groups selector to focus product/institution/BU reviews on the largest remaining ordered backlog.');
+  }
+
   if (institutionsAhead.length > 0) {
     const leader = institutionsAhead[0];
     working.push(
@@ -1402,11 +1565,6 @@ function DsoScorecardPanel({
     );
     actions.push(
       '[GCP] Focus execution on contracts where ordered progression materially outpaces delivered progression.',
-    );
-  }
-  if (orderedSummary?.progress2026Pct != null && deliveredSummary?.progress2026Pct != null && invoicedSummary?.progress2026Pct != null) {
-    working.push(
-      `[GCP] Funnel visibility enabled: Ordered ${orderedSummary.progress2026Pct.toFixed(1)}% -> Delivered ${deliveredSummary.progress2026Pct.toFixed(1)}% -> Invoiced ${invoicedSummary.progress2026Pct.toFixed(1)}%.`,
     );
   }
   const workingTagged = working.map(tagMetricLine);
@@ -1551,58 +1709,51 @@ function DsoScorecardPanel({
 
       <article className="rounded-[24px] border border-fuchsia-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs uppercase tracking-[0.16em] text-fuchsia-700">Government Contract Funnel</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-fuchsia-700">Government Contract Groups</p>
           <p className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
             ORDENADO → ENTREGADO → FACTURADO
           </p>
         </div>
         <div className="mt-4 grid gap-3 xl:grid-cols-4">
           <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Ordered Progress 2026</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Ordered Progress 2025-2026</p>
             <p className="mt-2 text-2xl font-semibold text-slate-900">
-              {orderedSummary?.progress2026Pct == null ? 'N/A' : `${orderedSummary.progress2026Pct.toFixed(1)}%`}
+              {orderedContractGroups.total.progressPctPyCy == null ? 'N/A' : `${orderedContractGroups.total.progressPctPyCy.toFixed(1)}%`}
             </p>
             <p className="mt-1 text-xs text-slate-600">
-              Target {orderedSummary?.target2026Pct == null ? 'N/A' : `${orderedSummary.target2026Pct.toFixed(1)}%`}
+              {formatInteger(orderedContractGroups.total.deliveredFrom2025)} / {formatInteger(orderedContractGroups.total.maxQtyTotal)}
             </p>
           </div>
           <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Delivered Progress 2026</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Progress 2025</p>
             <p className="mt-2 text-2xl font-semibold text-slate-900">
-              {deliveredSummary?.progress2026Pct == null ? 'N/A' : `${deliveredSummary.progress2026Pct.toFixed(1)}%`}
+              {orderedContractGroups.total.progressPctPy == null ? 'N/A' : `${orderedContractGroups.total.progressPctPy.toFixed(1)}%`}
             </p>
             <p className="mt-1 text-xs text-slate-600">
-              Target {deliveredSummary?.target2026Pct == null ? 'N/A' : `${deliveredSummary.target2026Pct.toFixed(1)}%`}
+              {formatInteger(orderedContractGroups.total.delivered2025)} / {formatInteger(orderedContractGroups.total.maxQtyPy)}
             </p>
           </div>
           <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Invoiced Progress 2026</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Progress 2026</p>
             <p className="mt-2 text-2xl font-semibold text-slate-900">
-              {invoicedSummary?.progress2026Pct == null ? 'N/A' : `${invoicedSummary.progress2026Pct.toFixed(1)}%`}
+              {orderedContractGroups.total.progressPctCy == null ? 'N/A' : `${orderedContractGroups.total.progressPctCy.toFixed(1)}%`}
             </p>
             <p className="mt-1 text-xs text-slate-600">
-              Target {invoicedSummary?.target2026Pct == null ? 'N/A' : `${invoicedSummary.target2026Pct.toFixed(1)}%`}
+              {formatInteger(orderedContractGroups.total.delivered2026)} / {formatInteger(orderedContractGroups.total.maxQtyCy)}
             </p>
           </div>
           <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Funnel Ratios</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Group Signal</p>
             <p className="mt-2 text-sm text-slate-800">
-              ENT/ORD:{' '}
-              {orderedSummary?.progress2026Pct && deliveredSummary?.progress2026Pct
-                ? `${((deliveredSummary.progress2026Pct / orderedSummary.progress2026Pct) * 100).toFixed(1)}%`
-                : 'N/A'}
+              Complete: {orderedGroupsCompleted.length}
             </p>
             <p className="mt-1 text-sm text-slate-800">
-              FAC/ENT:{' '}
-              {deliveredSummary?.progress2026Pct && invoicedSummary?.progress2026Pct
-                ? `${((invoicedSummary.progress2026Pct / deliveredSummary.progress2026Pct) * 100).toFixed(1)}%`
-                : 'N/A'}
+              Backlog: {orderedGroupsLagging.length}
             </p>
-            <p className="mt-1 text-sm text-slate-800">
-              FAC/ORD:{' '}
-              {orderedSummary?.progress2026Pct && invoicedSummary?.progress2026Pct
-                ? `${((invoicedSummary.progress2026Pct / orderedSummary.progress2026Pct) * 100).toFixed(1)}%`
-                : 'N/A'}
+            <p className="mt-1 text-xs text-slate-600">
+              {orderedGroupsLagging[0]
+                ? `${orderedGroupsLagging[0].label}: ${orderedGroupsLagging[0].progressPctPyCy?.toFixed(1)}%`
+                : 'No lagging contract group'}
             </p>
           </div>
         </div>
@@ -1775,7 +1926,7 @@ export async function CommercialOperationsView({
             </div>
             <DsoGlobalCards
               rows={dsoScoreRows}
-              stockTotalSummary={stockTotalSummary}
+              stockChannelSummaries={stockChannelSummaries}
               governmentContractsSummary={governmentContractsSummary}
               deliveryGlobalSummary={deliveryGlobalSummary}
             />
@@ -1810,7 +1961,7 @@ export async function CommercialOperationsView({
             </div>
             <DsoGlobalCards
               rows={dsoScoreRows}
-              stockTotalSummary={stockTotalSummary}
+              stockChannelSummaries={stockChannelSummaries}
               governmentContractsSummary={governmentContractsSummary}
               deliveryGlobalSummary={deliveryGlobalSummary}
             />
@@ -1835,7 +1986,7 @@ export async function CommercialOperationsView({
             </div>
             <DsoGlobalCards
               rows={dsoScoreRows}
-              stockTotalSummary={stockTotalSummary}
+              stockChannelSummaries={stockChannelSummaries}
               governmentContractsSummary={governmentContractsSummary}
               deliveryGlobalSummary={deliveryGlobalSummary}
             />

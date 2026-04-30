@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DsoTrendChart } from '@/components/executive/commercial-operations/dso-trend-chart';
 import { DsoComparisonBarChart } from '@/components/executive/commercial-operations/dso-comparison-bar-chart';
 import type {
@@ -75,6 +75,24 @@ function formatSignedQuantity(value: number | null | undefined) {
 function formatPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return 'N/A';
   return `${value.toFixed(1)}%`;
+}
+
+function renderProgressCell(value: number | null | undefined, tone: 'total' | 'py' | 'cy' = 'total') {
+  const bgClass =
+    tone === 'py'
+      ? 'bg-sky-50'
+      : tone === 'cy'
+        ? 'bg-emerald-50'
+        : 'bg-indigo-50';
+  const textClass = value == null ? 'text-slate-500' : value >= 100 ? 'text-emerald-700' : 'text-slate-900';
+  return (
+    <td className={`px-2 py-2 text-right font-semibold ${bgClass} ${textClass}`}>
+      <span className="inline-flex items-center justify-end gap-1">
+        {value != null && value >= 100 ? <span aria-hidden="true">✓</span> : null}
+        {formatPercent(value)}
+      </span>
+    </td>
+  );
 }
 
 function formatCurrency(value: number | null | undefined) {
@@ -179,6 +197,10 @@ function getSanitizedGovernmentDenominators(row: CommercialOperationsGovernmentC
   };
 }
 
+function getGovernmentContractTypeLabel(value: string | null | undefined) {
+  return (value ?? '').trim() || 'Unassigned';
+}
+
 type ExplainerRow = {
   label: string;
   current: number | null;
@@ -223,7 +245,8 @@ export function DsoDashboardPanel({
   const [selectedGovernmentDimension, setSelectedGovernmentDimension] = useState<
     'product' | 'institution' | 'business_unit'
   >('product');
-  const [selectedGovernmentStage, setSelectedGovernmentStage] = useState<GovernmentStage>('entregado');
+  const [selectedGovernmentStage, setSelectedGovernmentStage] = useState<GovernmentStage>('ordenado');
+  const [selectedGovernmentContractType, setSelectedGovernmentContractType] = useState('');
   const [stockBusinessTypeFilter, setStockBusinessTypeFilter] = useState('');
   const [stockClientInstitutionFilter, setStockClientInstitutionFilter] = useState('');
   const [stockSkuFilter, setStockSkuFilter] = useState('');
@@ -309,14 +332,10 @@ export function DsoDashboardPanel({
   }, [stockRows]);
 
   const stockChannelRows = useMemo(() => {
-    const toPeriod = (value: string) => new Date(`${value}T00:00:00`);
     const toPeriodKey = (value: Date | null) => (value ? value.toISOString().slice(0, 10) : null);
     const minusOneMonthKey = (value: string | null) => {
       if (!value) return null;
-      const date = toPeriod(value);
-      if (Number.isNaN(date.getTime())) return null;
-      date.setUTCMonth(date.getUTCMonth() - 1);
-      return toPeriodKey(date);
+      return toPeriodKey(subOneMonth(toMonthDate(value)));
     };
 
     const summarize = (scope: StockScope): ChannelSummaryRow => {
@@ -748,6 +767,11 @@ export function DsoDashboardPanel({
         ...row,
         doh: row.sellOut > 0 ? (row.stock / row.sellOut) * 30 : null,
       }));
+      const currentPeriod =
+        rows.find((row) => row.isMth)?.periodMonth ??
+        rows.map((row) => row.periodMonth).sort().at(-1) ??
+        null;
+      const previousPeriod = toYyyyMmDd(subOneMonth(toMonthDate(currentPeriod)));
 
       const byLabel = new Map<
         string,
@@ -762,7 +786,7 @@ export function DsoDashboardPanel({
       for (const row of rows) {
         const current = byLabel.get(row.label) ?? { current: null, previous: null, ytd: [], ytdPy: [] };
         if (row.isMth) current.current = row.doh;
-        if (row.isMthPy) current.previous = row.doh;
+        if (row.periodMonth === previousPeriod) current.previous = row.doh;
         if (row.isYtd && row.doh != null) current.ytd.push(row.doh);
         if (row.isYtdPy && row.doh != null) current.ytdPy.push(row.doh);
         byLabel.set(row.label, current);
@@ -779,8 +803,7 @@ export function DsoDashboardPanel({
             ytdAvgDelta: ytdAvg != null && ytdPyAvg != null ? ytdAvg - ytdPyAvg : null,
           };
         })
-        .sort((a, b) => (b.current ?? -Infinity) - (a.current ?? -Infinity))
-        .slice(0, 8);
+        .sort((a, b) => (b.current ?? -Infinity) - (a.current ?? -Infinity));
     };
 
     return {
@@ -920,12 +943,11 @@ export function DsoDashboardPanel({
     const denominatorRows = denominatorSnapshotMonth
       ? denominatorBaseRows.filter((row) => row.periodMonth === denominatorSnapshotMonth)
       : [];
-    const delivered2025 = scopeRows
-      .filter((row) => row.periodMonth >= '2025-01-01' && row.periodMonth < '2026-01-01')
-      .reduce((sum, row) => sum + row.deliveredQuantity, 0);
-    const delivered2026 = scopeRows
-      .filter((row) => row.periodMonth >= '2026-01-01' && row.periodMonth < '2027-01-01')
-      .reduce((sum, row) => sum + row.deliveredQuantity, 0);
+    const scopeSnapshotRows = denominatorSnapshotMonth
+      ? scopeRows.filter((row) => row.periodMonth === denominatorSnapshotMonth)
+      : [];
+    const delivered2025 = scopeSnapshotRows.reduce((sum, row) => sum + (row.total2025 ?? 0), 0);
+    const delivered2026 = scopeSnapshotRows.reduce((sum, row) => sum + (row.total2026 ?? 0), 0);
     const deliveredFrom2025 = delivered2025 + delivered2026;
     const total2526 = denominatorRows.reduce((sum, row) => sum + getSanitizedGovernmentDenominators(row).maxQtyTotal, 0);
     const total2025 = denominatorRows.reduce((sum, row) => sum + getSanitizedGovernmentDenominators(row).maxQtyPy, 0);
@@ -1045,6 +1067,107 @@ export function DsoDashboardPanel({
     [governmentMonthlyRows],
   );
 
+  const governmentContractTypeOptions = useMemo(
+    () =>
+      [...new Set(
+        governmentContractRows
+          .filter((row) => normalizeGovernmentStage(row.category) === selectedGovernmentStage)
+          .map((row) => getGovernmentContractTypeLabel(row.contractType)),
+      )].sort((a, b) => a.localeCompare(b)),
+    [governmentContractRows, selectedGovernmentStage],
+  );
+
+  useEffect(() => {
+    if (selectedGovernmentContractType && !governmentContractTypeOptions.includes(selectedGovernmentContractType)) {
+      setSelectedGovernmentContractType('');
+    }
+  }, [governmentContractTypeOptions, selectedGovernmentContractType]);
+
+  const governmentContractGroupRows = useMemo(() => {
+    const stageRows = governmentContractRows.filter(
+      (row) => normalizeGovernmentStage(row.category) === selectedGovernmentStage,
+    );
+    const denominatorSnapshotMonth =
+      stageRows
+        .map((row) => row.periodMonth)
+        .filter((value) => Boolean(value))
+        .sort()
+        .at(0) ?? null;
+    const byType = new Map<
+      string,
+      {
+        label: string;
+        maxQtyTotal: number;
+        deliveredFrom2025: number;
+        maxQtyPy: number;
+        delivered2025: number;
+        maxQtyCy: number;
+        delivered2026: number;
+      }
+    >();
+
+    for (const row of stageRows) {
+      const label = getGovernmentContractTypeLabel(row.contractType);
+      const current = byType.get(label) ?? {
+        label,
+        maxQtyTotal: 0,
+        deliveredFrom2025: 0,
+        maxQtyPy: 0,
+        delivered2025: 0,
+        maxQtyCy: 0,
+        delivered2026: 0,
+      };
+
+      if (denominatorSnapshotMonth && row.periodMonth === denominatorSnapshotMonth) {
+        const den = getSanitizedGovernmentDenominators(row);
+        current.maxQtyTotal += den.maxQtyTotal;
+        current.maxQtyPy += den.maxQtyPy;
+        current.maxQtyCy += den.maxQtyCy;
+        current.delivered2025 += row.total2025 ?? 0;
+        current.delivered2026 += row.total2026 ?? 0;
+        current.deliveredFrom2025 += (row.total2025 ?? 0) + (row.total2026 ?? 0);
+      }
+      byType.set(label, current);
+    }
+
+    const rows = [...byType.values()].map((row) => ({
+      ...row,
+      progressPctPyCy: row.maxQtyTotal > 0 ? (row.deliveredFrom2025 / row.maxQtyTotal) * 100 : null,
+      progressPctPy: row.maxQtyPy > 0 ? (row.delivered2025 / row.maxQtyPy) * 100 : null,
+      progressPctCy: row.maxQtyCy > 0 ? (row.delivered2026 / row.maxQtyCy) * 100 : null,
+    }));
+    const total = rows.reduce(
+      (acc, row) => {
+        acc.maxQtyTotal += row.maxQtyTotal;
+        acc.deliveredFrom2025 += row.deliveredFrom2025;
+        acc.maxQtyPy += row.maxQtyPy;
+        acc.delivered2025 += row.delivered2025;
+        acc.maxQtyCy += row.maxQtyCy;
+        acc.delivered2026 += row.delivered2026;
+        return acc;
+      },
+      {
+        label: 'Grand Total',
+        maxQtyTotal: 0,
+        deliveredFrom2025: 0,
+        maxQtyPy: 0,
+        delivered2025: 0,
+        maxQtyCy: 0,
+        delivered2026: 0,
+      },
+    );
+
+    return {
+      rows: rows.sort((a, b) => b.maxQtyTotal - a.maxQtyTotal),
+      total: {
+        ...total,
+        progressPctPyCy: total.maxQtyTotal > 0 ? (total.deliveredFrom2025 / total.maxQtyTotal) * 100 : null,
+        progressPctPy: total.maxQtyPy > 0 ? (total.delivered2025 / total.maxQtyPy) * 100 : null,
+        progressPctCy: total.maxQtyCy > 0 ? (total.delivered2026 / total.maxQtyCy) * 100 : null,
+      },
+    };
+  }, [governmentContractRows, selectedGovernmentStage]);
+
   const governmentRankingRows = useMemo(() => {
     const keyFor = (row: CommercialOperationsGovernmentContractProgressRow) => {
       if (selectedGovernmentDimension === 'institution') return (row.institution ?? '').trim() || 'Unassigned';
@@ -1055,13 +1178,12 @@ export function DsoDashboardPanel({
       return `${marketGroup || 'Unassigned'} - ${brandName || fallback || 'Unassigned'}`;
     };
 
-    const byKey = new Map<
-      string,
-      { label: string; mthDelivered: number; ytdDelivered: number; ytdPyDelivered: number }
-    >();
+    const byKey = new Map<string, { label: string; mthDelivered: number; ytdDelivered: number; delivered2025: number; delivered2026: number }>();
 
     const stageRows = governmentContractRows.filter(
-      (row) => normalizeGovernmentStage(row.category) === selectedGovernmentStage,
+      (row) =>
+        normalizeGovernmentStage(row.category) === selectedGovernmentStage &&
+        (!selectedGovernmentContractType || getGovernmentContractTypeLabel(row.contractType) === selectedGovernmentContractType),
     );
     const denominatorSnapshotMonth =
       stageRows
@@ -1069,22 +1191,23 @@ export function DsoDashboardPanel({
         .filter((value) => Boolean(value))
         .sort()
         .at(0) ?? null;
-    const maxQtyByLabel = new Map<string, { maxQtyPy: number; maxQtyCy: number }>();
+    const maxQtyByLabel = new Map<string, { maxQtyPy: number; maxQtyCy: number; totalPy: number; totalCy: number }>();
 
     for (const row of stageRows) {
       const stage = normalizeGovernmentStage(row.category);
       const key = keyFor(row);
       if (stage === selectedGovernmentStage) {
-        const current = byKey.get(key) ?? { label: key, mthDelivered: 0, ytdDelivered: 0, ytdPyDelivered: 0 };
+        const current = byKey.get(key) ?? { label: key, mthDelivered: 0, ytdDelivered: 0, delivered2025: 0, delivered2026: 0 };
         if (row.isMth) current.mthDelivered += row.deliveredQuantity;
         if (row.isYtd) current.ytdDelivered += row.deliveredQuantity;
-        if (row.isYtdPy) current.ytdPyDelivered += row.deliveredQuantity;
         byKey.set(key, current);
         if (denominatorSnapshotMonth && row.periodMonth === denominatorSnapshotMonth) {
-          const prev = maxQtyByLabel.get(key) ?? { maxQtyPy: 0, maxQtyCy: 0 };
+          const prev = maxQtyByLabel.get(key) ?? { maxQtyPy: 0, maxQtyCy: 0, totalPy: 0, totalCy: 0 };
           const den = getSanitizedGovernmentDenominators(row);
           prev.maxQtyPy += den.maxQtyPy;
           prev.maxQtyCy += den.maxQtyCy;
+          prev.totalPy += row.total2025 ?? 0;
+          prev.totalCy += row.total2026 ?? 0;
           maxQtyByLabel.set(key, prev);
         }
       }
@@ -1095,19 +1218,21 @@ export function DsoDashboardPanel({
         ...row,
         maxQtyPy: maxQtyByLabel.get(row.label)?.maxQtyPy ?? 0,
         maxQtyCy: maxQtyByLabel.get(row.label)?.maxQtyCy ?? 0,
+        totalPy: maxQtyByLabel.get(row.label)?.totalPy ?? 0,
+        totalCy: maxQtyByLabel.get(row.label)?.totalCy ?? 0,
       }))
       .map((row) => ({
         ...row,
         progressPctPyCy:
           row.maxQtyPy + row.maxQtyCy > 0
-            ? ((row.ytdPyDelivered + row.ytdDelivered) / (row.maxQtyPy + row.maxQtyCy)) * 100
+            ? ((row.totalPy + row.totalCy) / (row.maxQtyPy + row.maxQtyCy)) * 100
             : null,
-        progressPctPy: row.maxQtyPy > 0 ? (row.ytdPyDelivered / row.maxQtyPy) * 100 : null,
-        progressPctCy: row.maxQtyCy > 0 ? (row.ytdDelivered / row.maxQtyCy) * 100 : null,
+        progressPctPy: row.maxQtyPy > 0 ? (row.totalPy / row.maxQtyPy) * 100 : null,
+        progressPctCy: row.maxQtyCy > 0 ? (row.totalCy / row.maxQtyCy) * 100 : null,
       }))
       .sort((a, b) => b.mthDelivered - a.mthDelivered)
       .slice(0, 12);
-  }, [governmentContractRows, selectedGovernmentDimension, selectedGovernmentStage]);
+  }, [governmentContractRows, selectedGovernmentContractType, selectedGovernmentDimension, selectedGovernmentStage]);
 
   return (
     <div className="space-y-4">
@@ -1741,7 +1866,10 @@ export function DsoDashboardPanel({
               <button
                 key={key}
                 type="button"
-                onClick={() => setSelectedGovernmentStage(key)}
+                onClick={() => {
+                  setSelectedGovernmentStage(key);
+                  setSelectedGovernmentContractType('');
+                }}
                 className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
                   selectedGovernmentStage === key ? 'bg-slate-900 text-white' : 'text-slate-600'
                 }`}
@@ -1880,6 +2008,98 @@ export function DsoDashboardPanel({
             </div>
           </div>
 
+          <div className="mt-4 rounded-[14px] border border-slate-200 bg-slate-50/60 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Contract Groups</p>
+              <p className="text-xs text-slate-500">{selectedGovernmentStageLabel}</p>
+            </div>
+            <div className="mt-3 overflow-x-auto rounded-[10px] border border-slate-200 bg-white">
+              <table className="min-w-[980px] w-full text-xs">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.10em] text-slate-500">
+                  <tr>
+                    <th className="px-2 py-2 text-left">Contract Group</th>
+                    <th className="px-2 py-2 text-right">Max Total 2025-2026</th>
+                    <th className="px-2 py-2 text-right">Units 2025-2026</th>
+                    <th className="bg-indigo-50 px-2 py-2 text-right">Progress 2025-2026</th>
+                    <th className="px-2 py-2 text-right">Max 2025</th>
+                    <th className="px-2 py-2 text-right">Total 2025</th>
+                    <th className="bg-sky-50 px-2 py-2 text-right">Progress 2025</th>
+                    <th className="px-2 py-2 text-right">Max 2026</th>
+                    <th className="px-2 py-2 text-right">Total 2026</th>
+                    <th className="bg-emerald-50 px-2 py-2 text-right">Progress 2026</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {governmentContractGroupRows.rows.map((row) => (
+                    <tr key={row.label}>
+                      <td className="px-2 py-2 text-left font-semibold text-slate-800">{row.label}</td>
+                      <td className="px-2 py-2 text-right text-slate-900">{formatQuantity(row.maxQtyTotal)}</td>
+                      <td className="px-2 py-2 text-right text-slate-900">{formatQuantity(row.deliveredFrom2025)}</td>
+                      {renderProgressCell(row.progressPctPyCy)}
+                      <td className="px-2 py-2 text-right text-slate-900">{formatQuantity(row.maxQtyPy)}</td>
+                      <td className="px-2 py-2 text-right text-slate-900">{formatQuantity(row.delivered2025)}</td>
+                      {renderProgressCell(row.progressPctPy, 'py')}
+                      <td className="px-2 py-2 text-right text-slate-900">{formatQuantity(row.maxQtyCy)}</td>
+                      <td className="px-2 py-2 text-right text-slate-900">{formatQuantity(row.delivered2026)}</td>
+                      {renderProgressCell(row.progressPctCy, 'cy')}
+                    </tr>
+                  ))}
+                  <tr className="bg-slate-900 text-white">
+                    <td className="px-2 py-2 text-left font-semibold">{governmentContractGroupRows.total.label}</td>
+                    <td className="px-2 py-2 text-right font-semibold">{formatQuantity(governmentContractGroupRows.total.maxQtyTotal)}</td>
+                    <td className="px-2 py-2 text-right font-semibold">{formatQuantity(governmentContractGroupRows.total.deliveredFrom2025)}</td>
+                    <td className="bg-indigo-700 px-2 py-2 text-right font-semibold">
+                      <span className="inline-flex items-center justify-end gap-1">
+                        {governmentContractGroupRows.total.progressPctPyCy != null && governmentContractGroupRows.total.progressPctPyCy >= 100 ? <span aria-hidden="true">✓</span> : null}
+                        {formatPercent(governmentContractGroupRows.total.progressPctPyCy)}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2 text-right font-semibold">{formatQuantity(governmentContractGroupRows.total.maxQtyPy)}</td>
+                    <td className="px-2 py-2 text-right font-semibold">{formatQuantity(governmentContractGroupRows.total.delivered2025)}</td>
+                    <td className="bg-sky-700 px-2 py-2 text-right font-semibold">
+                      <span className="inline-flex items-center justify-end gap-1">
+                        {governmentContractGroupRows.total.progressPctPy != null && governmentContractGroupRows.total.progressPctPy >= 100 ? <span aria-hidden="true">✓</span> : null}
+                        {formatPercent(governmentContractGroupRows.total.progressPctPy)}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2 text-right font-semibold">{formatQuantity(governmentContractGroupRows.total.maxQtyCy)}</td>
+                    <td className="px-2 py-2 text-right font-semibold">{formatQuantity(governmentContractGroupRows.total.delivered2026)}</td>
+                    <td className="bg-emerald-700 px-2 py-2 text-right font-semibold">
+                      <span className="inline-flex items-center justify-end gap-1">
+                        {governmentContractGroupRows.total.progressPctCy != null && governmentContractGroupRows.total.progressPctCy >= 100 ? <span aria-hidden="true">✓</span> : null}
+                        {formatPercent(governmentContractGroupRows.total.progressPctCy)}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setSelectedGovernmentContractType('')}
+              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                selectedGovernmentContractType === '' ? 'bg-slate-900 text-white' : 'text-slate-600'
+              }`}
+            >
+              All
+            </button>
+            {governmentContractTypeOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setSelectedGovernmentContractType(option)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  selectedGovernmentContractType === option ? 'bg-slate-900 text-white' : 'text-slate-600'
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+
           <div className="mt-4 flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
             {([
               ['product', 'By Product'],
@@ -1906,9 +2126,9 @@ export function DsoDashboardPanel({
                   <th className="px-3 py-2 text-left">Segment</th>
                   <th className="px-3 py-2 text-right">MTH</th>
                   <th className="px-3 py-2 text-right">YTD</th>
-                  <th className="px-3 py-2 text-right">% Progress [{governmentPyCyLabel}]</th>
-                  <th className="px-3 py-2 text-right">% Progress [{governmentPyLabel}]</th>
-                  <th className="px-3 py-2 text-right">% Progress [{governmentCyLabel}]</th>
+                  <th className="bg-indigo-50 px-3 py-2 text-right">% Progress [{governmentPyCyLabel}]</th>
+                  <th className="bg-sky-50 px-3 py-2 text-right">% Progress [{governmentPyLabel}]</th>
+                  <th className="bg-emerald-50 px-3 py-2 text-right">% Progress [{governmentCyLabel}]</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1917,15 +2137,9 @@ export function DsoDashboardPanel({
                     <td className="px-3 py-2 text-left font-medium text-slate-800">{row.label}</td>
                     <td className="px-3 py-2 text-right text-slate-900">{formatQuantity(row.mthDelivered)}</td>
                     <td className="px-3 py-2 text-right text-slate-900">{formatQuantity(row.ytdDelivered)}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                      {row.progressPctPyCy == null ? 'N/A' : `${row.progressPctPyCy.toFixed(1)}%`}
-                    </td>
-                    <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                      {row.progressPctPy == null ? 'N/A' : `${row.progressPctPy.toFixed(1)}%`}
-                    </td>
-                    <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                      {row.progressPctCy == null ? 'N/A' : `${row.progressPctCy.toFixed(1)}%`}
-                    </td>
+                    {renderProgressCell(row.progressPctPyCy)}
+                    {renderProgressCell(row.progressPctPy, 'py')}
+                    {renderProgressCell(row.progressPctCy, 'cy')}
                   </tr>
                 ))}
                 {governmentRankingRows.length === 0 ? (

@@ -49,7 +49,7 @@ export function FieldForceExcellencePanelClient({
   const [activeCoverage, setActiveCoverage] = useState<'base' | 'adjusted'>(initialCoverage);
   const [activeBu, setActiveBu] = useState<'total' | 'air' | 'care'>(initialBu);
   const [activeDetailMode, setActiveDetailMode] = useState<'territory' | 'district'>(initialDetailMode);
-  const [activePotential, setActivePotential] = useState<string>(initialPotential || 'all');
+  const [activePotential, setActivePotential] = useState<string>(initialPotential && initialPotential !== 'all' ? initialPotential : 'P1');
   const [activeInteractionChannel, setActiveInteractionChannel] = useState<string>('all');
 
   const periodScope = activeView === 'ytd' ? 'YTD' : 'MTH';
@@ -79,6 +79,10 @@ export function FieldForceExcellencePanelClient({
     activeView === 'ytd'
       ? (activeCoverage === 'adjusted' ? totalRow?.targetVisitsAdjustedYtd : totalRow?.targetVisitsYtd)
       : (activeCoverage === 'adjusted' ? totalRow?.targetVisitsAdjustedMth : totalRow?.targetVisitsMth);
+  const selectedClients =
+    activeView === 'ytd'
+      ? (totalRow?.portfolioAccountsYtd ?? totalRow?.portfolioAccounts)
+      : (totalRow?.portfolioAccountsMth ?? totalRow?.portfolioAccounts);
   const totalCoveragePct =
     activeView === 'ytd'
       ? (activeCoverage === 'adjusted' ? totalRow?.coverageAdjustedYtdPct : totalRow?.coverageYtdPct)
@@ -111,12 +115,21 @@ export function FieldForceExcellencePanelClient({
   }, [summaryRows, activeDetailMode, activeBu, activeCoverage]);
 
   const buFilteredDoctors = doctorRowsScope.filter((row) => activeBu === 'total' || row.bu === activeBu);
+  const segmentedDoctors = buFilteredDoctors.filter((row) => {
+    const potential = (row.potencial ?? '').trim().toLowerCase();
+    return potential !== 'sin_segmento' && potential !== 'sin segmento';
+  });
   const potentialOptions = useMemo(
-    () => Array.from(new Set(buFilteredDoctors.map((row) => (row.potencial ?? '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [buFilteredDoctors],
+    () => Array.from(new Set(segmentedDoctors.map((row) => (row.potencial ?? '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [segmentedDoctors],
   );
-  const doctorsFilteredByPotential = buFilteredDoctors.filter((row) => activePotential === 'all'
-    || (row.potencial ?? '').trim().toLowerCase() === activePotential.toLowerCase());
+  const selectedPotential = potentialOptions.includes(activePotential)
+    ? activePotential
+    : potentialOptions.includes('P1')
+      ? 'P1'
+      : 'all';
+  const doctorsFilteredByPotential = segmentedDoctors.filter((row) => selectedPotential === 'all'
+    || (row.potencial ?? '').trim().toLowerCase() === selectedPotential.toLowerCase());
 
   const interactionChannelOptions = useMemo(() => {
     const filtered = interactionMixRowsScope.filter((row) => activeBu === 'total' || row.bu === activeBu);
@@ -293,7 +306,7 @@ export function FieldForceExcellencePanelClient({
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <article className="rounded-[14px] border border-slate-200 bg-white p-3"><p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Clients</p><p className="mt-1 text-2xl font-semibold text-slate-950">{showNumber(totalRow?.portfolioAccounts ?? 0)}</p></article>
+        <article className="rounded-[14px] border border-slate-200 bg-white p-3"><p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Clients</p><p className="mt-1 text-2xl font-semibold text-slate-950">{showNumber(selectedClients ?? 0)}</p></article>
         <article className="rounded-[14px] border border-slate-200 bg-white p-3"><p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Objective</p><p className="mt-1 text-2xl font-semibold text-slate-950">{showNumber(selectedTarget ?? 0)}</p></article>
         <article className="rounded-[14px] border border-slate-200 bg-white p-3"><p className="text-xs uppercase tracking-[0.12em] text-slate-500"># Interactions</p><p className="mt-1 text-2xl font-semibold text-slate-950">{activeView === 'ytd' ? showNumber(totalRow?.sentInteractionsYtd ?? 0) : showNumber(totalRow?.sentInteractionsMth ?? 0)}</p></article>
         <article className="rounded-[14px] border border-slate-200 bg-white p-3"><p className="text-xs uppercase tracking-[0.12em] text-slate-500">Coverage</p><p className="mt-1 text-2xl font-semibold text-slate-950">{showPct(selectedCoveragePct)}</p></article>
@@ -319,7 +332,7 @@ export function FieldForceExcellencePanelClient({
                   return (
                     <>
                 <td className="px-3 py-2 font-semibold text-slate-900">{toLabel(row.bu)}</td>
-                <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.portfolioAccounts)}</td>
+                <td className="px-3 py-2 text-right text-slate-700">{activeView === 'ytd' ? showNumber(row.portfolioAccountsYtd ?? row.portfolioAccounts) : showNumber(row.portfolioAccountsMth ?? row.portfolioAccounts)}</td>
                 <td className="px-3 py-2 text-right text-slate-700">{activeView === 'ytd' ? showNumber(activeCoverage === 'adjusted' ? row.targetVisitsAdjustedYtd : row.targetVisitsYtd) : showNumber(activeCoverage === 'adjusted' ? row.targetVisitsAdjustedMth : row.targetVisitsMth)}</td>
                 <td className="px-3 py-2 text-right text-slate-700">{activeView === 'ytd' ? showNumber(row.sentInteractionsYtd) : showNumber(row.sentInteractionsMth)}</td>
                 <td className="px-3 py-2 text-right text-slate-700">{activeView === 'ytd' ? showPct(activeCoverage === 'adjusted' ? row.coverageAdjustedYtdPct : row.coverageYtdPct) : showPct(activeCoverage === 'adjusted' ? row.coverageAdjustedMthPct : row.coverageMthPct)}</td>
@@ -485,7 +498,7 @@ export function FieldForceExcellencePanelClient({
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">Analisis De Medicos ({toLabel(activeBu)})</p>
           <div className="flex items-center gap-2">
             <label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Potencial</label>
-            <select value={activePotential} onChange={(e) => setActivePotential(e.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700">
+            <select value={selectedPotential} onChange={(e) => setActivePotential(e.target.value)} className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700">
               <option value="all">All</option>
               {potentialOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
