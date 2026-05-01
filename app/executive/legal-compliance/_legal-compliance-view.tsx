@@ -79,8 +79,24 @@ function ModeTabs({ active, params }: { active: LegalComplianceViewMode; params:
 type LegalComplianceViewProps = { viewMode: LegalComplianceViewMode; searchParams?: SearchParams };
 
 export async function LegalComplianceView({ viewMode, searchParams = {} }: LegalComplianceViewProps) {
-  const versions = await getReportingVersions();
-  if (versions.length === 0) throw new Error('No reporting versions found.');
+  const versions = await getReportingVersions({
+    statuses: searchParams.version ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
+  if (versions.length === 0) {
+    return (
+      <section className="space-y-4 pb-8">
+        <SectionHeader
+          eyebrow="Executive"
+          title="Legal & Compliance"
+          description="Target-vs-result control tower for legal risk and compliance execution."
+          actions={<ModeTabs active={viewMode} params={{}} />}
+        />
+        <div className="rounded-[18px] border border-slate-200 bg-white p-8 text-sm text-slate-600">
+          No published Executive version is available.
+        </div>
+      </section>
+    );
+  }
   const selectedVersion =
     versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];
   const data = await getLegalComplianceData(selectedVersion.reportingVersionId, selectedVersion.periodMonth);

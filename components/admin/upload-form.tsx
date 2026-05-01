@@ -5,33 +5,11 @@ import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { createUploadRecord, inspectUploadWorkbook } from '@/app/admin/uploads/actions';
 import type { UploadFormOptions } from '@/lib/data/uploads/get-upload-form-options';
+import type { ModuleAreaCode } from '@/lib/data/modules';
 
 type UploadFormProps = {
   options: UploadFormOptions;
 };
-
-type ModuleAreaCode =
-  | 'sales_internal'
-  | 'business_excellence'
-  | 'commercial_operations'
-  | 'human_resources'
-  | 'opex'
-  | 'other';
-
-function detectModuleArea(moduleCode: string, moduleLabel?: string): ModuleAreaCode {
-  const code = moduleCode.trim().toLowerCase();
-  const label = (moduleLabel ?? '').trim().toLowerCase();
-  const joined = `${code} ${label}`;
-
-  if (code === 'sales_internal' || joined.includes('sales internal')) return 'sales_internal';
-  if (code.startsWith('business_excellence') || joined.includes('business excellence'))
-    return 'business_excellence';
-  if (code.startsWith('commercial_operations') || joined.includes('commercial operations'))
-    return 'commercial_operations';
-  if (code.startsWith('human_resources') || joined.includes('human resources')) return 'human_resources';
-  if (code.startsWith('opex') || joined.includes('opex')) return 'opex';
-  return 'other';
-}
 
 function moduleAreaLabel(area: ModuleAreaCode) {
   switch (area) {
@@ -43,8 +21,14 @@ function moduleAreaLabel(area: ModuleAreaCode) {
       return 'Commercial Operations';
     case 'human_resources':
       return 'Human Resources';
+    case 'medical':
+      return 'Medical';
     case 'opex':
       return 'OPEX';
+    case 'ra_quality_fv':
+      return 'RA - Quality - FV';
+    case 'legal_compliance':
+      return 'Legal & Compliance';
     default:
       return 'Other';
   }
@@ -60,8 +44,14 @@ function moduleAreaOrder(area: ModuleAreaCode) {
       return 3;
     case 'human_resources':
       return 4;
-    case 'opex':
+    case 'medical':
       return 5;
+    case 'opex':
+      return 6;
+    case 'ra_quality_fv':
+      return 7;
+    case 'legal_compliance':
+      return 8;
     default:
       return 99;
   }
@@ -147,7 +137,7 @@ export function UploadForm({ options }: UploadFormProps) {
     () =>
       options.modules.map((item) => ({
         ...item,
-        area: detectModuleArea(item.value, item.label),
+        area: item.areaCode,
       })),
     [options.modules],
   );

@@ -34,6 +34,7 @@ async function resolveReportingVersionId(reportingVersionId?: string) {
     query: `
       SELECT reporting_version_id
       FROM \`chiesi-committee.chiesi_committee_admin.reporting_versions\`
+      WHERE status IN ('ready_to_show', 'closed')
       ORDER BY period_month DESC, version_number DESC, created_at DESC
       LIMIT 1
     `,

@@ -1,58 +1,15 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
+import { getActiveModuleOptions } from '@/lib/data/modules';
+import type { ModuleAreaCode } from '@/lib/data/modules';
 
 export type UploadFormOptions = {
-  modules: { value: string; label: string }[];
+  modules: { value: string; label: string; areaCode: ModuleAreaCode }[];
   versions: { value: string; label: string; periodMonth: string }[];
 };
 
-const businessExcellenceSourceModules = [
-  { value: 'business_excellence_ddd', label: 'Business Excellence - DDD' },
-  { value: 'business_excellence_budget_sell_out', label: 'Business Excellence - Budget Sell Out' },
-  { value: 'business_excellence_brick_assignment', label: 'Business Excellence - Brick Assignment' },
-  { value: 'business_excellence_iqvia_weekly', label: 'Business Excellence - Weekly Tracking' },
-  { value: 'business_excellence_closeup', label: 'Business Excellence - Closeup' },
-  { value: 'business_excellence_cuotas', label: 'Business Excellence - Cuotas' },
-  {
-    value: 'business_excellence_salesforce_fichero_medico',
-    label: 'Business Excellence - Efectividad Fuerza de Ventas - Fichero Medico',
-  },
-  {
-    value: 'business_excellence_salesforce_tft',
-    label: 'Business Excellence - Efectividad Fuerza de Ventas - TFT',
-  },
-  {
-    value: 'business_excellence_salesforce_interacciones',
-    label: 'Business Excellence - Efectividad Fuerza de Ventas - Interacciones',
-  },
-  { value: 'human_resources_turnover', label: 'Human Resources - Turnover' },
-  { value: 'human_resources_training', label: 'Human Resources - Training' },
-  { value: 'commercial_operations_dso', label: 'Commercial Operations - DSO' },
-  { value: 'commercial_operations_government_orders', label: 'Commercial Operations - Government Orders' },
-  { value: 'commercial_operations_private_orders', label: 'Commercial Operations - Private Orders' },
-  {
-    value: 'commercial_operations_government_contract_progress',
-    label: 'Commercial Operations - Government Contract Progress',
-  },
-  { value: 'commercial_operations_stocks', label: 'Commercial Operations - Stocks' },
-  { value: 'commercial_operations_sanctions', label: 'Commercial Operations - Sanctions' },
-  { value: 'opex_by_cc', label: 'OPEX - Opex by CC' },
-];
-
 export async function getUploadFormOptions(): Promise<UploadFormOptions> {
   const client = getBigQueryClient();
-  const hiddenLegacyModuleCodes = new Set([
-    'opex_master_catalog',
-  ]);
-
-  const modulesQuery = `
-    SELECT
-      module_code,
-      module_name
-    FROM \`chiesi-committee.chiesi_committee_core.dim_module\`
-    WHERE is_active = TRUE
-    ORDER BY module_name
-  `;
 
   const versionsQuery = `
     SELECT
@@ -63,32 +20,19 @@ export async function getUploadFormOptions(): Promise<UploadFormOptions> {
     ORDER BY period_month DESC, version_number DESC, created_at DESC
   `;
 
-  const [[moduleRows], [versionRows]] = await Promise.all([
-    client.query({ query: modulesQuery }),
+  const [modules, [versionRows]] = await Promise.all([
+    getActiveModuleOptions(),
     client.query({ query: versionsQuery }),
   ]);
 
-  const typedModuleRows = moduleRows as Array<{ module_code: string; module_name: string }>;
   const typedVersionRows = versionRows as Array<{
     reporting_version_id: string;
     period_month: string;
     version_name: string;
   }>;
 
-  const modulesFromCore = typedModuleRows
-    .filter((row) => !hiddenLegacyModuleCodes.has(row.module_code))
-    .map((row) => ({
-      value: row.module_code,
-      label: row.module_name,
-    }));
-
-  const moduleMap = new Map<string, { value: string; label: string }>();
-  for (const moduleItem of [...modulesFromCore, ...businessExcellenceSourceModules]) {
-    moduleMap.set(moduleItem.value, moduleItem);
-  }
-
   return {
-    modules: [...moduleMap.values()].sort((a, b) => a.label.localeCompare(b.label)),
+    modules,
     versions: typedVersionRows.map((row) => ({
       value: row.reporting_version_id,
       label: `${row.period_month} - ${row.version_name}`,

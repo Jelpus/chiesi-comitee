@@ -1812,7 +1812,9 @@ export async function CommercialOperationsView({
   viewMode: CommercialOperationsViewMode;
   searchParams?: SearchParams;
 }) {
-  const versions = await getReportingVersions();
+  const versions = await getReportingVersions({
+    statuses: searchParams?.version ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
   const selectedVersion = versions.find((item) => item.reportingVersionId === searchParams?.version) ?? versions[0];
   const selectedReportingVersionId = selectedVersion?.reportingVersionId ?? '';
   const selectedPeriodMonth = selectedVersion?.periodMonth ?? '';

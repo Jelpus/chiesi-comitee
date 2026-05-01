@@ -2,7 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { Loader2 } from 'lucide-react';
-import { closeReportingVersion, createReportingVersion, deleteReportingVersion } from '@/app/admin/versions/actions';
+import {
+  closeReportingVersion,
+  createReportingVersion,
+  deleteReportingVersion,
+  markReportingVersionReady,
+  requestReportingVersionInfo,
+} from '@/app/admin/versions/actions';
 import { AdminStatusBadge } from '@/components/ui/admin-status-badge';
 import type { VersionRow } from '@/lib/data/versions/get-versions-page-data';
 
@@ -156,7 +162,9 @@ export function VersionsTable({ rows }: VersionsTableProps) {
             <tbody>
               {sortedRows.map((row) => {
                 const rowBusy = isPending && busyKey === row.reportingVersionId;
-                const isClosed = row.status.toLowerCase() === 'closed';
+                const status = row.status.toLowerCase();
+                const isDraft = status === 'draft';
+                const isReady = status === 'ready_to_show';
 
                 return (
                   <tr key={row.reportingVersionId} className="border-b border-slate-100 last:border-b-0">
@@ -181,10 +189,62 @@ export function VersionsTable({ rows }: VersionsTableProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          disabled={rowBusy || isClosed}
+                          disabled={rowBusy || !isDraft}
+                          className="rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-emerald-700 transition hover:border-emerald-400 disabled:opacity-50"
+                          onClick={() => {
+                            if (!isDraft) return;
+                            const confirmed = window.confirm(`Mark ${row.versionName} as ready to show in Executive?`);
+                            if (!confirmed) return;
+                            setMessage('');
+                            setBusyKey(row.reportingVersionId);
+                            startTransition(async () => {
+                              try {
+                                await markReportingVersionReady({ reportingVersionId: row.reportingVersionId });
+                                setMessage(`Version ${row.versionName} marked ready to show.`);
+                              } catch (error) {
+                                setMessage(error instanceof Error ? error.message : 'Failed to update version status.');
+                              } finally {
+                                setBusyKey(null);
+                              }
+                            });
+                          }}
+                        >
+                          {rowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Ready'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={rowBusy}
+                          className="rounded-full border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-blue-700 transition hover:border-blue-400 disabled:opacity-50"
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Send Request Info emails for ${formatPeriod(row.periodMonth)}?`,
+                            );
+                            if (!confirmed) return;
+                            setMessage('');
+                            setBusyKey(row.reportingVersionId);
+                            startTransition(async () => {
+                              try {
+                                const result = await requestReportingVersionInfo({
+                                  reportingVersionId: row.reportingVersionId,
+                                  periodMonth: row.periodMonth,
+                                });
+                                setMessage(`Request Info sent to ${result.sent} owner(s).`);
+                              } catch (error) {
+                                setMessage(error instanceof Error ? error.message : 'Failed to send Request Info emails.');
+                              } finally {
+                                setBusyKey(null);
+                              }
+                            });
+                          }}
+                        >
+                          {rowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Request Info'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={rowBusy || !isReady}
                           className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-700 transition hover:border-slate-400 disabled:opacity-50"
                           onClick={() => {
-                            if (isClosed) return;
+                            if (!isReady) return;
                             const confirmed = window.confirm(`Close version ${row.versionName}?`);
                             if (!confirmed) return;
                             setMessage('');

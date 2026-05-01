@@ -1,5 +1,6 @@
 type AdminStatus =
   | 'draft'
+  | 'ready_to_show'
   | 'approved'
   | 'final'
   | 'open'
@@ -19,6 +20,7 @@ type AdminStatus =
 
 const statusClasses: Record<AdminStatus, string> = {
   draft: 'border border-amber-200/80 bg-amber-50 text-amber-700',
+  ready_to_show: 'border border-emerald-200/80 bg-emerald-50 text-emerald-700',
   approved: 'border border-sky-200/80 bg-sky-50 text-sky-700',
   final: 'border border-emerald-200/80 bg-emerald-50 text-emerald-700',
   open: 'border border-emerald-200/80 bg-emerald-50 text-emerald-700',

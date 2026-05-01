@@ -314,9 +314,23 @@ type RaQualityFvViewProps = {
 };
 
 export async function RaQualityFvView({ viewMode, searchParams = {} }: RaQualityFvViewProps) {
-  const versions = await getReportingVersions();
+  const versions = await getReportingVersions({
+    statuses: searchParams.version ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
   if (versions.length === 0) {
-    throw new Error('No reporting versions found.');
+    return (
+      <section className="space-y-4 pb-8">
+        <SectionHeader
+          eyebrow="Executive"
+          title="RA - Quality - FV"
+          description="Target-vs-result control tower for regulatory execution and quality follow-up."
+          actions={<ModeTabs active={viewMode} params={{}} />}
+        />
+        <div className="rounded-[18px] border border-slate-200 bg-white p-8 text-sm text-slate-600">
+          No published Executive version is available.
+        </div>
+      </section>
+    );
   }
   const selectedVersion =
     versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solicitud de informacion</title>
+  </head>
+  <body style="margin:0;background:#f6f8fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f8fb;padding:28px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden;">
+            <tr>
+              <td style="background:#0f172a;color:#ffffff;padding:24px 28px;">
+                <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#cbd5e1;">Chiesi Operational Commite</p>
+                <h1 style="margin:10px 0 0;font-size:22px;line-height:1.25;">Ventana de actualizacion de informacion abierta</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px;">
+                <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Hola {{owner_name}},</p>
+                <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                  La ventana de actualizacion de informacion ya se abrio para el periodo <strong>{{period_label}}</strong>.
+                </p>
+                <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                  El periodo de actualizacion será desde <strong>{{window_start}}</strong> hasta <strong>{{window_end}}</strong>.
+                </p>
+                <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">
+                  Agradecemos tu apoyo en este importante proceso de actualizacion de informacion.
+                </p>
+
+                <p style="margin:0 0 10px;font-size:14px;font-weight:700;">Acceder al portal de cargas</p>
+                <div style="margin:0 0 24px;">{{prepare_links}}</div>
+
+                <p style="margin:24px 0 0;font-size:15px;line-height:1.6;">
+                  Atentamente,<br />
+                  <strong>Chiesi Operational Commite</strong>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

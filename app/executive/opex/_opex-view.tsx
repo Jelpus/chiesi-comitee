@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { SectionHeader } from '@/components/ui/section-header';
 import { OpexDashboardPanel } from '@/components/executive/opex/opex-dashboard-panel';
 import { getOpexRows } from '@/lib/data/opex';
+import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 
 export type OpexViewMode = 'insights' | 'scorecard' | 'dashboard';
 
@@ -336,7 +337,13 @@ type OpexViewProps = {
 };
 
 export async function OpexView({ viewMode, searchParams = {} }: OpexViewProps) {
-  const rows = await getOpexRows(searchParams.version);
+  const versions = await getReportingVersions({
+    statuses: searchParams.version ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
+  const selectedVersion =
+    versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];
+  const selectedReportingVersionId = selectedVersion?.reportingVersionId;
+  const rows = await getOpexRows(selectedReportingVersionId);
   const reportPeriodMonth = rows.map((row) => row.reportPeriodMonth).filter(Boolean).sort().at(-1) ?? null;
   const sourceAsOfMonth = rows.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
   const groupScores = buildGroupScoreRows(rows);
@@ -364,7 +371,7 @@ export async function OpexView({ viewMode, searchParams = {} }: OpexViewProps) {
         eyebrow="Executive"
         title="Opex"
         description="CeCo-centered operating expense baseline with total and Excl. Rare visibility."
-        actions={<ModeTabs active={viewMode} params={searchParams} />}
+        actions={<ModeTabs active={viewMode} params={{ version: selectedReportingVersionId }} />}
       />
 
       <div className="flex flex-wrap gap-2">

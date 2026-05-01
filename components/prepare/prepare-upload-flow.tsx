@@ -1,0 +1,442 @@
+'use client';
+
+import { useRef, useState, useTransition } from 'react';
+import { CheckCircle2, Loader2, UploadCloud, XCircle } from 'lucide-react';
+import { inspectUploadWorkbook } from '@/app/admin/uploads/actions';
+import { confirmReusePreviousUpload, prepareUploadAndPublish } from '@/app/prepare/actions';
+import { SourceAsOfMonthField } from '@/components/prepare/source-as-of-month-field';
+import type { PrepareReportingVersion, PrepareRequirement } from '@/lib/data/prepare';
+
+type PrepareUploadFlowProps = {
+  requirement: PrepareRequirement;
+  selectedVersion: PrepareReportingVersion;
+  onCompleted?: () => void;
+};
+
+type ProgressModalState = {
+  open: boolean;
+  title: string;
+  detail: string;
+  steps: string[];
+  activeStep: number;
+  finalState: 'running' | 'success' | 'error';
+};
+
+function isProductionVersion(version: PrepareReportingVersion) {
+  return version.status === 'ready_to_show' || version.status === 'closed';
+}
+
+function isDddLike(moduleCode: string) {
+  return (
+    moduleCode === 'business_excellence_ddd' ||
+    moduleCode === 'business_excellence_pmm' ||
+    moduleCode === 'business_excellence_budget_sell_out'
+  );
+}
+
+function initialProgress(): ProgressModalState {
+  return {
+    open: false,
+    title: '',
+    detail: '',
+    steps: [],
+    activeStep: 0,
+    finalState: 'running',
+  };
+}
+
+function ProgressModal({
+  state,
+  onClose,
+}: {
+  state: ProgressModalState;
+  onClose: () => void;
+}) {
+  if (!state.open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
+      <section className="relative w-full max-w-lg overflow-hidden rounded-[30px] border border-white/20 bg-white shadow-[0_30px_100px_rgba(15,23,42,0.35)]">
+        <div className="bg-slate-950 px-6 py-5 text-white">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-300">Preparacion de archivo</p>
+              <h2 className="mt-2 text-2xl font-black">{state.title}</h2>
+            </div>
+            {state.finalState !== 'running' ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-white/20"
+              >
+                Cerrar
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-300">{state.detail}</p>
+        </div>
+
+        <div className="space-y-3 p-6">
+          {state.steps.map((step, index) => {
+            const isDone = state.finalState === 'success' || index < state.activeStep;
+            const isActive = state.finalState === 'running' && index === state.activeStep;
+            const isError = state.finalState === 'error' && index === state.activeStep;
+
+            return (
+              <div
+                key={step}
+                className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold ${isError
+                    ? 'border-rose-200 bg-rose-50 text-rose-800'
+                    : isDone
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : isActive
+                        ? 'border-slate-300 bg-slate-50 text-slate-950'
+                        : 'border-slate-200 bg-white text-slate-500'
+                  }`}
+              >
+                {isError ? (
+                  <XCircle className="h-5 w-5 shrink-0" />
+                ) : isDone ? (
+                  <CheckCircle2 className="h-5 w-5 shrink-0" />
+                ) : isActive ? (
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
+                ) : (
+                  <span className="h-5 w-5 shrink-0 rounded-full border border-current opacity-40" />
+                )}
+                <span>{step}</span>
+              </div>
+            );
+          })}
+
+          {state.finalState === 'running' ? (
+            <p className="text-xs leading-5 text-slate-500">
+              No cierres esta ventana. Si tu conexion es lenta, el proceso puede tardar un poco mas.
+            </p>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }: PrepareUploadFlowProps) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const [isPending, startTransition] = useTransition();
+  const [isInspecting, startInspectTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [progressModal, setProgressModal] = useState<ProgressModalState>(initialProgress);
+
+  const production = isProductionVersion(selectedVersion);
+  const defaults = requirement.inferredDefaults;
+  const dddLike = Boolean(requirement.dddSource) || isDddLike(requirement.module.moduleCode);
+  const [sheetOptions, setSheetOptions] = useState<string[]>(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
+  const [selectedSheetName, setSelectedSheetName] = useState(defaults.selectedSheetName);
+  const [selectedHeaderRow, setSelectedHeaderRow] = useState(String(defaults.selectedHeaderRow || 1));
+  const [inspectMessage, setInspectMessage] = useState(
+    defaults.selectedSheetName ? 'Agrega un archivo para continuar...' : '',
+  );
+  const shouldShowSheetConfig = Boolean(selectedFile);
+
+  function openProgressModal(input: Omit<ProgressModalState, 'open' | 'finalState'>) {
+    setProgressModal({
+      ...input,
+      open: true,
+      finalState: 'running',
+    });
+  }
+
+  function updateProgressStep(activeStep: number, detail: string) {
+    setProgressModal((current) => ({
+      ...current,
+      activeStep,
+      detail,
+    }));
+  }
+
+  function finishProgressModal(finalState: 'success' | 'error', detail: string) {
+    setProgressModal((current) => ({
+      ...current,
+      activeStep: finalState === 'success' ? Math.max(current.steps.length - 1, 0) : current.activeStep,
+      detail,
+      finalState,
+    }));
+  }
+
+  function inspectWorkbook(file: File) {
+    const inspectFormData = new FormData();
+    inspectFormData.append('file', file, file.name);
+    inspectFormData.append('moduleCode', requirement.module.moduleCode);
+
+    setInspectMessage('Leyendo hojas del archivo...');
+    openProgressModal({
+      title: 'Leyendo archivo',
+      detail: 'Estamos detectando las hojas disponibles y buscando la mejor configuracion previa.',
+      steps: ['Subiendo archivo temporal', 'Detectando hojas', 'Buscando sugerencias', 'Listo para continuar'],
+      activeStep: 0,
+    });
+
+    startInspectTransition(async () => {
+      try {
+        updateProgressStep(1, 'Detectando hojas del libro.');
+        const result = await inspectUploadWorkbook(inspectFormData);
+        updateProgressStep(2, 'Aplicando sugerencia de hoja y fila de encabezados.');
+        setSheetOptions(result.sheetNames);
+        setSelectedSheetName(result.suggestedSheetName);
+        setSelectedHeaderRow(String(result.suggestedHeaderRow));
+        setInspectMessage(`Hojas detectadas: ${result.sheetNames.length}. Se preselecciono la mejor sugerencia.`);
+        finishProgressModal('success', 'Archivo leido correctamente. Revisa la hoja y la fila antes de publicar.');
+      } catch (inspectError) {
+        const errorMessage =
+          inspectError instanceof Error
+            ? inspectError.message
+            : 'No se pudo leer el archivo. Puedes completar hoja y fila manualmente.';
+
+        setSheetOptions([]);
+        setSelectedSheetName(defaults.selectedSheetName);
+        setSelectedHeaderRow(String(defaults.selectedHeaderRow || 1));
+        setInspectMessage(errorMessage);
+        finishProgressModal('error', errorMessage);
+      }
+    });
+  }
+
+  function handleFileChange(file: File | null) {
+    setSelectedFile(file);
+    setMessage(null);
+    setError(null);
+
+    if (!file) {
+      setSheetOptions(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
+      setSelectedSheetName(defaults.selectedSheetName);
+      setSelectedHeaderRow(String(defaults.selectedHeaderRow || 1));
+      setInspectMessage(defaults.selectedSheetName ? 'Sugerencia basada en la carga anterior.' : '');
+      return;
+    }
+
+    inspectWorkbook(file);
+  }
+
+  function runUpload(formData: FormData) {
+    setMessage(null);
+    setError(null);
+    if (!selectedFile) {
+      setError('Selecciona un archivo antes de continuar.');
+      return;
+    }
+    formData.set('file', selectedFile, selectedFile.name);
+    formData.set('selectedSheetName', selectedSheetName);
+    formData.set('selectedHeaderRow', selectedHeaderRow);
+
+    openProgressModal({
+      title: 'Publicando archivo',
+      detail: 'Estamos cargando el archivo y ejecutando el proceso completo. Esto puede tardar unos minutos.',
+      steps: ['Subiendo archivo', 'Procesando filas', 'Normalizando datos', 'Validando resultados', 'Publicando informacion'],
+      activeStep: 0,
+    });
+
+    startTransition(async () => {
+      let stageStep = 0;
+      const stageMessages = [
+        'El archivo se esta guardando en el almacenamiento.',
+        'Estamos leyendo las filas del archivo.',
+        'Estamos normalizando la informacion.',
+        'Estamos validando filas correctas y filas con error.',
+        'Estamos publicando los datos para la version seleccionada.',
+      ];
+      const timer = window.setInterval(() => {
+        stageStep = Math.min(stageStep + 1, stageMessages.length - 1);
+        updateProgressStep(stageStep, stageMessages[stageStep]);
+      }, 2600);
+
+      const result = await prepareUploadAndPublish(formData);
+      window.clearInterval(timer);
+
+      if (result.ok) {
+        setMessage(result.message);
+        formRef.current?.reset();
+        setSelectedFile(null);
+        finishProgressModal('success', result.message);
+        onCompleted?.();
+      } else {
+        setError(result.message);
+        finishProgressModal('error', result.message);
+      }
+    });
+  }
+
+  function runReuse(formData: FormData) {
+    setMessage(null);
+    setError(null);
+    openProgressModal({
+      title: 'Confirmando reutilizacion',
+      detail: 'Estamos registrando que el archivo anterior sigue siendo valido para esta version.',
+      steps: ['Validando version', 'Registrando trazabilidad', 'Actualizando estado'],
+      activeStep: 0,
+    });
+
+    startTransition(async () => {
+      updateProgressStep(1, 'Guardando confirmacion de reutilizacion.');
+      const result = await confirmReusePreviousUpload(formData);
+      if (result.ok) {
+        setMessage(result.message);
+        finishProgressModal('success', result.message);
+        onCompleted?.();
+      } else {
+        setError(result.message);
+        finishProgressModal('error', result.message);
+      }
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      {requirement.latestUpload && requirement.reusable ? (
+        <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-bold text-slate-950">
+            Existe una carga publicada de este archivo en {requirement.latestUpload.periodMonth}.
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            Puedes confirmar que sigue siendo el archivo adecuado para esta version o subir una nueva version.
+          </p>
+          <form action={runReuse} className="mt-3 flex flex-wrap items-center gap-3">
+            <input type="hidden" name="moduleCode" value={requirement.module.moduleCode} />
+            <input type="hidden" name="areaCode" value={requirement.module.areaCode} />
+            <input type="hidden" name="reportingVersionId" value={selectedVersion.reportingVersionId} />
+            <input type="hidden" name="originalUploadId" value={requirement.latestUpload.uploadId} />
+            <input type="hidden" name="dddSource" value={requirement.dddSource} />
+            {production ? (
+              <label className="flex items-center gap-2 text-xs font-semibold text-amber-800">
+                <input type="checkbox" name="confirmProductionVersion" value="true" required />
+                Confirmo actualizar una version en productivo.
+              </label>
+            ) : null}
+            <button
+              type="submit"
+              disabled={isPending}
+              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white disabled:opacity-50"
+            >
+              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Confirmar usar el mismo archivo
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      <form ref={formRef} action={runUpload} className="grid gap-4 rounded-[22px] border border-slate-200 bg-white p-4">
+        <input type="hidden" name="moduleCode" value={requirement.module.moduleCode} />
+        <input type="hidden" name="areaCode" value={requirement.module.areaCode} />
+        <input type="hidden" name="reportingVersionId" value={selectedVersion.reportingVersionId} />
+        <input type="hidden" name="dddSource" value={requirement.dddSource || defaults.dddSource} />
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <label className="space-y-2">
+            <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Archivo</span>
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={(event) => handleFileChange(event.currentTarget.files?.[0] ?? null)}
+              required
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900"
+            />
+            {inspectMessage ? (
+              <span className="block text-xs leading-5 text-slate-500">
+                {isInspecting ? 'Leyendo archivo... ' : ''}
+                {inspectMessage}
+              </span>
+            ) : null}
+          </label>
+
+          <SourceAsOfMonthField
+            defaultValue={defaults.sourceAsOfMonth}
+            periodMonth={selectedVersion.periodMonth}
+            dddLike={dddLike}
+          />
+
+        </div>
+
+        {shouldShowSheetConfig ? (
+          <div className="grid gap-4 lg:grid-cols-3">
+            <label className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Hoja</span>
+              {sheetOptions.length > 0 ? (
+                <select
+                  name="selectedSheetName"
+                  value={selectedSheetName}
+                  onChange={(event) => setSelectedSheetName(event.target.value)}
+                  disabled={isInspecting}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950"
+                  required
+                >
+                  {sheetOptions.map((sheetName) => (
+                    <option key={sheetName} value={sheetName}>
+                      {sheetName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  name="selectedSheetName"
+                  value={selectedSheetName}
+                  onChange={(event) => setSelectedSheetName(event.target.value)}
+                  placeholder="Hoja detectada"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950"
+                />
+              )}
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Fila de encabezados</span>
+              <input
+                name="selectedHeaderRow"
+                type="number"
+                min={1}
+                value={selectedHeaderRow}
+                onChange={(event) => setSelectedHeaderRow(event.target.value)}
+                disabled={isInspecting}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950"
+              />
+            </label>
+            {requirement.module.moduleCode === 'opex_by_cc' ? (
+              <div className="grid grid-cols-3 gap-2">
+                <input name="opexJanPreviousCol" type="number" min={1} placeholder="Ant." defaultValue={defaults.opexJanPreviousCol ?? ''} className="rounded-2xl border border-slate-200 px-3 py-3 text-sm" />
+                <input name="opexJanBudgetCol" type="number" min={1} placeholder="Budget" defaultValue={defaults.opexJanBudgetCol ?? ''} className="rounded-2xl border border-slate-200 px-3 py-3 text-sm" />
+                <input name="opexJanCurrentCol" type="number" min={1} placeholder="Actual" defaultValue={defaults.opexJanCurrentCol ?? ''} className="rounded-2xl border border-slate-200 px-3 py-3 text-sm" />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {production ? (
+          <label className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-900">
+            <input type="checkbox" name="confirmProductionVersion" value="true" required className="mt-1" />
+            <span>
+              Esta version ya esta en productivo. Confirmo que quiero continuar con la carga y publicacion.
+            </span>
+          </label>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          
+          <button
+            type="submit"
+            disabled={isPending || isInspecting}
+            className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 disabled:opacity-50"
+          >
+            {isPending || isInspecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+            Subir y publicar
+          </button>
+        </div>
+      </form>
+
+      {message ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">{message}</p> : null}
+      {error ? <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{error}</p> : null}
+
+      <ProgressModal
+        state={progressModal}
+        onClose={() => setProgressModal((current) => ({ ...current, open: false }))}
+      />
+    </div>
+  );
+}

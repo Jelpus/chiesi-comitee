@@ -41,7 +41,7 @@ export async function getExecutiveHomeQueryRows(params?: {
   periodMonth?: string;
   area?: string;
 }): Promise<ExecutiveHomeQueryRow[]> {
-  const availableVersions = await getReportingVersions();
+  const availableVersions = await getReportingVersions({ statuses: ['ready_to_show', 'closed'] });
   if (availableVersions.length === 0) return [];
 
   const requestedReportingVersionId = params?.reportingVersionId?.trim() ?? '';

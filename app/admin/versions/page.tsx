@@ -10,7 +10,7 @@ export default async function VersionsPage() {
       <SectionHeader
         eyebrow="Admin"
         title="Versions"
-        description="Draft, approved, and final version control for each monthly close."
+        description="Draft, ready-to-show, and closed version control for each monthly close."
       />
 
       <VersionsTable rows={rows} />

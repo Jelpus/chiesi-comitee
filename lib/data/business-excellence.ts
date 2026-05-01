@@ -300,7 +300,9 @@ function buildBrickConditions(
 }
 
 async function resolveReportingVersionId(reportingVersionId?: string) {
-  const versions = await getReportingVersions();
+  const versions = await getReportingVersions({
+    statuses: reportingVersionId ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
   if (versions.length === 0) return null;
   return versions.find((item) => item.reportingVersionId === reportingVersionId)?.reportingVersionId
     ?? versions[0].reportingVersionId;

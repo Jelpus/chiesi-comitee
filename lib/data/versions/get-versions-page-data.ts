@@ -1,12 +1,13 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
+import type { ReportingVersionStatus } from './get-reporting-versions';
 
 export type VersionRow = {
   reportingVersionId: string;
   periodMonth: string;
   versionName: string;
   versionNumber: number;
-  status: string;
+  status: ReportingVersionStatus;
   createdAt: string;
   createdBy: string;
   notes: string | null;
@@ -31,14 +32,14 @@ export async function getVersionsPageData(): Promise<VersionRow[]> {
 
   const [rows] = await client.query({ query });
 
-  return rows.map((row: any) => ({
-    reportingVersionId: row.reporting_version_id,
-    periodMonth: row.period_month,
-    versionName: row.version_name,
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    reportingVersionId: String(row.reporting_version_id ?? ''),
+    periodMonth: String(row.period_month ?? ''),
+    versionName: String(row.version_name ?? ''),
     versionNumber: Number(row.version_number ?? 0),
-    status: row.status ?? 'draft',
-    createdAt: row.created_at ?? '',
-    createdBy: row.created_by ?? '-',
-    notes: row.notes ?? null,
+    status: row.status === 'ready_to_show' || row.status === 'closed' ? row.status : 'draft',
+    createdAt: String(row.created_at ?? ''),
+    createdBy: String(row.created_by ?? '-'),
+    notes: row.notes == null ? null : String(row.notes),
   }));
 }

@@ -150,9 +150,23 @@ type MedicalViewProps = {
 };
 
 export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewProps) {
-  const versions = await getReportingVersions();
+  const versions = await getReportingVersions({
+    statuses: searchParams.version ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
   if (versions.length === 0) {
-    throw new Error('No reporting versions found.');
+    return (
+      <section className="space-y-4 pb-8">
+        <SectionHeader
+          eyebrow="Executive"
+          title="Medical"
+          description="Target-vs-result control tower for medical execution and MSL field coverage."
+          actions={<ModeTabs active={viewMode} params={{}} />}
+        />
+        <div className="rounded-[18px] border border-slate-200 bg-white p-8 text-sm text-slate-600">
+          No published Executive version is available.
+        </div>
+      </section>
+    );
   }
   const selectedVersion =
     versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];

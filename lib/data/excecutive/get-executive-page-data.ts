@@ -4,6 +4,7 @@ import type { ExecutivePageData } from '@/types/executive';
 
 type GetExecutivePageDataParams = {
   reportingVersionId?: string;
+  showDrafts?: boolean;
 };
 
 function formatPeriodLabel(periodMonth: string) {
@@ -22,11 +23,18 @@ export async function getExecutivePageData(
       reportingVersionId: string;
       periodMonth: string;
       versionName: string;
+      status: string;
     }[];
     selectedReportingVersionId: string;
+    selectedVersionStatus: string | null;
+    hasHiddenDrafts: boolean;
   }
 > {
-  const availableVersions = await getReportingVersions();
+  const visibleStatuses = ['ready_to_show', 'closed'] as const;
+  const availableVersions = await getReportingVersions({
+    statuses: params.showDrafts ? ['draft', ...visibleStatuses] : [...visibleStatuses],
+  });
+  const hasHiddenDrafts = !params.showDrafts && (await getReportingVersions({ statuses: ['draft'] })).length > 0;
 
   if (availableVersions.length === 0) {
     return {
@@ -37,6 +45,8 @@ export async function getExecutivePageData(
       cards: [],
       availableVersions: [],
       selectedReportingVersionId: '',
+      selectedVersionStatus: null,
+      hasHiddenDrafts,
     };
   }
 
@@ -58,5 +68,7 @@ export async function getExecutivePageData(
     cards,
     availableVersions,
     selectedReportingVersionId: selectedVersion.reportingVersionId,
+    selectedVersionStatus: selectedVersion.status,
+    hasHiddenDrafts,
   };
 }
