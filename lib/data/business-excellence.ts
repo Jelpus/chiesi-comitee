@@ -4142,7 +4142,13 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
 
   const client = getBigQueryClient();
   const query = `
-    WITH all_base AS (
+    WITH latest_period AS (
+      SELECT CAST(MAX(period_month) AS STRING) AS latest_period
+      FROM \`${CLOSEUP_ENRICHED_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND period_month IS NOT NULL
+    ),
+    all_base AS (
       SELECT
         reporting_version_id,
         COALESCE(NULLIF(TRIM(market_group), ''), 'No Market') AS market_group,
@@ -4157,10 +4163,19 @@ export async function getBusinessExcellencePrivatePrescriptionDimensionRanking(
         ) AS brand_label,
         COALESCE(NULLIF(TRIM(specialty), ''), 'Unmapped Specialty') AS specialty_label,
         COALESCE(NULLIF(TRIM(visited_source_raw), ''), 'Unmapped Territory') AS territory_label,
-        COALESCE(is_ytd, FALSE) AS is_ytd,
-        COALESCE(is_ytd_py, FALSE) AS is_ytd_py,
+        COALESCE(
+          EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(lp.latest_period))
+          AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(lp.latest_period)),
+          FALSE
+        ) AS is_ytd,
+        COALESCE(
+          EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(lp.latest_period)) - 1
+          AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(lp.latest_period)),
+          FALSE
+        ) AS is_ytd_py,
         recetas_value
       FROM \`${CLOSEUP_ENRICHED_VIEW}\`
+      CROSS JOIN latest_period lp
       WHERE reporting_version_id = @reportingVersionId
     ),
     scoped_base AS (
@@ -4589,16 +4604,31 @@ export async function getBusinessExcellencePrivateBrandSpecialtySignals(
 
   const client = getBigQueryClient();
   const query = `
-    WITH base AS (
+    WITH latest_period AS (
+      SELECT CAST(MAX(period_month) AS STRING) AS latest_period
+      FROM \`${CLOSEUP_ENRICHED_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND period_month IS NOT NULL
+    ),
+    base AS (
       SELECT
         reporting_version_id,
         COALESCE(NULLIF(TRIM(market_group), ''), 'No Market') AS market_group,
         COALESCE(NULLIF(TRIM(brand_name), ''), 'Unmapped Brand') AS brand_name,
         COALESCE(NULLIF(TRIM(specialty), ''), 'Unmapped Specialty') AS specialty,
-        COALESCE(is_ytd, FALSE) AS is_ytd,
-        COALESCE(is_ytd_py, FALSE) AS is_ytd_py,
+        COALESCE(
+          EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(lp.latest_period))
+          AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(lp.latest_period)),
+          FALSE
+        ) AS is_ytd,
+        COALESCE(
+          EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(lp.latest_period)) - 1
+          AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(lp.latest_period)),
+          FALSE
+        ) AS is_ytd_py,
         recetas_value
       FROM \`${CLOSEUP_ENRICHED_VIEW}\`
+      CROSS JOIN latest_period lp
       WHERE reporting_version_id = @reportingVersionId
     )
     SELECT
