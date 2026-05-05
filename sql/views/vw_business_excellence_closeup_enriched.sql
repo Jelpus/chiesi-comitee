@@ -51,6 +51,7 @@ SELECT
   c.source_date,
   c.period_raw,
   c.period_month,
+  c.hcp_name,
   c.specialty,
   c.recetas_value,
   c.product_closeup_raw,

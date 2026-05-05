@@ -1,0 +1,466 @@
+# AirRevolution: informacion disponible y estructura de datos
+
+AirRevolution es la nueva seccion `/air` para analizar el fichero medico AIR, el Call Plan y la productividad medica usando auditoria CloseUp.
+
+El objetivo del V1 es conectar:
+
+```txt
+AIR medical file -> Call Plan -> CloseUp productivity -> fuzzy doctor matching -> physician segmentation
+```
+
+## Periodo de trabajo
+
+La seccion usa automaticamente la ultima version disponible en:
+
+```txt
+chiesi-committee.chiesi_committee_admin.reporting_versions
+```
+
+Solo considera versiones con:
+
+```sql
+status IN ('closed', 'ready_to_show')
+```
+
+La version mas reciente por `period_month`, `version_number` y `created_at` se usa como periodo actual.
+
+Campos relevantes:
+
+| Campo | Uso |
+| --- | --- |
+| `reporting_version_id` | Llave de version usada para persistir matches |
+| `period_month` | Periodo actual del analisis |
+| `version_name` | Nombre visible de la version |
+| `status` | Estado visible y filtro de elegibilidad |
+
+## Fuente 1: AIR medical file
+
+Tabla:
+
+```txt
+chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file
+```
+
+Filtros aplicados:
+
+```sql
+period_month = current_reporting_period
+UPPER(TRIM(bu)) = 'AIR'
+Account Type IN (
+  'MP (Medical Professional)',
+  'MP (Medical Professional) MX',
+  'Private Practice MX'
+)
+```
+
+El `Account Type` se extrae desde JSON:
+
+```sql
+JSON_VALUE(source_payload_json, '$."Account Type"')
+```
+
+Campos disponibles usados:
+
+| Campo | Significado |
+| --- | --- |
+| `ims_id` | Identificador unico del medico/customer |
+| `full_name` | Nombre del medico en fichero medico |
+| `territory` | Representante o territorio responsable |
+| `district` | Manager/distrito |
+| `objetivo` | Objetivo de visitas para la relacion medico-territorio |
+| `bu` | Business unit |
+| `source_payload_json` | Payload original del upload |
+
+## Estructura del Call Plan
+
+La relacion base es:
+
+```txt
+territory -> full_name -> objetivo
+```
+
+Un medico puede aparecer en varios territorios. Esto permite identificar medicos compartidos.
+
+Jerarquia:
+
+```txt
+district -> territories -> physicians
+```
+
+Metricas calculadas:
+
+| Nivel | Metricas |
+| --- | --- |
+| Global | total rows, unique IMS IDs, territories, districts, total visit objective, shared physicians |
+| District | territory count, unique physicians, total objective, avg objective per physician, shared physicians |
+| Territory | unique physicians, total objective, avg objective per physician, shared physicians |
+| Doctor | IMS ID, name, territories, districts, total objective, shared flag |
+
+## Fuente 2: CloseUp audit
+
+Vista:
+
+```txt
+chiesi-committee.chiesi_committee_stg.vw_business_excellence_closeup_enriched
+```
+
+Periodo usado:
+
+```txt
+MAT = ultimos 12 meses desde current_reporting_period
+```
+
+Campos relevantes:
+
+| Campo | Uso |
+| --- | --- |
+| `hcp_name` | Nombre del medico en CloseUp |
+| `period_month` | Mes de auditoria |
+| `market_group` | Mercado/grupo de mercado para filtros de analisis |
+| `recetas_value` | Volumen de recetas |
+| `visited` | Indica si el medico fue visitado segun CloseUp |
+| `business_unit_code` / `business_unit_name` | Referencia para afinidad Chiesi/AIR |
+| `resolved_product_id` | Producto Chiesi mapeado si existe |
+| `canonical_product_name` | Nombre canonico de producto |
+| `brand_name` | Marca |
+
+Agregacion actual por medico y mercado:
+
+```txt
+hcp_name + market_group -> market_rx_mat, chiesi_rx_mat, chiesi_share_mat, visited
+```
+
+Definiciones:
+
+| Metrica | Definicion |
+| --- | --- |
+| `market_rx_mat` | Suma de `recetas_value` en MAT |
+| `chiesi_rx_mat` | Suma de recetas identificadas como Chiesi/AIR o producto mapeado |
+| `chiesi_share_mat` | `chiesi_rx_mat / market_rx_mat` |
+| `visited` | `LOGICAL_OR(visited)` dentro del medico/mercado |
+
+Nota importante: actualmente CloseUp ya tiene la columna `hcp_name`, pero los datos historicos deben recargarse con la columna Excel `Nombre Médico` para que el matching tenga universo real de nombres.
+
+## Matching medico: medical file vs CloseUp
+
+Se compara:
+
+```txt
+medical_file.full_name <-> closeup.hcp_name
+```
+
+No se usa matching exacto como unico criterio.
+
+La logica vive en:
+
+```txt
+lib/air/normalize-name.ts
+lib/air/fuzzy-match-doctors.ts
+```
+
+Normalizacion:
+
+1. lowercase
+2. remover acentos
+3. remover puntuacion
+4. normalizar espacios
+5. remover particulas comunes como `de`, `del`, `la`, `los`
+6. tokenizar nombres
+7. comparar token sets y strings ordenados
+
+Scoring actual:
+
+```txt
+score = token_set_score * 0.6
+      + token_sort_score * 0.3
+      + direct_levenshtein_similarity * 0.1
+```
+
+Bandas de confianza:
+
+| Score | Confianza |
+| --- | --- |
+| `>= 0.92` | high |
+| `0.82 - 0.919` | medium |
+| `0.70 - 0.819` | low / review needed |
+| `< 0.70` | unmatched |
+
+Campos expuestos por match:
+
+| Campo | Uso |
+| --- | --- |
+| `medical_file_ims_id` | IMS del fichero medico |
+| `medical_file_full_name` | Nombre fuente AIR |
+| `closeup_hcp_name` | Mejor candidato CloseUp |
+| `match_score` | Score final |
+| `match_method` | Metodo usado |
+| `match_confidence` | high, medium, low, unmatched |
+| `matched_tokens` | Tokens coincidentes |
+| `unmatched_tokens` | Tokens pendientes/revisables |
+
+## Persistencia de matches
+
+Tabla creada:
+
+```txt
+chiesi-committee.chiesi_committee_admin.air_doctor_name_matches
+```
+
+Uso:
+
+1. Al cargar `/air`, se leen matches persistidos por `reporting_version_id`.
+2. Solo se calcula fuzzy matching para medicos sin match persistido o con match `unmatched`.
+3. Los matches generados se guardan con `MERGE`.
+4. Si no hay universo CloseUp con `hcp_name`, no se persisten miles de unmatched vacios.
+
+Campos:
+
+| Campo | Uso |
+| --- | --- |
+| `reporting_version_id` | Version del analisis |
+| `period_month` | Periodo de la version |
+| `medical_file_ims_id` | Llave del medico AIR |
+| `medical_file_full_name` | Nombre AIR |
+| `closeup_hcp_name` | Nombre CloseUp candidato |
+| `match_score` | Score fuzzy |
+| `match_method` | Metodo |
+| `match_confidence` | Confianza |
+| `matched_tokens` | Tokens coincidentes |
+| `unmatched_tokens` | Tokens no coincidentes |
+| `generated_at` | Timestamp de generacion |
+
+## Segmentacion medica
+
+La segmentacion vive en:
+
+```txt
+lib/air/segment-doctors.ts
+```
+
+### Eje 1: Market prescription volume
+
+Basado en `market_rx_mat`.
+
+Se segmenta por quintiles:
+
+| Segmento |
+| --- |
+| Very High Market Prescriber |
+| High Market Prescriber |
+| Medium Market Prescriber |
+| Low Market Prescriber |
+| Very Low Market Prescriber |
+
+### Eje 2: Chiesi affinity
+
+Basado en:
+
+```txt
+chiesi_share_mat = chiesi_rx_mat / market_rx_mat
+```
+
+Segmentos:
+
+| Segmento | Regla actual |
+| --- | --- |
+| Chiesi Lover | `>= 60%` |
+| Chiesi Friendly | `>= 35%` |
+| Neutral | `>= 15%` |
+| Low Chiesi Affinity | `> 2%` |
+| No / Minimal Chiesi Affinity | `<= 2%` |
+
+### Segmento combinado
+
+Campo:
+
+```txt
+air_relevance_segment
+```
+
+Valores actuales:
+
+| Segmento | Interpretacion |
+| --- | --- |
+| A. Strategic Chiesi Lovers | Alto mercado y alta afinidad |
+| B. High Potential Market Prescribers | Alto mercado y baja afinidad |
+| C. Maintain / Defend | Mercado medio/bajo con afinidad suficiente |
+| D. Low Priority | Bajo mercado y baja afinidad |
+| E. Review / Unmatched | Sin match confiable o requiere revision |
+
+## Filtro por market_group
+
+La vista principal permite filtrar por:
+
+```txt
+CloseUp market_group
+```
+
+Esto recalcula en cliente:
+
+- `Physician Segmentation Matrix`
+- `Doctor-Level Segmentation`
+- resumen de visitados/no visitados
+
+No dispara nueva query a BigQuery.
+
+## Propiedad visited
+
+La propiedad `visited` viene desde:
+
+```txt
+vw_business_excellence_closeup_enriched.visited
+```
+
+Uso actual:
+
+| Valor | Interpretacion |
+| --- | --- |
+| `true` | Medico identificado en CloseUp como visitado |
+| `false` | Medico identificado en CloseUp como no visitado |
+| `null` | No identificado o sin match CloseUp |
+
+Esto permite separar:
+
+```txt
+potenciales no visitados
+visitados con productividad
+medicos AIR sin match confiable
+```
+
+Hipotesis esperada:
+
+- Visitados deberian tender a high / medium confidence.
+- Algunos pueden caer en review needed si el nombre cambia mucho.
+- No visitados pueden aparecer como matched si existen en CloseUp pero no fueron visitados.
+- Unmatched significa que no hay conexion confiable entre AIR medical file y CloseUp.
+
+## Estructura UI actual
+
+Ruta:
+
+```txt
+/air
+```
+
+Componentes principales:
+
+```txt
+app/air/page.tsx
+components/air/air-dashboard.tsx
+components/air/air-strategic-workspace.tsx
+components/air/air-segmentation-matrix.tsx
+components/air/air-doctor-table.tsx
+components/air/air-doctor-matching-table.tsx
+components/air/air-summary-tables.tsx
+```
+
+Tabs:
+
+| Tab | Contenido |
+| --- | --- |
+| Segmentation | Matrix, doctor-level table, filtro market_group, visited summary |
+| Matching quality | Tabla de calidad de matching |
+| Call Plan context | Overview, district summary, territory summary |
+
+## Lo que ya podemos hacer a continuacion
+
+### 1. Recargar CloseUp con `Nombre Médico`
+
+Es el paso mas importante para activar el valor real del matching.
+
+Sin `hcp_name` historico, la estructura existe pero no hay universo suficiente para conectar AIR medical file con CloseUp.
+
+### 2. Auditar matches
+
+Crear una vista de revision donde usuarios puedan:
+
+- aceptar match
+- rechazar match
+- forzar match manual
+- marcar aliases conocidos
+
+Esto podria extender `air_doctor_name_matches` con:
+
+```txt
+review_status
+reviewed_by
+reviewed_at
+manual_closeup_hcp_name
+review_notes
+```
+
+### 3. Separar visited vs not visited como estrategia comercial
+
+Analisis posibles:
+
+- High market prescriber + not visited = oportunidad prioritaria.
+- High Chiesi affinity + not visited = posible mantenimiento remoto/no cubierto.
+- High market + visited + low Chiesi affinity = oportunidad de conversion.
+- Visited + unmatched = problema de calidad de nombres o carga.
+
+### 4. Mejorar Chiesi affinity
+
+La logica actual identifica Chiesi con `business_unit_code/name = AIR` o `resolved_product_id`.
+
+Puede mejorarse con:
+
+- lista oficial de productos AIR
+- tabla de manufacturer/lab si aparece en CloseUp
+- mapping explicito por `market_group`
+
+### 5. Crear marts BigQuery para performance
+
+Si el volumen crece, conviene materializar:
+
+```txt
+air_medical_file_current
+air_closeup_doctor_market_mat
+air_doctor_segmentation_current
+```
+
+Esto reduciria el trabajo del servidor Next y dejaria resultados auditables.
+
+### 6. Incorporar filtros adicionales
+
+Filtros naturales:
+
+- district
+- territory
+- visited status
+- match confidence
+- air relevance segment
+- market volume segment
+- Chiesi affinity segment
+
+### 7. Exportar doctor-level table
+
+Probable siguiente necesidad:
+
+- descarga CSV/XLSX
+- lista priorizada para field force
+- filtros aplicados conservados en export
+
+## Limitaciones actuales
+
+| Limitacion | Impacto |
+| --- | --- |
+| CloseUp historico sin `hcp_name` cargado | No hay matching real hasta recargar |
+| Matching no revisado manualmente | Medium/low requieren auditoria |
+| Chiesi affinity usa proxy de producto/BU | Puede necesitar validacion de negocio |
+| Segmentacion por quintiles depende del universo filtrado | Cambia al filtrar por `market_group` |
+| Persistencia por version | Nuevas versiones recalculan matches |
+
+## Resumen ejecutivo
+
+AirRevolution ya tiene la estructura para responder:
+
+```txt
+Quienes estan en el Call Plan AIR?
+Quienes son los medicos mas productivos del mercado?
+Quienes tienen afinidad Chiesi?
+Quienes estan visitados vs no visitados?
+Donde hay oportunidades no cubiertas?
+Que tan confiable es el match entre fichero medico y CloseUp?
+```
+
+El siguiente desbloqueo critico es recargar CloseUp con `Nombre Médico` para poblar `hcp_name` y generar matches reales.

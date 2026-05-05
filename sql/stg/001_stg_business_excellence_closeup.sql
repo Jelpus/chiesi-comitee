@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS `chiesi-committee.chiesi_committee_stg.stg_business_e
   row_number INT64,
   product_closeup_raw STRING,
   product_closeup_normalized STRING,
+  hcp_name STRING,
   product_id STRING,
   canonical_product_name STRING,
   market_group STRING,

@@ -31,11 +31,13 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
   ],
   business_excellence_closeup: [
     { label: 'Producto', columns: ['Producto', 'Product', 'PRODUCTO_NAME'] },
+    { label: 'Medico', columns: ['Nombre Médico', 'Nombre Medico', 'HCP Name'] },
     { label: 'Periodo', columns: ['Date', 'Fecha', 'Period', 'Month'] },
     { label: 'Recetas', columns: ['Recetas', 'Rx', 'Prescripciones'] },
   ],
   closeup: [
     { label: 'Producto', columns: ['Producto', 'Product', 'PRODUCTO_NAME'] },
+    { label: 'Medico', columns: ['Nombre Médico', 'Nombre Medico', 'HCP Name'] },
     { label: 'Periodo', columns: ['Date', 'Fecha', 'Period', 'Month'] },
     { label: 'Recetas', columns: ['Recetas', 'Rx', 'Prescripciones'] },
   ],

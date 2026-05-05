@@ -40,6 +40,7 @@ type CloseupNormalizedRow = {
   rowNumber: number;
   productCloseupRaw: string;
   productCloseupNormalized: string;
+  hcpName: string | null;
   productId: string | null;
   canonicalProductName: string | null;
   marketGroup: string | null;
@@ -502,6 +503,7 @@ async function ensureCloseupStagingSchema() {
               row_number INT64,
               product_closeup_raw STRING,
               product_closeup_normalized STRING,
+              hcp_name STRING,
               product_id STRING,
               canonical_product_name STRING,
               market_group STRING,
@@ -516,6 +518,15 @@ async function ensureCloseupStagingSchema() {
               source_payload_json JSON,
               normalized_at TIMESTAMP
             )
+          `,
+        }),
+      );
+
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query: `
+            ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\`
+            ADD COLUMN IF NOT EXISTS hcp_name STRING
           `,
         }),
       );
@@ -1711,6 +1722,7 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
       row_number,
       product_closeup_raw,
       product_closeup_normalized,
+      hcp_name,
       product_id,
       canonical_product_name,
       market_group,
@@ -1730,6 +1742,7 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
       row.row_number,
       row.product_closeup_raw,
       row.product_closeup_normalized,
+      row.hcp_name,
       NULLIF(row.product_id, ''),
       NULLIF(row.canonical_product_name, ''),
       NULLIF(row.market_group, ''),
@@ -1752,6 +1765,7 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
     estimateBytes: (row) =>
       String(row.productCloseupRaw ?? '').length +
       String(row.productCloseupNormalized ?? '').length +
+      String(row.hcpName ?? '').length +
       String(row.productId ?? '').length +
       String(row.canonicalProductName ?? '').length +
       String(row.marketGroup ?? '').length +
@@ -1774,6 +1788,7 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
             row_number: row.rowNumber,
             product_closeup_raw: row.productCloseupRaw,
             product_closeup_normalized: row.productCloseupNormalized,
+            hcp_name: row.hcpName,
             product_id: row.productId ?? '',
             canonical_product_name: row.canonicalProductName ?? '',
             market_group: row.marketGroup ?? '',
@@ -2316,6 +2331,18 @@ async function normalizeBusinessExcellenceCloseup(rows: RawUploadRow[]) {
     const specialty = asNullableString(
       pickValue(index, ['Especialidad', 'Especilidad', 'Specialty']),
     );
+    const hcpName = asNullableString(
+      pickValue(index, [
+        'Nombre Médico',
+        'Nombre Medico',
+        'Nombre médico',
+        'Nombre medico',
+        'Medico',
+        'Médico',
+        'Doctor Name',
+        'HCP Name',
+      ]),
+    );
     const visitedSourceRaw = asNullableString(
       pickValue(index, ['Visitado en ficheros', 'Visitado', 'Visited', 'Territory', 'Territorio']),
     );
@@ -2344,6 +2371,7 @@ async function normalizeBusinessExcellenceCloseup(rows: RawUploadRow[]) {
       rowNumber: row.row_number,
       productCloseupRaw: productRaw!,
       productCloseupNormalized: normalizeText(productRaw!),
+      hcpName,
       productId: null,
       canonicalProductName: null,
       marketGroup: null,

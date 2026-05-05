@@ -7,6 +7,7 @@ import {
   BarChart3,
   Calendar,
   Database,
+  Plane,
   FolderUp,
   Gauge,
   Home,
@@ -37,6 +38,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     '/forms': FolderUp,
     '/closing-inputs': FolderUp,
     '/prepare': ClipboardList,
+    '/air': Plane,
     '/admin': Settings,
     '/admin/periods': Calendar,
     '/admin/versions': Layers,
@@ -54,6 +56,8 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
     ? 'admin'
     : pathname.startsWith('/executive')
       ? 'executive'
+      : pathname.startsWith('/air')
+        ? 'air'
       : pathname.startsWith('/closing-inputs')
         ? 'closing-inputs'
         : pathname.startsWith('/prepare')
@@ -72,6 +76,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
   const sectionItems = appNavigation.filter((item) => {
     if (currentSection === 'admin') return item.href.startsWith('/admin/') && item.href !== '/admin';
     if (currentSection === 'executive') return item.href.startsWith('/executive');
+    if (currentSection === 'air') return item.href === '/air' || item.href.startsWith('/air/');
     if (currentSection === 'closing-inputs') return item.href === '/closing-inputs';
     if (currentSection === 'prepare') return item.href === '/prepare';
     return item.href === '/' || item.href === '/forms';
@@ -93,6 +98,11 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
       onNavigate?.();
       return;
     }
+    if (nextSection === 'air') {
+      router.push('/air');
+      onNavigate?.();
+      return;
+    }
     if (nextSection === 'closing-inputs') {
       router.push('/closing-inputs');
       onNavigate?.();
@@ -111,8 +121,10 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
           <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             {currentSection === 'admin'
               ? 'Admin Section'
-              : currentSection === 'executive'
+                  : currentSection === 'executive'
                   ? 'Executive Section'
+                  : currentSection === 'air'
+                    ? 'AirRevolution Section'
                   : currentSection === 'closing-inputs'
                     ? 'Closing Inputs Section'
                     : currentSection === 'prepare'
@@ -196,6 +208,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
               currentSection === 'home' ||
               currentSection === 'admin' ||
               currentSection === 'executive' ||
+              currentSection === 'air' ||
               currentSection === 'closing-inputs' ||
               currentSection === 'prepare'
                 ? currentSection
@@ -211,6 +224,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
             <option value="home">Forms</option>
             <option value="closing-inputs">Closing Inputs</option>
             <option value="prepare">Prepare</option>
+            <option value="air">AirRevolution</option>
             <option value="admin">Admin</option>
             <option value="executive">Executive</option>
           </select>

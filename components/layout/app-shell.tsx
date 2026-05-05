@@ -19,6 +19,7 @@ export function AppShell({ children }: AppShellProps) {
   const sectionLabel = useMemo(() => {
     if (pathname.startsWith('/executive')) return 'Executive';
     if (pathname.startsWith('/admin')) return 'Admin';
+    if (pathname.startsWith('/air')) return 'AirRevolution';
     return 'Forms';
   }, [pathname]);
 
