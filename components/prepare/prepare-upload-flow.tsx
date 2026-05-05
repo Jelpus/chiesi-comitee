@@ -272,14 +272,27 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     setError(null);
     openProgressModal({
       title: 'Confirmando reutilizacion',
-      detail: 'Estamos registrando que el archivo anterior sigue siendo valido para esta version.',
-      steps: ['Validando version', 'Registrando trazabilidad', 'Actualizando estado'],
+      detail: 'Estamos reutilizando el archivo anterior y ejecutando el flujo completo para esta version.',
+      steps: ['Validando version', 'Procesando filas', 'Normalizando datos', 'Publicando informacion', 'Registrando trazabilidad'],
       activeStep: 0,
     });
 
     startTransition(async () => {
-      updateProgressStep(1, 'Guardando confirmacion de reutilizacion.');
+      let stageStep = 0;
+      const stageMessages = [
+        'Validando que el archivo anterior se puede reutilizar.',
+        'Estamos leyendo las filas desde el archivo anterior.',
+        'Estamos normalizando la informacion para esta version.',
+        'Estamos publicando los datos para la version seleccionada.',
+        'Guardando confirmacion de reutilizacion.',
+      ];
+      const timer = window.setInterval(() => {
+        stageStep = Math.min(stageStep + 1, stageMessages.length - 1);
+        updateProgressStep(stageStep, stageMessages[stageStep]);
+      }, 2600);
+
       const result = await confirmReusePreviousUpload(formData);
+      window.clearInterval(timer);
       if (result.ok) {
         setMessage(result.message);
         finishProgressModal('success', result.message);

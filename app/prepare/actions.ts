@@ -28,7 +28,7 @@ type PrepareActionResult = {
   errors?: string[];
 };
 
-function normalizeDddSource(value: FormDataEntryValue | string | null | undefined) {
+function normalizeDddSource(value: unknown) {
   return String(value ?? '').trim().toLowerCase();
 }
 
@@ -117,9 +117,123 @@ async function getUploadResult(uploadId: string) {
 function revalidatePrepare(areaCode: string) {
   revalidatePath('/prepare');
   revalidatePath(`/prepare/${areaCode}`);
+  revalidatePath('/admin');
   revalidatePath('/admin/uploads');
   revalidatePath('/admin/uploads/logs');
   revalidatePath('/executive');
+}
+
+async function createReuseUploadRecord(params: {
+  originalUploadId: string;
+  moduleCode: string;
+  reportingVersionId: string;
+  periodMonth: string;
+  dddSource: string;
+  confirmedBy: string;
+}) {
+  const client = getBigQueryClient();
+  const uploadId = randomUUID();
+
+  const [rows] = await client.query({
+    query: `
+      SELECT
+        upload_id,
+        module_code,
+        COALESCE(ddd_source, '') AS ddd_source,
+        source_file_name,
+        storage_path,
+        source_sheets_json,
+        selected_sheet_name,
+        selected_header_row,
+        CAST(COALESCE(source_as_of_month, period_month) AS STRING) AS source_as_of_month,
+        opex_jan_previous_col,
+        opex_jan_budget_col,
+        opex_jan_current_col,
+        status
+      FROM \`${UPLOADS_TABLE}\`
+      WHERE upload_id = @originalUploadId
+      LIMIT 1
+    `,
+    params: { originalUploadId: params.originalUploadId },
+  });
+
+  const original = (rows as Array<Record<string, unknown>>)[0];
+  if (!original) {
+    throw new Error('No se encontro el upload original para reutilizar.');
+  }
+
+  const originalModuleCode = String(original.module_code ?? '').trim();
+  const originalDddSource = normalizeDddSource(original.ddd_source);
+  const originalStatus = String(original.status ?? '').trim();
+  if (originalModuleCode !== params.moduleCode) {
+    throw new Error('El archivo original no corresponde al modulo seleccionado.');
+  }
+  if (originalDddSource !== params.dddSource) {
+    throw new Error('El archivo original no corresponde a la variante seleccionada.');
+  }
+  if (originalStatus !== 'published') {
+    throw new Error('Solo se puede reutilizar un archivo publicado.');
+  }
+
+  await client.query({
+    query: `
+      INSERT INTO \`${UPLOADS_TABLE}\`
+      (
+        upload_id,
+        module_code,
+        period_month,
+        uploaded_by,
+        uploaded_at,
+        source_file_name,
+        storage_path,
+        status,
+        rows_total,
+        rows_valid,
+        rows_error,
+        reporting_version_id,
+        source_sheets_json,
+        selected_sheet_name,
+        selected_header_row,
+        source_as_of_month,
+        ddd_source,
+        opex_jan_previous_col,
+        opex_jan_budget_col,
+        opex_jan_current_col
+      )
+      SELECT
+        @uploadId,
+        module_code,
+        DATE(@periodMonth),
+        @confirmedBy,
+        CURRENT_TIMESTAMP(),
+        source_file_name,
+        storage_path,
+        'uploaded',
+        0,
+        0,
+        0,
+        @reportingVersionId,
+        source_sheets_json,
+        selected_sheet_name,
+        selected_header_row,
+        COALESCE(source_as_of_month, period_month),
+        ddd_source,
+        opex_jan_previous_col,
+        opex_jan_budget_col,
+        opex_jan_current_col
+      FROM \`${UPLOADS_TABLE}\`
+      WHERE upload_id = @originalUploadId
+    `,
+    params: {
+      uploadId,
+      originalUploadId: params.originalUploadId,
+      periodMonth: params.periodMonth,
+      reportingVersionId: params.reportingVersionId,
+      confirmedBy: params.confirmedBy,
+    },
+  });
+
+  return uploadId;
 }
 
 export async function prepareUploadAndPublish(formData: FormData): Promise<PrepareActionResult> {
@@ -176,7 +290,6 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
     await publishUpload(uploadId);
     const result = await getUploadResult(uploadId);
     revalidatePrepare(areaCode);
-
     return {
       ok: true,
       status: result.status,
@@ -217,6 +330,19 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       throw new Error('Confirma explícitamente que quieres actualizar una versión que ya está en productivo.');
     }
 
+    const uploadId = await createReuseUploadRecord({
+      originalUploadId,
+      moduleCode,
+      reportingVersionId,
+      periodMonth: version.periodMonth,
+      dddSource,
+      confirmedBy,
+    });
+
+    await processUpload(uploadId);
+    await normalizeExistingUpload(uploadId);
+    await publishUpload(uploadId);
+
     const client = getBigQueryClient();
     await client.query({
       query: `
@@ -234,7 +360,7 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
           original_upload_id = @originalUploadId,
           confirmed_by = @confirmedBy,
           confirmed_at = CURRENT_TIMESTAMP(),
-          notes = 'Archivo reutilizado desde /prepare'
+          notes = @notes
         WHEN NOT MATCHED THEN INSERT (
           confirmation_id,
           reporting_version_id,
@@ -257,7 +383,7 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
           @originalUploadId,
           @confirmedBy,
           CURRENT_TIMESTAMP(),
-          'Archivo reutilizado desde /prepare'
+          @notes
         )
       `,
       params: {
@@ -269,16 +395,23 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
         dddSource,
         originalUploadId,
         confirmedBy,
+        notes: `Archivo reutilizado desde /prepare. Nuevo upload publicado: ${uploadId}`,
       },
     });
 
+    const result = await getUploadResult(uploadId);
     revalidatePrepare(areaCode);
     return {
       ok: true,
-      status: 'reused',
-      uploadId: originalUploadId,
-      message: 'Archivo anterior confirmado para esta versión.',
+      status: result.status,
+      uploadId,
+      rowsTotal: result.rowsTotal,
+      rowsValid: result.rowsValid,
+      rowsError: result.rowsError,
+      message: 'Archivo anterior reutilizado, validado y publicado para esta version.',
+      errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
     };
+
   } catch (error) {
     return {
       ok: false,
