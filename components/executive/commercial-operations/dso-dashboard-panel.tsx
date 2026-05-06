@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { DsoTrendChart } from '@/components/executive/commercial-operations/dso-trend-chart';
 import { DsoComparisonBarChart } from '@/components/executive/commercial-operations/dso-comparison-bar-chart';
 import type {
@@ -75,6 +76,27 @@ function formatSignedQuantity(value: number | null | undefined) {
 function formatPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return 'N/A';
   return `${value.toFixed(1)}%`;
+}
+
+function KpiHelp({ text }: { text: string }) {
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500"
+      title={text}
+      aria-label={text}
+    >
+      ?
+    </span>
+  );
+}
+
+function KpiLabel({ children, help }: { children: ReactNode; help: string }) {
+  return (
+    <p className="flex items-center gap-1 text-xs uppercase tracking-[0.12em] text-slate-500">
+      <span>{children}</span>
+      <KpiHelp text={help} />
+    </p>
+  );
 }
 
 function renderProgressCell(value: number | null | undefined, tone: 'total' | 'py' | 'cy' = 'total') {
@@ -250,6 +272,8 @@ export function DsoDashboardPanel({
   const [stockBusinessTypeFilter, setStockBusinessTypeFilter] = useState('');
   const [stockClientInstitutionFilter, setStockClientInstitutionFilter] = useState('');
   const [stockSkuFilter, setStockSkuFilter] = useState('');
+  const [deliveryClientFilter, setDeliveryClientFilter] = useState('');
+  const [deliveryMarketBrandFilter, setDeliveryMarketBrandFilter] = useState('');
 
   const selectedOverview = findGroup(overviewRows, selectedGroup);
   const selectedTable = findGroup(tableRows, selectedGroup);
@@ -652,6 +676,90 @@ export function DsoDashboardPanel({
       deliveryRankingByClient: buildRanking('client_requester'),
     };
   }, [deliveryScopedRows]);
+
+  const deliveryClientOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of deliveryScopedRows) {
+      const value = (row.clientRequester ?? '').trim();
+      if (value) set.add(value);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [deliveryScopedRows]);
+
+  const deliveryMarketBrandOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of deliveryScopedRows) {
+      if (deliveryClientFilter && (row.clientRequester ?? '').trim() !== deliveryClientFilter) continue;
+      const marketGroup = (row.marketGroup ?? '').trim() || 'Unassigned';
+      const brandName = (row.brandName ?? row.canonicalProductName ?? '').trim() || 'Unassigned';
+      set.add(`${marketGroup} - ${brandName}`);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [deliveryScopedRows, deliveryClientFilter]);
+
+  const deliveryProductRows = useMemo(() => {
+    const byProduct = new Map<
+      string,
+      {
+        productName: string;
+        marketBrand: string;
+        requested: number;
+        delivered: number;
+        invoiced: number;
+        leadTimeTotal: number;
+        leadTimeCount: number;
+        amountNotDelivered: number;
+        unitsNotDelivered: number;
+      }
+    >();
+
+    for (const row of deliveryScopedRows) {
+      if (deliveryClientFilter && (row.clientRequester ?? '').trim() !== deliveryClientFilter) continue;
+      const marketGroup = (row.marketGroup ?? '').trim() || 'Unassigned';
+      const brandName = (row.brandName ?? row.canonicalProductName ?? '').trim() || 'Unassigned';
+      const marketBrand = `${marketGroup} - ${brandName}`;
+      if (deliveryMarketBrandFilter && marketBrand !== deliveryMarketBrandFilter) continue;
+      const includeRow = deliveryRankingMode === 'ytd' ? row.isYtd : row.isMth;
+      if (!includeRow) continue;
+
+      const productName =
+        (row.canonicalProductName ?? row.brandName ?? '').trim() ||
+        marketBrand ||
+        'Unassigned';
+      const current = byProduct.get(productName) ?? {
+        productName,
+        marketBrand,
+        requested: 0,
+        delivered: 0,
+        invoiced: 0,
+        leadTimeTotal: 0,
+        leadTimeCount: 0,
+        amountNotDelivered: 0,
+        unitsNotDelivered: 0,
+      };
+      current.requested += row.cantidadTotalPedido;
+      current.delivered += row.cantidadEntregada;
+      current.invoiced += row.cantidadFacturada;
+      current.amountNotDelivered += row.amountNotDelivered ?? 0;
+      current.unitsNotDelivered += row.unitsNotDelivered ?? 0;
+      if (current.marketBrand !== marketBrand) current.marketBrand = 'Multiple';
+      if (row.leadTimeDays != null && Number.isFinite(row.leadTimeDays)) {
+        current.leadTimeTotal += row.leadTimeDays;
+        current.leadTimeCount += 1;
+      }
+      byProduct.set(productName, current);
+    }
+
+    return [...byProduct.values()]
+      .map((row) => ({
+        ...row,
+        fillRatePct: row.requested > 0 ? (row.delivered / row.requested) * 100 : null,
+        invoicedRatePct: row.requested > 0 ? (row.invoiced / row.requested) * 100 : null,
+        leadTimeAvg: row.leadTimeCount > 0 ? row.leadTimeTotal / row.leadTimeCount : null,
+      }))
+      .sort((a, b) => b.requested - a.requested)
+      .slice(0, 25);
+  }, [deliveryScopedRows, deliveryClientFilter, deliveryMarketBrandFilter, deliveryRankingMode]);
 
   const activeSourceAsOf =
     activeView === 'dso'
@@ -1356,7 +1464,9 @@ export function DsoDashboardPanel({
             <div className="space-y-4">
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  <p className="uppercase tracking-[0.12em] text-slate-500">MoM (Current vs Prev Month)</p>
+                  <KpiLabel help="Difference between current month DOH and previous month DOH. Lower is better.">
+                    MoM (Current vs Prev Month)
+                  </KpiLabel>
                   <p
                     className={`mt-1 font-semibold ${
                       selectedStockRow?.momDelta == null
@@ -1372,7 +1482,9 @@ export function DsoDashboardPanel({
                   </p>
                 </div>
                 <div className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  <p className="uppercase tracking-[0.12em] text-slate-500">YTD Avg vs LY Avg</p>
+                  <KpiLabel help="Current year average DOH compared with the same year-to-date average from last year. Lower is better.">
+                    YTD Avg vs LY Avg
+                  </KpiLabel>
                   <p
                     className={`mt-1 font-semibold ${
                       selectedStockRow?.ytdAvg == null || selectedStockRow?.ytdPyAvg == null
@@ -1556,7 +1668,9 @@ export function DsoDashboardPanel({
             <div className="space-y-4">
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  <p className="uppercase tracking-[0.12em] text-slate-500">MoM (Current vs Prev Month)</p>
+                  <KpiLabel help="Difference between current month DSO and previous month DSO. Lower means faster collections.">
+                    MoM (Current vs Prev Month)
+                  </KpiLabel>
                   <p
                     className={`mt-1 font-semibold ${
                       selectedTable?.momDelta == null
@@ -1572,7 +1686,9 @@ export function DsoDashboardPanel({
                   </p>
                 </div>
                 <div className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                  <p className="uppercase tracking-[0.12em] text-slate-500">YTD Avg vs LY Avg</p>
+                  <KpiLabel help="Current year average DSO compared with last year's year-to-date average. Lower means improvement.">
+                    YTD Avg vs LY Avg
+                  </KpiLabel>
                   <p
                     className={`mt-1 font-semibold ${
                       selectedTable?.ytdAvgDelta == null
@@ -1677,7 +1793,9 @@ export function DsoDashboardPanel({
 
                 return (
                   <>
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Fill Rate</p>
+              <KpiLabel help="Delivered units divided by ordered units for the selected period. Higher means better order fulfillment.">
+                {deliveryRankingMode.toUpperCase()} Fill Rate
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {formatPercent(
                   deliveryRankingMode === 'ytd'
@@ -1707,7 +1825,9 @@ export function DsoDashboardPanel({
 
                 return (
                   <>
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Lead Time</p>
+              <KpiLabel help="Average days between order date and confirmed delivery date. Lower means faster delivery.">
+                {deliveryRankingMode.toUpperCase()} Lead Time
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {(deliveryRankingMode === 'ytd'
                   ? deliverySummary.ytdLeadTimeAvg
@@ -1726,7 +1846,9 @@ export function DsoDashboardPanel({
               })()}
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Value at Risk</p>
+              <KpiLabel help="Estimated value of units ordered but not delivered, using the available unit price.">
+                {deliveryRankingMode.toUpperCase()} Value at Risk
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {formatCurrency(
                   deliveryRankingMode === 'ytd'
@@ -1737,7 +1859,9 @@ export function DsoDashboardPanel({
               <p className="text-xs text-slate-600">Amount not delivered</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">{deliveryRankingMode.toUpperCase()} Missing Units</p>
+              <KpiLabel help="Ordered units minus delivered units for the selected period.">
+                {deliveryRankingMode.toUpperCase()} Missing Units
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {formatQuantity(
                   deliveryRankingMode === 'ytd'
@@ -1776,6 +1900,93 @@ export function DsoDashboardPanel({
                   currentLabel="Current Month"
                 />
               </div>
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-[16px] border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold tracking-tight text-slate-900">Delivery by Product</h3>
+                <p className="mt-1 text-xs text-slate-600">
+                  Aggregated by canonical product name for the selected delivery scope and {deliveryRankingMode.toUpperCase()} period.
+                </p>
+              </div>
+              <div className="grid min-w-[min(100%,520px)] gap-2 sm:grid-cols-2">
+                <select
+                  value={deliveryClientFilter}
+                  onChange={(e) => {
+                    setDeliveryClientFilter(e.target.value);
+                    setDeliveryMarketBrandFilter('');
+                  }}
+                  className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="">All Clients</option>
+                  {deliveryClientOptions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={deliveryMarketBrandFilter}
+                  onChange={(e) => setDeliveryMarketBrandFilter(e.target.value)}
+                  className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="">All MarketGroup - Brand</option>
+                  {deliveryMarketBrandOptions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-[12px] border border-slate-200 bg-white">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Canonical Product</th>
+                    <th className="px-3 py-2 text-left">MarketGroup - Brand</th>
+                    <th className="px-3 py-2 text-right">Ordered</th>
+                    <th className="px-3 py-2 text-right">Delivered</th>
+                    <th className="px-3 py-2 text-right">Fill Rate</th>
+                    <th className="px-3 py-2 text-right">Lead Time</th>
+                    <th className="px-3 py-2 text-right">Value at Risk</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {deliveryProductRows.map((row) => (
+                    <tr key={`${row.productName}-${row.marketBrand}`}>
+                      <td className="px-3 py-2 text-left font-medium text-slate-800">{row.productName}</td>
+                      <td className="px-3 py-2 text-left text-slate-600">{row.marketBrand}</td>
+                      <td className="px-3 py-2 text-right text-slate-900">{formatQuantity(row.requested)}</td>
+                      <td className="px-3 py-2 text-right text-slate-900">{formatQuantity(row.delivered)}</td>
+                      <td
+                        className={`px-3 py-2 text-right font-semibold ${
+                          row.fillRatePct == null || deliverySummary.fillRateTarget == null
+                            ? 'text-slate-900'
+                            : row.fillRatePct >= deliverySummary.fillRateTarget
+                              ? 'text-emerald-700'
+                              : 'text-rose-700'
+                        }`}
+                      >
+                        {formatPercent(row.fillRatePct)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-900">
+                        {row.leadTimeAvg == null ? 'N/A' : `${row.leadTimeAvg.toFixed(1)}d`}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-900">{formatCurrency(row.amountNotDelivered)}</td>
+                    </tr>
+                  ))}
+                  {deliveryProductRows.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-3 text-center text-slate-500" colSpan={7}>
+                        No product rows match the selected filters.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -1881,12 +2092,16 @@ export function DsoDashboardPanel({
 
           <div className="mt-4 grid gap-3 md:grid-cols-4">
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">MTH {selectedGovernmentStageLabel}</p>
+              <KpiLabel help="Quantity for the selected government stage in the current month.">
+                MTH {selectedGovernmentStageLabel}
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">{formatQuantity(governmentSummary.currentDelivered)}</p>
               <p className="text-xs text-slate-600">{formatMonthLabel(governmentSummary.currentPeriod)}</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">MoM Delta</p>
+              <KpiLabel help="Current month quantity minus previous month quantity for the selected stage.">
+                MoM Delta
+              </KpiLabel>
               <p
                 className={`mt-1 text-xl font-semibold ${
                   governmentSummary.momDelta == null
@@ -1903,16 +2118,18 @@ export function DsoDashboardPanel({
               <p className="text-xs text-slate-600">Current vs previous month</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">YTD {selectedGovernmentStageLabel}</p>
+              <KpiLabel help="Total quantity accumulated in the current year for the selected stage.">
+                YTD {selectedGovernmentStageLabel}
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">{formatQuantity(governmentSummary.ytdTotal)}</p>
               <p className="text-xs text-slate-600">
                 {governmentPyLabel} YTD: {formatQuantity(governmentSummary.ytdPyTotal)}
               </p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">
+              <KpiLabel help="Current year monthly average compared with the previous year's monthly average.">
                 YTD Avg vs {governmentPyLabel} Avg
-              </p>
+              </KpiLabel>
               <p
                 className={`mt-1 text-xl font-semibold ${
                   governmentSummary.ytdAvgDelta == null
@@ -1932,7 +2149,9 @@ export function DsoDashboardPanel({
 
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Progress {governmentPyLabel}-{governmentCyLabel}</p>
+              <KpiLabel help="Executed quantity for both years divided by the maximum contract quantity denominator.">
+                Progress {governmentPyLabel}-{governmentCyLabel}
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {governmentSummary.progress2526Pct == null ? 'N/A' : `${governmentSummary.progress2526Pct.toFixed(1)}%`}
               </p>
@@ -1942,7 +2161,9 @@ export function DsoDashboardPanel({
               <p className="text-xs text-slate-600">Executed / Denominator: Max Contract Quantity</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Progress {governmentPyLabel}</p>
+              <KpiLabel help="Executed quantity from the previous year divided by the previous year contract denominator.">
+                Progress {governmentPyLabel}
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {governmentSummary.progress2025Pct == null ? 'N/A' : `${governmentSummary.progress2025Pct.toFixed(1)}%`}
               </p>
@@ -1952,7 +2173,9 @@ export function DsoDashboardPanel({
               <p className="text-xs text-slate-600">Executed {governmentPyLabel} / Total {governmentPyLabel}</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Progress {governmentCyLabel}</p>
+              <KpiLabel help="Executed quantity from the current year divided by the current year contract denominator.">
+                Progress {governmentCyLabel}
+              </KpiLabel>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {governmentSummary.progress2026Pct == null ? 'N/A' : `${governmentSummary.progress2026Pct.toFixed(1)}%`}
               </p>

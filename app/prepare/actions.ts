@@ -11,6 +11,7 @@ import {
 } from '@/app/admin/uploads/actions';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { expectedPreviousMonth } from '@/lib/data/prepare';
+import { sendSendGridEmail } from '@/lib/email/sendgrid';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -28,8 +29,28 @@ type PrepareActionResult = {
   errors?: string[];
 };
 
+type PrepareIncidentResult = {
+  ok: boolean;
+  message: string;
+};
+
+const PREPARE_INCIDENT_RECIPIENT = 'guillermo@jelpus.com';
+
 function normalizeDddSource(value: unknown) {
   return String(value ?? '').trim().toLowerCase();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formText(formData: FormData, key: string) {
+  return String(formData.get(key) ?? '').trim();
 }
 
 function isDddLikeModule(moduleCode: string) {
@@ -418,6 +439,86 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       status: 'error',
       message: error instanceof Error ? error.message : 'No se pudo confirmar la reutilización.',
       errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export async function reportPrepareIncident(formData: FormData): Promise<PrepareIncidentResult> {
+  const reporterName = formText(formData, 'reporterName');
+  const reporterEmail = formText(formData, 'reporterEmail');
+  const incidentDetail = formText(formData, 'incidentDetail');
+  const areaCode = formText(formData, 'areaCode');
+  const areaLabel = formText(formData, 'areaLabel');
+  const moduleCode = formText(formData, 'moduleCode');
+  const moduleName = formText(formData, 'moduleName');
+  const variantLabel = formText(formData, 'variantLabel');
+  const periodMonth = formText(formData, 'periodMonth');
+  const reportingVersionId = formText(formData, 'reportingVersionId');
+  const versionName = formText(formData, 'versionName');
+  const currentUploadId = formText(formData, 'currentUploadId');
+  const currentUploadStatus = formText(formData, 'currentUploadStatus');
+  const currentSourceFileName = formText(formData, 'currentSourceFileName');
+  const latestUploadId = formText(formData, 'latestUploadId');
+  const latestSourceFileName = formText(formData, 'latestSourceFileName');
+
+  try {
+    if (!reporterName) throw new Error('Indica tu nombre.');
+    if (!reporterEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reporterEmail)) {
+      throw new Error('Indica un email valido.');
+    }
+    if (incidentDetail.length < 10) {
+      throw new Error('Describe la incidencia con un poco mas de detalle.');
+    }
+    if (!areaCode || !moduleCode || !reportingVersionId) {
+      throw new Error('Faltan datos de contexto para reportar la incidencia.');
+    }
+
+    const rows = [
+      ['Nombre', reporterName],
+      ['Email', reporterEmail],
+      ['Area', areaLabel ? `${areaLabel} (${areaCode})` : areaCode],
+      ['Modulo', moduleName ? `${moduleName} (${moduleCode})` : moduleCode],
+      ['Variante', variantLabel || 'N/A'],
+      ['Periodo', periodMonth || 'N/A'],
+      ['Version', versionName ? `${versionName} (${reportingVersionId})` : reportingVersionId],
+      ['Upload actual', currentUploadId || 'N/A'],
+      ['Estado actual', currentUploadStatus || 'N/A'],
+      ['Archivo actual', currentSourceFileName || 'N/A'],
+      ['Upload referencia', latestUploadId || 'N/A'],
+      ['Archivo referencia', latestSourceFileName || 'N/A'],
+    ];
+
+    const contextHtml = rows
+      .map(
+        ([label, value]) => `
+          <tr>
+            <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#475569;font-weight:700;width:180px;">${escapeHtml(label)}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#0f172a;">${escapeHtml(value)}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    await sendSendGridEmail({
+      to: PREPARE_INCIDENT_RECIPIENT,
+      subject: `Incidencia Prepare - ${moduleCode} - ${periodMonth || reportingVersionId}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+          <h1 style="margin:0 0 12px;font-size:22px;">Incidencia reportada desde Prepare</h1>
+          <p style="margin:0 0 18px;color:#475569;">Un usuario reporto una incidencia durante la preparacion de archivos.</p>
+          <h2 style="margin:22px 0 8px;font-size:16px;">Detalle de la incidencia</h2>
+          <div style="white-space:pre-wrap;border:1px solid #e2e8f0;border-radius:12px;padding:14px;background:#f8fafc;">${escapeHtml(incidentDetail)}</div>
+          <h2 style="margin:22px 0 8px;font-size:16px;">Contexto automatico</h2>
+          <table style="border-collapse:collapse;width:100%;font-size:14px;">${contextHtml}</table>
+        </div>
+      `,
+    });
+
+    return { ok: true, message: 'Incidencia enviada correctamente.' };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'No se pudo enviar la incidencia.',
     };
   }
 }

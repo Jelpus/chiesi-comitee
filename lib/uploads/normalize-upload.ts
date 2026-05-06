@@ -836,6 +836,26 @@ function pickPayloadValueByExactNormalizedHeader(
   return null;
 }
 
+function pickPayloadValueByExactHeader(
+  payload: Record<string, unknown>,
+  aliases: string[],
+) {
+  for (const alias of aliases) {
+    if (Object.prototype.hasOwnProperty.call(payload, alias)) {
+      return payload[alias];
+    }
+  }
+  return null;
+}
+
+function pickPayloadValue(
+  payload: Record<string, unknown>,
+  index: Map<string, unknown>,
+  aliases: string[],
+) {
+  return pickPayloadValueByExactHeader(payload, aliases) ?? pickValue(index, aliases);
+}
+
 function pickPayloadContractQuantityByYear(
   payload: Record<string, unknown>,
   year: 2025 | 2026,
@@ -926,6 +946,14 @@ function parseExcelSerialDate(serial: number): string | null {
   return toMonthStartFromDate(parsed);
 }
 
+function parseExcelSerialDateValue(serial: number): Date | null {
+  if (!Number.isFinite(serial) || serial <= 0) return null;
+  const utcEpoch = Date.UTC(1899, 11, 30);
+  const millis = utcEpoch + Math.round(serial * 86400000);
+  const parsed = new Date(millis);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function parseDateField(value: unknown): string | null {
   if (value == null || value === '') return null;
 
@@ -1006,6 +1034,67 @@ function parseDateField(value: unknown): string | null {
   }
 
   return null;
+}
+
+function parseDateValueMonthFirst(value: unknown): Date | null {
+  if (value == null || value === '') return null;
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+  }
+
+  if (typeof value === 'number') {
+    return value >= 30000 && value <= 70000 ? parseExcelSerialDateValue(value) : null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const isoUtc = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/,
+  );
+  if (isoUtc) {
+    const parsedUtc = new Date(raw);
+    if (Number.isNaN(parsedUtc.getTime())) return null;
+    const hour = Number(isoUtc[4]);
+    if (hour >= 22) parsedUtc.setUTCDate(parsedUtc.getUTCDate() + 1);
+    return new Date(Date.UTC(parsedUtc.getUTCFullYear(), parsedUtc.getUTCMonth(), parsedUtc.getUTCDate()));
+  }
+
+  const numericValue = Number(raw);
+  if (Number.isFinite(numericValue) && /^\d+(\.\d+)?$/.test(raw)) {
+    return numericValue >= 30000 && numericValue <= 70000
+      ? parseExcelSerialDateValue(numericValue)
+      : null;
+  }
+
+  const yyyyMmDd = raw.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (yyyyMmDd) {
+    const year = Number(yyyyMmDd[1]);
+    const month = Number(yyyyMmDd[2]);
+    const day = Number(yyyyMmDd[3]);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const mmDdYyyy = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (mmDdYyyy) {
+    const month = Number(mmDdYyyy[1]);
+    const day = Number(mmDdYyyy[2]);
+    const year = parseYearToken(mmDdYyyy[3]);
+    if (year == null || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+}
+
+function diffDays(later: Date | null, earlier: Date | null) {
+  if (!later || !earlier) return null;
+  return Math.round((later.getTime() - earlier.getTime()) / 86400000);
 }
 
 function parseDateFieldMonthFirst(value: unknown): string | null {
@@ -4156,6 +4245,33 @@ function normalizeCommercialOperationsDeliveryOrders(
   return { validations, normalizedRows };
 }
 
+function normalizeDeliveryOrderScope(
+  value: unknown,
+  fallbackScope: 'government' | 'private',
+): 'government' | 'private' {
+  const normalized = normalizeText(asNullableString(value) ?? '');
+  if (!normalized) return fallbackScope;
+  if (normalized.includes('privado') || normalized.includes('private')) return 'private';
+  if (
+    normalized.includes('gobierno') ||
+    normalized.includes('government') ||
+    normalized.includes('vanguardia') ||
+    normalized.includes('publico') ||
+    normalized.includes('public')
+  ) {
+    return 'government';
+  }
+  return fallbackScope;
+}
+
+function hasPrivateDeliveryOrderLayout(index: Map<string, unknown>) {
+  return Boolean(
+    pickValue(index, ['Order date']) !== null &&
+    pickValue(index, ['Material']) !== null &&
+    pickValue(index, ['Cantidad de pedido']) !== null,
+  );
+}
+
 function normalizeCommercialOperationsDeliveryOrdersV2(
   rows: RawUploadRow[],
   moduleCode: string,
@@ -4163,7 +4279,7 @@ function normalizeCommercialOperationsDeliveryOrdersV2(
   const validations: RowValidationResult[] = [];
   const normalizedRows: CommercialOperationsDeliveryOrdersNormalizedRow[] = [];
   const dedup = new Map<string, CommercialOperationsDeliveryOrdersNormalizedRow>();
-  const orderScope: 'government' | 'private' =
+  const fallbackOrderScope: 'government' | 'private' =
     moduleCode === 'commercial_operations_private_orders' || moduleCode === 'private_orders'
       ? 'private'
       : 'government';
@@ -4180,6 +4296,133 @@ function normalizeCommercialOperationsDeliveryOrdersV2(
     }
 
     const index = buildPayloadIndex(payload);
+    if (hasPrivateDeliveryOrderLayout(index)) {
+      const sourceProductRaw = asNullableString(pickPayloadValue(payload, index, ['Material']));
+      if (!sourceProductRaw) {
+        validations.push({
+          rowNumber: row.row_number,
+          validationStatus: 'skipped',
+          errors: ['Skipped: missing product in Material column.'],
+        });
+        continue;
+      }
+
+      const sourceProductNormalized = normalizeText(sourceProductRaw);
+      if (['total', 'subtotal', 'totales'].includes(sourceProductNormalized)) {
+        validations.push({
+          rowNumber: row.row_number,
+          validationStatus: 'skipped',
+          errors: ['Skipped: total/subtotal row.'],
+        });
+        continue;
+      }
+
+      const orderDateRaw = pickPayloadValue(payload, index, ['Order date']);
+      const orderDateMonth = parseDateFieldMonthFirst(orderDateRaw);
+      if (!orderDateMonth) {
+        validations.push({
+          rowNumber: row.row_number,
+          validationStatus: 'skipped',
+          errors: ['Skipped: missing Order date.'],
+        });
+        continue;
+      }
+
+      const shippedDateRaw = pickPayloadValue(payload, index, ['Data spedizione']);
+      const proposedDateRaw = pickPayloadValue(payload, index, ['FECHA PROPUESTA']);
+      const deliveredDateRaw = pickPayloadValue(payload, index, ['FECHA ENTREGADO']);
+      const orderDate = parseDateValueMonthFirst(orderDateRaw);
+      const proposedDate = parseDateValueMonthFirst(proposedDateRaw);
+      const deliveredDate = parseDateValueMonthFirst(deliveredDateRaw);
+      const importe = asNullableNumber(pickPayloadValue(payload, index, ['Importe']));
+      const cantidadTotalPedido = asNullableQuantityNumber(
+        pickPayloadValue(payload, index, ['Cantidad de pedido']),
+      );
+      const confirmadas = asNullableQuantityNumber(pickPayloadValue(payload, index, ['pzas']));
+      const piezasEntregadas = asNullableQuantityNumber(
+        pickPayloadValue(payload, index, ['NO. PIEZAS ENTREGADAS']),
+      );
+      const precioUnitario =
+        importe != null && cantidadTotalPedido != null && cantidadTotalPedido !== 0
+          ? importe / cantidadTotalPedido
+          : null;
+      const precioReal =
+        importe != null && confirmadas != null && confirmadas !== 0 ? importe / confirmadas : null;
+      const orderScope = normalizeDeliveryOrderScope(
+        pickPayloadValue(payload, index, ['Canal']),
+        fallbackOrderScope,
+      );
+
+      const normalizedRow: CommercialOperationsDeliveryOrdersNormalizedRow = {
+        rowNumber: row.row_number,
+        orderScope,
+        businessType: null,
+        market: 'File Privado',
+        businessUnit: null,
+        clientInstitution: asNullableString(pickPayloadValue(payload, index, ['Cliente'])),
+        orderType: asNullableString(pickPayloadValue(payload, index, ['Order type'])),
+        documentNumber: asNullableString(pickPayloadValue(payload, index, ['No.', 'No'])),
+        contractNumber: asNullableString(pickPayloadValue(payload, index, ['Orden'])),
+        customerOrderNumber:
+          asNullableString(pickPayloadValue(payload, index, ['Referencia cliente'])) ??
+          asNullableString(pickPayloadValue(payload, index, ['Orden'])),
+        salesDocument: asNullableString(pickPayloadValue(payload, index, ['FACTURAS Y NC'])),
+        sku: asNullableString(pickPayloadValue(payload, index, ['Product code'])),
+        laboratory: 'CHIESI',
+        status: asNullableString(pickPayloadValue(payload, index, ['status'])),
+        orderStatus:
+          asNullableString(pickPayloadValue(payload, index, ['OTIF'])) ??
+          asNullableString(pickPayloadValue(payload, index, ['ENTREGA A TIEMPO'])),
+        deliveryPoint: asNullableString(pickPayloadValue(payload, index, ['Goods consignee'])),
+        recipient: asNullableString(pickPayloadValue(payload, index, ['Description'])),
+        fechaPedidoSapMonth: orderDateMonth,
+        fechaPedidoMonth: orderDateMonth,
+        fechaCreacionDeliveryMonth: parseDateFieldMonthFirst(shippedDateRaw),
+        fechaSalidaMercanciaMonth: parseDateFieldMonthFirst(shippedDateRaw),
+        fechaMaximaEntregaMonth: parseDateFieldMonthFirst(proposedDateRaw),
+        fechaConfirmacionEntregaMonth: parseDateFieldMonthFirst(deliveredDateRaw),
+        tiempoEntregaDiasNaturales: diffDays(deliveredDate, orderDate),
+        entregaVsVencimientoDiasNaturales: diffDays(deliveredDate, proposedDate),
+        precioUnitario,
+        importe,
+        cantidadTotalPedido,
+        confirmadas,
+        cantidadSuministrada: piezasEntregadas,
+        cantidadEntregada: piezasEntregadas,
+        cantidadFacturada: piezasEntregadas,
+        sancion: 'NO APLICA',
+        facturadoChiesi: 'FACTURADO',
+        precioReal,
+        tipoEntrega: 'ENTREGADO',
+        sourceProductRaw,
+        sourceProductNormalized,
+        periodMonth: orderDateMonth,
+        orderValue: piezasEntregadas ?? confirmadas ?? cantidadTotalPedido,
+        payload,
+      };
+
+      const dedupKey = [
+        orderScope,
+        orderDateMonth,
+        normalizeText(normalizedRow.documentNumber ?? ''),
+        normalizeText(normalizedRow.contractNumber ?? ''),
+        normalizeText(normalizedRow.customerOrderNumber ?? ''),
+        normalizeText(normalizedRow.salesDocument ?? ''),
+        normalizeText(normalizedRow.sku ?? ''),
+        sourceProductNormalized,
+        normalizeText(normalizedRow.clientInstitution ?? ''),
+        normalizeText(normalizedRow.recipient ?? ''),
+      ].join('|');
+      if (!dedup.has(dedupKey)) dedup.set(dedupKey, normalizedRow);
+
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'valid',
+        errors: [],
+      });
+      continue;
+    }
+
     const sourceProductRaw = asNullableString(
       pickValue(index, ['MEDICAMENTO', 'Producto', 'product', 'producto']),
     );
@@ -4232,7 +4475,7 @@ function normalizeCommercialOperationsDeliveryOrdersV2(
 
     const normalizedRow: CommercialOperationsDeliveryOrdersNormalizedRow = {
       rowNumber: row.row_number,
-      orderScope,
+      orderScope: fallbackOrderScope,
       businessType: asNullableString(pickValue(index, ['Tipo Neg', 'Tipo Negocio', 'tipo_neg'])),
       market: asNullableString(pickValue(index, ['MERCADO', 'Mercado', 'market'])),
       businessUnit: asNullableString(pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio'])),
@@ -4307,7 +4550,7 @@ function normalizeCommercialOperationsDeliveryOrdersV2(
     };
 
     const dedupKey = [
-      orderScope,
+      fallbackOrderScope,
       periodMonth,
       normalizeText(normalizedRow.documentNumber ?? ''),
       normalizeText(normalizedRow.contractNumber ?? ''),

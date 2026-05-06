@@ -154,12 +154,14 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
     { label: 'Cantidad', columns: ['CANTIDAD ENTREGADA', 'CANTIDAD SUMINISTRADA', 'CONFIRMADAS'] },
   ],
   commercial_operations_private_orders: [
-    { label: 'Producto y fechas', columns: ['MEDICAMENTO', 'FECHA PEDIDO SAP', 'FECHA DE PEDIDO'] },
-    { label: 'Cantidad', columns: ['CANTIDAD ENTREGADA', 'CANTIDAD SUMINISTRADA', 'CONFIRMADAS'] },
+    { label: 'Producto y fechas', columns: ['Material', 'Product code', 'Order date'] },
+    { label: 'Cantidad', columns: ['Cantidad de pedido', 'pzas', 'NO. PIEZAS ENTREGADAS'] },
+    { label: 'Operacion', columns: ['Canal', 'Cliente', 'Orden', 'FACTURAS Y NC'] },
   ],
   private_orders: [
-    { label: 'Producto y fechas', columns: ['MEDICAMENTO', 'FECHA PEDIDO SAP', 'FECHA DE PEDIDO'] },
-    { label: 'Cantidad', columns: ['CANTIDAD ENTREGADA', 'CANTIDAD SUMINISTRADA', 'CONFIRMADAS'] },
+    { label: 'Producto y fechas', columns: ['Material', 'Product code', 'Order date'] },
+    { label: 'Cantidad', columns: ['Cantidad de pedido', 'pzas', 'NO. PIEZAS ENTREGADAS'] },
+    { label: 'Operacion', columns: ['Canal', 'Cliente', 'Orden', 'FACTURAS Y NC'] },
   ],
   commercial_operations_stocks: [
     { label: 'Producto', columns: ['Producto', 'MEDICAMENTO'] },

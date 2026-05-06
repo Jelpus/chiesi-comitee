@@ -4,7 +4,11 @@ import 'server-only';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { getBigQueryClient } from '@/lib/bigquery/client';
-import { sendRequestInfoEmail, type RequestInfoRecipient } from '@/lib/email/request-info';
+import {
+  sendRequestInfoEmail,
+  sendRequestInfoSummaryEmail,
+  type RequestInfoRecipient,
+} from '@/lib/email/request-info';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -259,7 +263,7 @@ export async function requestReportingVersionInfo(input: {
   }
 
   const today = asDateOnly(new Date());
-  const windowEnd = addBusinessDays(today, 5);
+  const windowEnd = addBusinessDays(today, 3);
   const recipients = await getRequestInfoRecipients();
 
   if (recipients.length === 0) {
@@ -293,6 +297,14 @@ export async function requestReportingVersionInfo(input: {
   if (failed > 0) {
     throw new Error(`Sent ${sent} emails, but ${failed} failed. ${errors.slice(0, 3).join(' | ')}`);
   }
+
+  await sendRequestInfoSummaryEmail({
+    recipients,
+    periodLabel,
+    windowStart: windowStartLabel,
+    windowEnd: windowEndLabel,
+    sentCount: sent,
+  });
 
   return { ok: true as const, sent, failed };
 }

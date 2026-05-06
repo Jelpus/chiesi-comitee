@@ -1382,6 +1382,24 @@ export async function getSellOutUnmappedProducts(
         AND s.source_product_raw IS NOT NULL
         AND TRIM(s.source_product_raw) != ''
       GROUP BY source_product_name, source_product_name_normalized
+      UNION ALL
+      SELECT
+        s.source_product_raw AS source_product_name,
+        LOWER(TRIM(REGEXP_REPLACE(REGEXP_REPLACE(NORMALIZE(s.source_product_raw, NFD), r'\\pM', ''), r'[^a-zA-Z0-9]+', ' '))) AS source_product_name_normalized,
+        CAST(MAX(u.uploaded_at) AS STRING) AS last_seen_at,
+        COUNT(1) AS occurrences
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_delivery_orders\` s
+      JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        ON u.upload_id = s.upload_id
+      WHERE LOWER(TRIM(u.module_code)) IN (
+          'commercial_operations_government_orders',
+          'government_orders',
+          'commercial_operations_private_orders',
+          'private_orders'
+        )
+        AND s.source_product_raw IS NOT NULL
+        AND TRIM(s.source_product_raw) != ''
+      GROUP BY source_product_name, source_product_name_normalized
     ),
     source_agg AS (
       SELECT

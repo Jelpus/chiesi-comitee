@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -16,9 +16,13 @@ import {
   HelpCircle,
   Info,
   Layers3,
+  Loader2,
   Search,
+  Send,
   UploadCloud,
+  X,
 } from 'lucide-react';
+import { reportPrepareIncident } from '@/app/prepare/actions';
 import { PrepareUploadFlow } from '@/components/prepare/prepare-upload-flow';
 import { PrepareVersionSelector } from '@/components/prepare/prepare-version-selector';
 import { ProductionVersionWarning } from '@/components/prepare/production-version-warning';
@@ -183,6 +187,122 @@ function DetailsDisclosure({
   );
 }
 
+function IncidentReportModal({
+  requirement,
+  selectedVersion,
+  areaLabel,
+  onClose,
+  onSubmitted,
+}: {
+  requirement: PrepareRequirement;
+  selectedVersion: PrepareAreaData['selectedVersion'];
+  areaLabel: string;
+  onClose: () => void;
+  onSubmitted: (message: string, ok: boolean) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+
+  function submitIncident(formData: FormData) {
+    startTransition(async () => {
+      const result = await reportPrepareIncident(formData);
+      onSubmitted(result.message, result.ok);
+      if (result.ok) onClose();
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
+      <section className="relative w-full max-w-xl overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-[0_30px_100px_rgba(15,23,42,0.35)]">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Ayuda</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Reportar una incidencia</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950"
+            aria-label="Cerrar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form action={submitIncident} className="space-y-4 p-6">
+          <input type="hidden" name="areaCode" value={requirement.module.areaCode} />
+          <input type="hidden" name="areaLabel" value={areaLabel} />
+          <input type="hidden" name="moduleCode" value={requirement.module.moduleCode} />
+          <input type="hidden" name="moduleName" value={requirement.module.moduleName} />
+          <input type="hidden" name="variantLabel" value={requirement.variantLabel ?? ''} />
+          <input type="hidden" name="periodMonth" value={selectedVersion?.periodMonth ?? ''} />
+          <input type="hidden" name="reportingVersionId" value={selectedVersion?.reportingVersionId ?? ''} />
+          <input type="hidden" name="versionName" value={selectedVersion?.versionName ?? ''} />
+          <input type="hidden" name="currentUploadId" value={requirement.currentUpload?.uploadId ?? ''} />
+          <input type="hidden" name="currentUploadStatus" value={requirement.currentUpload?.status ?? requirement.status} />
+          <input type="hidden" name="currentSourceFileName" value={requirement.currentUpload?.sourceFileName ?? ''} />
+          <input type="hidden" name="latestUploadId" value={requirement.latestUpload?.uploadId ?? ''} />
+          <input type="hidden" name="latestSourceFileName" value={requirement.latestUpload?.sourceFileName ?? ''} />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="space-y-2">
+              <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">Nombre</span>
+              <input
+                name="reporterName"
+                required
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">Email</span>
+              <input
+                name="reporterEmail"
+                type="email"
+                required
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+              />
+            </label>
+          </div>
+
+          <label className="space-y-2">
+            <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">Detalle de incidencia</span>
+            <textarea
+              name="incidentDetail"
+              required
+              minLength={10}
+              rows={6}
+              className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+            />
+          </label>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
+            Se enviara tambien el contexto tecnico de esta pantalla: area, modulo, periodo, version y upload seleccionado.
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isPending}
+              className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={isPending}
+              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50"
+            >
+              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Enviar
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function ModuleListItem({
   requirement,
   isSelected,
@@ -235,13 +355,23 @@ function ModuleListItem({
   );
 }
 
-function ModuleDetail({ requirement, selectedVersion }: { requirement: PrepareRequirement; selectedVersion: PrepareAreaData['selectedVersion'] }) {
+function ModuleDetail({
+  requirement,
+  selectedVersion,
+  areaLabel,
+}: {
+  requirement: PrepareRequirement;
+  selectedVersion: PrepareAreaData['selectedVersion'];
+  areaLabel: string;
+}) {
   const config = statusConfig(requirement.status);
   const Icon = config.icon;
   const current = requirement.currentUpload;
   const latest = requirement.latestUpload;
   const hasCurrentErrors = Boolean(current?.lastErrorMessage) || Number(current?.rowsError ?? 0) > 0;
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const [showIncidentModal, setShowIncidentModal] = useState(false);
+  const [incidentMessage, setIncidentMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const expectedColumnGroups = getExpectedUploadColumnGroups(requirement.module.moduleCode);
 
   const parsedFileName = requirement.latestUpload?.sourceFileName
@@ -366,6 +496,40 @@ function ModuleDetail({ requirement, selectedVersion }: { requirement: PrepareRe
               </div>
             </dl>
           </DetailsDisclosure>
+
+          <div className="rounded-[22px] border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-black text-slate-950">Ayuda</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Reporta una incidencia si necesitas soporte con este archivo.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIncidentMessage(null);
+                  setShowIncidentModal(true);
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+              >
+                <HelpCircle className="h-4 w-4" />
+                Reportar una incidencia
+              </button>
+            </div>
+            {incidentMessage ? (
+              <p
+                className={cn(
+                  'mt-3 rounded-2xl border px-4 py-3 text-sm font-semibold',
+                  incidentMessage.ok
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-rose-200 bg-rose-50 text-rose-800',
+                )}
+              >
+                {incidentMessage.text}
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <aside className="space-y-4">
@@ -421,6 +585,16 @@ function ModuleDetail({ requirement, selectedVersion }: { requirement: PrepareRe
 
         </aside>
       </div>
+
+      {showIncidentModal ? (
+        <IncidentReportModal
+          requirement={requirement}
+          selectedVersion={selectedVersion}
+          areaLabel={areaLabel}
+          onClose={() => setShowIncidentModal(false)}
+          onSubmitted={(text, ok) => setIncidentMessage({ text, ok })}
+        />
+      ) : null}
     </article>
   );
 }
@@ -589,7 +763,7 @@ export function PrepareAreaView({ data }: { data: PrepareAreaData }) {
 
           <main className="min-w-0">
             {selectedRequirement ? (
-              <ModuleDetail requirement={selectedRequirement} selectedVersion={data.selectedVersion} />
+              <ModuleDetail requirement={selectedRequirement} selectedVersion={data.selectedVersion} areaLabel={data.areaLabel} />
             ) : (
               <div className="rounded-[30px] border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
                 <Layers3 className="mx-auto h-10 w-10 text-slate-400" />

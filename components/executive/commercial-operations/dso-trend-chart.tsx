@@ -35,6 +35,11 @@ function formatNumber(value: number | null | undefined) {
   return value.toFixed(1);
 }
 
+function formatWholeNumber(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+
 export function DsoTrendChart({ rows, metricLabel = 'DSO' }: DsoTrendChartProps) {
   if (rows.length === 0) {
     return (
@@ -76,8 +81,8 @@ export function DsoTrendChart({ rows, metricLabel = 'DSO' }: DsoTrendChartProps)
           />
           <Tooltip
             formatter={(value: unknown, name: unknown) => {
-              if (String(name) === 'stockValue') return [typeof value === 'number' ? formatNumber(value) : 'N/A', 'Stock'];
-              if (String(name) === 'sellOutValue') return [typeof value === 'number' ? formatNumber(value) : 'N/A', 'Sell-out'];
+              if (String(name) === 'stockValue') return [typeof value === 'number' ? formatWholeNumber(value) : 'N/A', 'Stock'];
+              if (String(name) === 'sellOutValue') return [typeof value === 'number' ? formatWholeNumber(value) : 'N/A', 'Sell-out'];
               return [typeof value === 'number' ? formatNumber(value) : 'N/A', String(name) === 'dsoValue' ? metricLabel : 'Target'];
             }}
             labelFormatter={(label) => formatMonthShort(String(label))}
