@@ -43,9 +43,9 @@ import type {
   BusinessExcellenceResolvedFilters,
   BusinessExcellenceFieldForceExcellenceData,
   BusinessExcellenceFieldForceExcellenceRow,
+  BusinessExcellenceFieldForceDetailData,
   BusinessExcellenceFieldForceTopCardKpis,
   BusinessExcellenceFieldForceSummaryRow,
-  BusinessExcellenceFieldForceDoctorDetailRow,
   BusinessExcellenceFieldForceInteractionMixRow,
   BusinessExcellenceSourceOverview,
   BusinessExcellenceSpecialtyRow,
@@ -72,6 +72,10 @@ const FIELD_FORCE_INTERACTIONS_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions';
 const FIELD_FORCE_TFT_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft';
+const FIELD_FORCE_SERVING_HCP_MONTH =
+  'chiesi-committee.chiesi_committee_serving.business_excellence_ff_hcp_month';
+const FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH =
+  'chiesi-committee.chiesi_committee_serving.business_excellence_ff_hcp_channel_month';
 const PRIVATE_SELLOUT_MART_VIEW =
   'chiesi-committee.chiesi_committee_mart.vw_private_sellout';
 const GOB360_PRODUCT_MAPPING_TABLE =
@@ -1021,15 +1025,19 @@ export async function getBusinessExcellencePrivateSellOutMartSummary(
   const [rows] = await client.query({ query, params });
   const row = (rows as Array<Record<string, unknown>>)[0];
   if (!row) return null;
+  const gob360PrivateUnits = await getGob360PrivateUnitSummary(
+    row.last_available_month ? String(row.last_available_month) : null,
+    normalizedMarketGroup ?? null,
+  );
 
   return {
     reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
     marketGroup: row.market_group ? String(row.market_group) : normalizedMarketGroup ?? null,
     lastAvailableMonth: row.last_available_month ? String(row.last_available_month) : null,
-    ytdUnits: Number(row.ytd_units ?? 0),
+    ytdUnits: Number(row.ytd_units ?? 0) + gob360PrivateUnits.ytdUnits,
     ytdNetSales: Number(row.ytd_net_sales ?? 0),
     ytdRx: Number(row.ytd_rx ?? 0),
-    mthUnits: Number(row.mth_units ?? 0),
+    mthUnits: Number(row.mth_units ?? 0) + gob360PrivateUnits.mthUnits,
     mthNetSales: Number(row.mth_net_sales ?? 0),
     mthRx: Number(row.mth_rx ?? 0),
   };
@@ -1072,15 +1080,18 @@ export async function getBusinessExcellencePrivateChannelPerformance(
   });
   const row = (rows as Array<Record<string, unknown>>)[0];
   if (!row) return null;
+  const gob360PrivateUnits = await getGob360PrivateUnitSummary(
+    row.last_available_month ? String(row.last_available_month) : null,
+  );
 
-  const ytdUnits = Number(row.ytd_units ?? 0);
-  const ytdUnitsPy = Number(row.ytd_units_py ?? 0);
+  const ytdUnits = Number(row.ytd_units ?? 0) + gob360PrivateUnits.ytdUnits;
+  const ytdUnitsPy = Number(row.ytd_units_py ?? 0) + gob360PrivateUnits.ytdUnitsPy;
   const ytdNetSales = Number(row.ytd_net_sales ?? 0);
   const ytdNetSalesPy = Number(row.ytd_net_sales_py ?? 0);
   const ytdRx = Number(row.ytd_rx ?? 0);
   const ytdRxPy = Number(row.ytd_rx_py ?? 0);
-  const mthUnits = Number(row.mth_units ?? 0);
-  const mthUnitsPy = Number(row.mth_units_py ?? 0);
+  const mthUnits = Number(row.mth_units ?? 0) + gob360PrivateUnits.mthUnits;
+  const mthUnitsPy = Number(row.mth_units_py ?? 0) + gob360PrivateUnits.mthUnitsPy;
   const mthNetSales = Number(row.mth_net_sales ?? 0);
   const mthNetSalesPy = Number(row.mth_net_sales_py ?? 0);
   const mthRx = Number(row.mth_rx ?? 0);
@@ -1233,6 +1244,8 @@ type Gob360RankingRawRow = {
   pieces: number;
 };
 
+type Gob360ChannelScope = 'all' | 'public' | 'private';
+
 type GovernmentBudgetAggRow = {
   marketGroup: string | null;
   ytdBudgetUnits: number;
@@ -1240,6 +1253,40 @@ type GovernmentBudgetAggRow = {
   mthBudgetUnits: number;
   mthBudgetUnitsPy: number;
 };
+
+function buildGob360PrivateClueCatalogCte(pcStructureTableId: string, scStructureTableId: string) {
+  return `
+    private_clues AS (
+      SELECT DISTINCT LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key
+      FROM \`${pcStructureTableId}\`
+      WHERE CLUE IS NOT NULL
+        AND TRIM(CAST(CLUE AS STRING)) != ''
+        AND LOWER(TRIM(CAST(INSTITUCION AS STRING))) = 'privado'
+      UNION DISTINCT
+      SELECT DISTINCT LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key
+      FROM \`${scStructureTableId}\`
+      WHERE CLUE IS NOT NULL
+        AND TRIM(CAST(CLUE AS STRING)) != ''
+        AND LOWER(TRIM(CAST(INSTITUCION AS STRING))) = 'privado'
+    )
+  `;
+}
+
+function getGob360ChannelWhere(scope: Gob360ChannelScope, alias = 's') {
+  if (scope === 'private') return `AND ${alias}.clue_key IN (SELECT clue_key FROM private_clues)`;
+  if (scope === 'public') {
+    return `AND (${alias}.clue_key IS NULL OR ${alias}.clue_key NOT IN (SELECT clue_key FROM private_clues))`;
+  }
+  return '';
+}
+
+function getGob360PrivateEstimatedUnitPrice(productId: string | null | undefined, brandName: string | null | undefined) {
+  const normalizedBrand = (brandName ?? '').toLowerCase().trim();
+  if (productId === 'PRD_000004' || normalizedBrand === 'lexicomp') return 9129;
+  if (productId === 'PRD_000006' || productId === 'PRD_000010' || normalizedBrand === 'peyona') return 5714;
+  if (productId === 'PRD_000007' || productId === 'PRD_000012' || normalizedBrand === 'curosurf') return 9541;
+  return null;
+}
 
 async function getGob360ClueDescriptionCatalog() {
   const gobClient = getGob360BigQueryClient(true);
@@ -1302,12 +1349,15 @@ function parseYearMonthFromDateText(value: string | null | undefined) {
 async function getGob360OverviewFromMappedClaves(
   mappedClaves: string[],
   cutoffDate: string | null,
+  channelScope: Gob360ChannelScope = 'all',
 ) {
   if (mappedClaves.length === 0) return null;
   const gobClient = getGob360BigQueryClient(true);
-  const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
+  const { pcSalesTableId, scSalesTableId, pcStructureTableId, scStructureTableId } = getGob360TableRefs();
+  const channelWhere = getGob360ChannelWhere(channelScope, 's');
   const query = `
-    WITH source_raw AS (
+    WITH ${buildGob360PrivateClueCatalogCte(pcStructureTableId, scStructureTableId)},
+    source_raw AS (
       SELECT 'pc' AS source_db, DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
       UNION ALL
       SELECT 'sc' AS source_db, DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
@@ -1316,6 +1366,7 @@ async function getGob360OverviewFromMappedClaves(
       SELECT
         source_db,
         CAST(CLUE AS STRING) AS clue,
+        LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key,
         LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
         COALESCE(
           SAFE_CAST(FECHA AS DATE),
@@ -1339,6 +1390,7 @@ async function getGob360OverviewFromMappedClaves(
       WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
         AND s.event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+        ${channelWhere}
     ),
     latest_ctx AS (
       SELECT
@@ -1372,6 +1424,7 @@ async function getGob360OverviewFromMappedClaves(
           AND EXTRACT(YEAR FROM s.event_date) = EXTRACT(YEAR FROM c.latest_date)
           AND EXTRACT(MONTH FROM s.event_date) <= EXTRACT(MONTH FROM c.latest_date)
           AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+          ${getGob360ChannelWhere(channelScope, 's')}
       ) AS clues_total_ytd,
       (
         SELECT COUNT(DISTINCT cm.clue)
@@ -1392,19 +1445,26 @@ async function getGob360OverviewFromMappedClaves(
   return ((rows as Array<Record<string, unknown>>)[0] ?? null) as Gob360OverviewRow | null;
 }
 
-async function getGob360AggRowsByClave(mappedClaves: string[], cutoffDate: string | null) {
+async function getGob360AggRowsByClave(
+  mappedClaves: string[],
+  cutoffDate: string | null,
+  channelScope: Gob360ChannelScope = 'all',
+) {
   if (mappedClaves.length === 0) return [];
   const gobClient = getGob360BigQueryClient(true);
-  const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
+  const { pcSalesTableId, scSalesTableId, pcStructureTableId, scStructureTableId } = getGob360TableRefs();
+  const channelWhere = getGob360ChannelWhere(channelScope, 's');
   const query = `
-    WITH source_raw AS (
-      SELECT 'pc' AS source_db, DB, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
+    WITH ${buildGob360PrivateClueCatalogCte(pcStructureTableId, scStructureTableId)},
+    source_raw AS (
+      SELECT 'pc' AS source_db, DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
       UNION ALL
-      SELECT 'sc' AS source_db, DB, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
+      SELECT 'sc' AS source_db, DB, CLUE, CLAVE, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
     ),
     source_clean AS (
       SELECT
         source_db,
+        LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key,
         LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
         COALESCE(
           SAFE_CAST(FECHA AS DATE),
@@ -1427,6 +1487,7 @@ async function getGob360AggRowsByClave(mappedClaves: string[], cutoffDate: strin
       WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
         AND s.event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+        ${channelWhere}
     ),
     ctx AS (
       SELECT
@@ -1459,12 +1520,18 @@ async function getGob360AggRowsByClave(mappedClaves: string[], cutoffDate: strin
   return rows as unknown as Gob360AggRow[];
 }
 
-async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: string | null) {
+async function getGob360RankingRowsByClave(
+  mappedClaves: string[],
+  cutoffDate: string | null,
+  channelScope: Gob360ChannelScope = 'all',
+) {
   if (mappedClaves.length === 0) return [];
   const gobClient = getGob360BigQueryClient(true);
-  const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
+  const { pcSalesTableId, scSalesTableId, pcStructureTableId, scStructureTableId } = getGob360TableRefs();
+  const channelWhere = getGob360ChannelWhere(channelScope, 's');
   const query = `
-    WITH source_raw AS (
+    WITH ${buildGob360PrivateClueCatalogCte(pcStructureTableId, scStructureTableId)},
+    source_raw AS (
       SELECT 'pc' AS source_db, DB, CLUE, CLAVE, RUTA, FECHA, FECHA_MOVIL, PIEZAS FROM \`${pcSalesTableId}\`
       UNION ALL
       SELECT 'sc' AS source_db, DB, CLUE, CLAVE, RUTA, FECHA, FECHA_MOVIL, PIEZAS FROM \`${scSalesTableId}\`
@@ -1473,6 +1540,7 @@ async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: s
       SELECT
         source_db,
         CAST(CLUE AS STRING) AS clue,
+        LOWER(REGEXP_REPLACE(TRIM(CAST(CLUE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS clue_key,
         COALESCE(NULLIF(TRIM(CAST(CLAVE AS STRING)), ''), 'NO CLAVE') AS source_clave_raw,
         LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
         CAST(RUTA AS STRING) AS ruta,
@@ -1500,6 +1568,7 @@ async function getGob360RankingRowsByClave(mappedClaves: string[], cutoffDate: s
       WHERE s.source_clave_normalized IN UNNEST(@mappedClaves)
         AND s.event_date IS NOT NULL
         AND (@cutoffDate IS NULL OR s.event_date <= DATE(@cutoffDate))
+        ${channelWhere}
     ),
     ctx AS (
       SELECT
@@ -1651,6 +1720,241 @@ async function getGovernmentBudgetAgg(
   }));
 }
 
+async function getGob360PrivateUnitSummary(cutoffDate: string | null, marketGroup?: string | null) {
+  if (!cutoffDate) {
+    return {
+      ytdUnits: 0,
+      ytdUnitsPy: 0,
+      mthUnits: 0,
+      mthUnitsPy: 0,
+    };
+  }
+
+  const mappingRows = await getGob360MappedClaves();
+  const normalizedMarketGroup = sanitizeFilter(marketGroup ?? undefined);
+  const filteredMappings = mappingRows.filter((row) => {
+    if (!normalizedMarketGroup) return true;
+    return (row.marketGroup ?? 'No Market') === normalizedMarketGroup;
+  });
+  const mappedClaves = filteredMappings.map((row) => row.sourceClaveNormalized);
+  if (mappedClaves.length === 0) {
+    return {
+      ytdUnits: 0,
+      ytdUnitsPy: 0,
+      mthUnits: 0,
+      mthUnitsPy: 0,
+    };
+  }
+
+  const mappingByClave = new Map(
+    filteredMappings.map((row) => [
+      row.sourceClaveNormalized,
+      Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+    ]),
+  );
+  const sourceRows = await getGob360AggRowsByClave(mappedClaves, cutoffDate, 'private');
+  const latestRef = parseYearMonthFromDateText(cutoffDate);
+  if (latestRef.year === null || latestRef.month === null) {
+    return {
+      ytdUnits: 0,
+      ytdUnitsPy: 0,
+      mthUnits: 0,
+      mthUnitsPy: 0,
+    };
+  }
+
+  const latestYear = latestRef.year;
+  const latestMonth = latestRef.month;
+  const pyYear = latestYear - 1;
+  const totals = {
+    ytdUnits: 0,
+    ytdUnitsPy: 0,
+    mthUnits: 0,
+    mthUnitsPy: 0,
+  };
+
+  for (const row of sourceRows) {
+    const eventRef = parseYearMonthFromDateText(String(row.event_date ?? ''));
+    if (eventRef.year === null || eventRef.month === null) continue;
+    const factor = mappingByClave.get(String(row.source_clave_normalized ?? '')) ?? 1;
+    const units = Number(row.pieces ?? 0) * factor;
+    if (eventRef.year === latestYear && eventRef.month <= latestMonth) totals.ytdUnits += units;
+    if (eventRef.year === pyYear && eventRef.month <= latestMonth) totals.ytdUnitsPy += units;
+    if (eventRef.year === latestYear && eventRef.month === latestMonth) totals.mthUnits += units;
+    if (eventRef.year === pyYear && eventRef.month === latestMonth) totals.mthUnitsPy += units;
+  }
+
+  return totals;
+}
+
+async function getGob360PrivateMartRows(
+  reportingVersionId: string,
+  cutoffDate: string | null,
+  marketGroup?: string | null,
+): Promise<BusinessExcellencePrivateSellOutMartRow[]> {
+  if (!cutoffDate) return [];
+
+  const [mappingRows, brandMap] = await Promise.all([
+    getGob360MappedClaves(),
+    getProductMetadataBrandMap(),
+  ]);
+  const normalizedMarketGroup = sanitizeFilter(marketGroup ?? undefined);
+  const filteredMappings = mappingRows.filter((row) => {
+    if (!normalizedMarketGroup) return true;
+    return (row.marketGroup ?? 'No Market') === normalizedMarketGroup;
+  });
+  if (filteredMappings.length === 0) return [];
+
+  const mappingByClave = new Map(
+    filteredMappings.map((row) => [
+      row.sourceClaveNormalized,
+      {
+        productId: row.productId,
+        marketGroup: row.marketGroup?.trim() || 'No Market',
+        brandName: row.productId ? (brandMap.get(row.productId) ?? 'Unmapped Brand') : null,
+        estimatedUnitPrice: getGob360PrivateEstimatedUnitPrice(
+          row.productId,
+          row.productId ? (brandMap.get(row.productId) ?? null) : null,
+        ),
+        unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+      },
+    ]),
+  );
+  const sourceRows = await getGob360AggRowsByClave(
+    filteredMappings.map((row) => row.sourceClaveNormalized),
+    cutoffDate,
+    'private',
+  );
+  if (sourceRows.length === 0) return [];
+
+  const latestRef = parseYearMonthFromDateText(cutoffDate);
+  if (latestRef.year === null || latestRef.month === null) return [];
+  const latestYear = latestRef.year;
+  const latestMonth = latestRef.month;
+  const pyYear = latestYear - 1;
+  const aggregate = new Map<string, {
+    marketGroup: string;
+    brandName: string;
+    ytdUnits: number;
+    ytdUnitsPy: number;
+    mthUnits: number;
+    mthUnitsPy: number;
+    ytdNetSales: number;
+    mthNetSales: number;
+  }>();
+  const marketTotals = new Map<string, {
+    ytdUnits: number;
+    ytdUnitsPy: number;
+    mthUnits: number;
+    mthUnitsPy: number;
+  }>();
+
+  for (const row of sourceRows) {
+    const mapping = mappingByClave.get(String(row.source_clave_normalized ?? ''));
+    if (!mapping) continue;
+    const eventRef = parseYearMonthFromDateText(String(row.event_date ?? ''));
+    if (eventRef.year === null || eventRef.month === null) continue;
+    const units = Number(row.pieces ?? 0) * mapping.unitsFactor;
+    const marketCurrent = marketTotals.get(mapping.marketGroup) ?? {
+      ytdUnits: 0,
+      ytdUnitsPy: 0,
+      mthUnits: 0,
+      mthUnitsPy: 0,
+    };
+    if (eventRef.year === latestYear && eventRef.month <= latestMonth) marketCurrent.ytdUnits += units;
+    if (eventRef.year === pyYear && eventRef.month <= latestMonth) marketCurrent.ytdUnitsPy += units;
+    if (eventRef.year === latestYear && eventRef.month === latestMonth) marketCurrent.mthUnits += units;
+    if (eventRef.year === pyYear && eventRef.month === latestMonth) marketCurrent.mthUnitsPy += units;
+    marketTotals.set(mapping.marketGroup, marketCurrent);
+
+    if (!mapping.productId || !mapping.brandName) continue;
+    const key = `${mapping.marketGroup}|||${mapping.brandName}`;
+    const netSales = mapping.estimatedUnitPrice == null ? 0 : units * mapping.estimatedUnitPrice;
+    const current = aggregate.get(key) ?? {
+      marketGroup: mapping.marketGroup,
+      brandName: mapping.brandName,
+      ytdUnits: 0,
+      ytdUnitsPy: 0,
+      mthUnits: 0,
+      mthUnitsPy: 0,
+      ytdNetSales: 0,
+      mthNetSales: 0,
+    };
+    if (eventRef.year === latestYear && eventRef.month <= latestMonth) {
+      current.ytdUnits += units;
+      current.ytdNetSales += netSales;
+    }
+    if (eventRef.year === pyYear && eventRef.month <= latestMonth) current.ytdUnitsPy += units;
+    if (eventRef.year === latestYear && eventRef.month === latestMonth) {
+      current.mthUnits += units;
+      current.mthNetSales += netSales;
+    }
+    if (eventRef.year === pyYear && eventRef.month === latestMonth) current.mthUnitsPy += units;
+    aggregate.set(key, current);
+  }
+
+  return [...aggregate.values()]
+    .filter((row) => row.ytdUnits !== 0 || row.ytdUnitsPy !== 0 || row.mthUnits !== 0 || row.mthUnitsPy !== 0)
+    .map((row) => {
+      const totals = marketTotals.get(row.marketGroup) ?? {
+        ytdUnits: row.ytdUnits,
+        ytdUnitsPy: row.ytdUnitsPy,
+        mthUnits: row.mthUnits,
+        mthUnitsPy: row.mthUnitsPy,
+      };
+      const msYtdUnitsPct = totals.ytdUnits > 0 ? row.ytdUnits / totals.ytdUnits : null;
+      const msYtdUnitsPctPy = totals.ytdUnitsPy > 0 ? row.ytdUnitsPy / totals.ytdUnitsPy : null;
+      const msMthUnitsPct = totals.mthUnits > 0 ? row.mthUnits / totals.mthUnits : null;
+      const msMthUnitsPctPy = totals.mthUnitsPy > 0 ? row.mthUnitsPy / totals.mthUnitsPy : null;
+      return {
+        reportingVersionId,
+        marketGroup: row.marketGroup,
+        brandName: row.brandName,
+        lastAvailableMonth: cutoffDate,
+        ytdUnits: row.ytdUnits,
+        ytdUnitsPy: row.ytdUnitsPy,
+        growthVsPyYtdUnitsPct: row.ytdUnitsPy > 0 ? (row.ytdUnits - row.ytdUnitsPy) / row.ytdUnitsPy : null,
+        msYtdUnitsPct,
+        eiYtdUnits:
+          msYtdUnitsPct !== null && msYtdUnitsPctPy !== null && msYtdUnitsPctPy > 0
+            ? (msYtdUnitsPct / msYtdUnitsPctPy) * 100
+            : null,
+        mthUnits: row.mthUnits,
+        mthUnitsPy: row.mthUnitsPy,
+        growthVsPyMthUnitsPct: row.mthUnitsPy > 0 ? (row.mthUnits - row.mthUnitsPy) / row.mthUnitsPy : null,
+        msMthUnitsPct,
+        eiMthUnits:
+          msMthUnitsPct !== null && msMthUnitsPctPy !== null && msMthUnitsPctPy > 0
+            ? (msMthUnitsPct / msMthUnitsPctPy) * 100
+            : null,
+        ytdNetSales: row.ytdNetSales,
+        mthNetSales: row.mthNetSales,
+        ytdRx: 0,
+        mthRx: 0,
+        growthVsPyYtdRxPct: null,
+        growthVsPyMthRxPct: null,
+        ytdRxByMg: 0,
+        mthRxByMg: 0,
+        ytdRxByNeumo: 0,
+        mthRxByNeumo: 0,
+        budgetYtdUnits: 0,
+        budgetMthUnits: 0,
+        ytdUnitsVisitedRatio: null,
+        mthUnitsVisitedRatio: null,
+        ytdRxVisitedRatio: null,
+        mthRxVisitedRatio: null,
+        ytdRxMgRatio: null,
+        mthRxMgRatio: null,
+        ytdRxNeumoRatio: null,
+        mthRxNeumoRatio: null,
+        varianceVsBudgetYtdUnitsPct: null,
+        varianceVsBudgetYtdNetSalesPct: null,
+        varianceVsBudgetMthUnitsPct: null,
+        varianceVsBudgetMthNetSalesPct: null,
+      };
+    });
+}
+
 export async function getBusinessExcellencePublicMarketOverview(
   reportingVersionId?: string,
 ): Promise<BusinessExcellencePublicMarketOverview | null> {
@@ -1668,9 +1972,9 @@ export async function getBusinessExcellencePublicMarketOverview(
       { unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1) },
     ]),
   );
-  const row = await getGob360OverviewFromMappedClaves(mappedClaves, context.cutoffDate);
+  const row = await getGob360OverviewFromMappedClaves(mappedClaves, context.cutoffDate, 'public');
   if (!row) return null;
-  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate);
+  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate, 'public');
   if (sourceRows.length === 0) return null;
 
   const latestRef = parseYearMonthFromDateText(row.latest_date ? String(row.latest_date) : null);
@@ -1746,7 +2050,7 @@ export async function getBusinessExcellencePublicMarketTopProducts(
     ]),
   );
   const mappedClaves = mappingRows.map((row) => row.sourceClaveNormalized);
-  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate);
+  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate, 'public');
   if (sourceRows.length === 0) return [];
 
   const latestRef = parseYearMonthFromDateText(sourceRows[0]?.latest_date ?? null);
@@ -1906,7 +2210,7 @@ export async function getBusinessExcellencePublicMarketChartPoints(
     ]),
   );
   const mappedClaves = mappingRows.map((row) => row.sourceClaveNormalized);
-  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate);
+  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate, 'public');
   if (sourceRows.length === 0) return [];
 
   const agg = new Map<string, number>();
@@ -1964,7 +2268,7 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
     ]),
   );
   const mappedClaves = mappingRows.map((row) => row.sourceClaveNormalized);
-  const sourceRows = await getGob360RankingRowsByClave(mappedClaves, context.cutoffDate);
+  const sourceRows = await getGob360RankingRowsByClave(mappedClaves, context.cutoffDate, 'public');
   if (sourceRows.length === 0) return [];
 
   const latestRef = parseYearMonthFromDateText(sourceRows[0]?.latest_date ?? null);
@@ -2233,7 +2537,7 @@ async function getPublicBusinessUnitUnits(reportingVersionId?: string) {
     .map((row) => row.sourceClaveNormalized);
   if (mappedClaves.length === 0) return [];
 
-  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate);
+  const sourceRows = await getGob360AggRowsByClave(mappedClaves, context.cutoffDate, 'public');
   if (sourceRows.length === 0) return [];
 
   const latestRef = parseYearMonthFromDateText(sourceRows[0]?.latest_date ?? null);
@@ -2490,6 +2794,7 @@ function fieldForceRawCtes() {
         NULLIF(TRIM(m.territory), '') AS territory_name,
         UPPER(COALESCE(NULLIF(TRIM(m.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(m.territory, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
         COALESCE(NULLIF(TRIM(m.potencial), ''), 'N/A') AS potencial,
+        COALESCE(NULLIF(TRIM(m.specialty_consolidated), ''), 'N/A') AS specialty_consolidated,
         NULLIF(TRIM(m.full_name), '') AS client_name,
         UPPER(REGEXP_REPLACE(TRIM(COALESCE(NULLIF(m.onekey_id, ''), NULLIF(m.ims_id, ''))), r'[^a-zA-Z0-9]+', '')) AS doctor_key,
         UPPER(REGEXP_REPLACE(TRIM(COALESCE(m.onekey_id, '')), r'[^a-zA-Z0-9]+', '')) AS onekey_key,
@@ -2502,6 +2807,11 @@ function fieldForceRawCtes() {
         AND LOWER(TRIM(m.bu)) IN ('air', 'care')
         AND SAFE_CAST(m.objetivo AS NUMERIC) > 0
         AND COALESCE(NULLIF(TRIM(m.onekey_id), ''), NULLIF(TRIM(m.ims_id), '')) IS NOT NULL
+        AND JSON_VALUE(m.source_payload_json, '$."Account Type"') IN (
+          'MP (Medical Professional)_BR',
+          'MP (Medical Professional) MX',
+          'Private Practice MX'
+        )
     ),
     doctor_month AS (
       SELECT
@@ -2511,6 +2821,7 @@ function fieldForceRawCtes() {
         territory_name,
         territory_normalized,
         potencial,
+        specialty_consolidated,
         COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
         doctor_key,
         ANY_VALUE(onekey_key) AS onekey_key,
@@ -2518,7 +2829,7 @@ function fieldForceRawCtes() {
         MAX(objetivo) AS objetivo
       FROM medical_base
       WHERE doctor_key != ''
-      GROUP BY 1, 2, 3, 4, 5, 6, 8
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 9
     ),
     tft_month AS (
       SELECT
@@ -2545,6 +2856,7 @@ function fieldForceRawCtes() {
       SELECT
         i.interaction_period_month AS event_month,
         UPPER(REGEXP_REPLACE(TRIM(COALESCE(i.onekey_id, '')), r'[^a-zA-Z0-9]+', '')) AS interaction_key,
+        UPPER(COALESCE(NULLIF(TRIM(i.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(i.territory, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
         COALESCE(NULLIF(TRIM(i.channel), ''), 'Unknown') AS channel,
         COALESCE(NULLIF(TRIM(i.visit_type), ''), 'Unknown') AS visit_type,
         COALESCE(NULLIF(TRIM(i.interaction_id), ''), CONCAT('row:', CAST(i.row_number AS STRING))) AS interaction_id
@@ -2570,6 +2882,7 @@ function fieldForceRawCtes() {
         dm.territory_name,
         dm.territory_normalized,
         dm.potencial,
+        dm.specialty_consolidated,
         dm.client_name,
         dm.doctor_key,
         ib.channel,
@@ -2578,6 +2891,7 @@ function fieldForceRawCtes() {
       FROM interactions_base ib
       JOIN doctor_month_adjusted dm
         ON dm.period_month = ib.event_month
+       AND dm.territory_normalized = ib.territory_normalized
        AND ib.interaction_key IN (dm.onekey_key, dm.ims_key)
     ),
     interaction_counts_month AS (
@@ -2607,13 +2921,14 @@ function fieldForceRawCtes() {
         territory_name,
         territory_normalized,
         potencial,
+        specialty_consolidated,
         client_name,
         doctor_key,
         SUM(objetivo) AS objetivo,
         SUM(objetivo_ajustado) AS objetivo_ajustado,
         SUM(interacciones) AS interacciones
       FROM doctor_month_metrics
-      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
       UNION ALL
       SELECT
         'MTH' AS period_scope,
@@ -2622,6 +2937,7 @@ function fieldForceRawCtes() {
         territory_name,
         territory_normalized,
         potencial,
+        specialty_consolidated,
         client_name,
         doctor_key,
         SUM(objetivo) AS objetivo,
@@ -2629,7 +2945,7 @@ function fieldForceRawCtes() {
         SUM(interacciones) AS interacciones
       FROM doctor_month_metrics
       WHERE period_month = (SELECT report_period_month FROM reporting_context)
-      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
     ),
     period_scoped_territories AS (
       SELECT DISTINCT 'YTD' AS period_scope, bu, period_month, territory_normalized FROM doctor_month_metrics
@@ -2648,6 +2964,217 @@ function fieldForceRawCtes() {
         ON tm.period_month = pst.period_month
        AND tm.territory_normalized = pst.territory_normalized
       GROUP BY 1, 2
+    ),
+    effective_days_scoped AS (
+      SELECT
+        pst.period_scope,
+        pst.bu,
+        pst.territory_normalized,
+        20 * COUNT(DISTINCT pst.period_month) AS working_days,
+        SUM(COALESCE(tm.tft_days, 0)) AS tft_days,
+        GREATEST(0, 20 * COUNT(DISTINCT pst.period_month) - SUM(COALESCE(tm.tft_days, 0))) AS effective_days,
+        SAFE_DIVIDE(
+          GREATEST(0, 20 * COUNT(DISTINCT pst.period_month) - SUM(COALESCE(tm.tft_days, 0))),
+          NULLIF(20 * COUNT(DISTINCT pst.period_month), 0)
+        ) AS coverage_effective
+      FROM period_scoped_territories pst
+      LEFT JOIN tft_month tm
+        ON tm.period_month = pst.period_month
+       AND tm.territory_normalized = pst.territory_normalized
+      GROUP BY 1, 2, 3
+    ),
+    period_scoped_doctors_enriched AS (
+      SELECT
+        psd.*,
+        COALESCE(ed.working_days, 0) AS working_days,
+        COALESCE(ed.effective_days, 0) AS effective_days,
+        COALESCE(ed.coverage_effective, 1) AS coverage_effective,
+        psd.objetivo * COALESCE(ed.coverage_effective, 1) AS objetivo_ajustado_scoped,
+        psd.interacciones >= psd.objetivo AS in_frequency,
+        psd.interacciones >= (psd.objetivo * COALESCE(ed.coverage_effective, 1)) AS in_frequency_adjusted
+      FROM period_scoped_doctors psd
+      LEFT JOIN effective_days_scoped ed
+        ON ed.period_scope = psd.period_scope
+       AND ed.bu = psd.bu
+       AND ed.territory_normalized = psd.territory_normalized
+    )
+  `;
+}
+
+function fieldForceServingCtes() {
+  return `
+    reporting_context AS (
+      SELECT
+        DATE(@reportPeriodMonth) AS report_period_month,
+        DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AS ytd_start_month
+    ),
+    hcp_month AS (
+      SELECT
+        reporting_version_id,
+        period_month,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        client_name,
+        doctor_key,
+        objective AS objetivo,
+        adjusted_objective AS objetivo_ajustado,
+        interactions AS interacciones,
+        days_standard AS working_days,
+        days_adjusted AS effective_days,
+        coverage_effective,
+        adjusted_objective AS objetivo_ajustado_scoped,
+        in_frequency,
+        in_frequency_adjusted,
+        days_out AS tft_days
+      FROM \`${FIELD_FORCE_SERVING_HCP_MONTH}\`
+      JOIN reporting_context rc ON TRUE
+      WHERE reporting_version_id = @reportingVersionId
+        AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+    ),
+    period_scoped_doctors_enriched AS (
+      SELECT
+        'YTD' AS period_scope,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
+        doctor_key,
+        SUM(objetivo) AS objetivo,
+        SUM(objetivo_ajustado) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones,
+        SUM(working_days) AS working_days,
+        SUM(effective_days) AS effective_days,
+        SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS coverage_effective,
+        SUM(objetivo) * SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS objetivo_ajustado_scoped,
+        SUM(interacciones) >= SUM(objetivo) AS in_frequency,
+        SUM(interacciones) >= SUM(objetivo) * SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS in_frequency_adjusted
+      FROM hcp_month
+      GROUP BY 1,2,3,4,5,6,7,9
+      UNION ALL
+      SELECT
+        'MTH' AS period_scope,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
+        doctor_key,
+        SUM(objetivo) AS objetivo,
+        SUM(objetivo_ajustado) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones,
+        SUM(working_days) AS working_days,
+        SUM(effective_days) AS effective_days,
+        SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS coverage_effective,
+        SUM(objetivo) * SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS objetivo_ajustado_scoped,
+        SUM(interacciones) >= SUM(objetivo) AS in_frequency,
+        SUM(interacciones) >= SUM(objetivo) * SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS in_frequency_adjusted
+      FROM hcp_month
+      WHERE period_month = (SELECT report_period_month FROM reporting_context)
+      GROUP BY 1,2,3,4,5,6,7,9
+    ),
+    period_scoped_territory_days AS (
+      SELECT
+        period_scope,
+        bu,
+        territory_normalized,
+        SUM(working_days) AS working_days,
+        SUM(effective_days) AS effective_days,
+        SUM(tft_days) AS tft_days
+      FROM (
+        SELECT DISTINCT
+          'YTD' AS period_scope,
+          bu,
+          period_month,
+          territory_normalized,
+          working_days,
+          effective_days,
+          tft_days
+        FROM hcp_month
+        UNION ALL
+        SELECT DISTINCT
+          'MTH' AS period_scope,
+          bu,
+          period_month,
+          territory_normalized,
+          working_days,
+          effective_days,
+          tft_days
+        FROM hcp_month
+        WHERE period_month = (SELECT report_period_month FROM reporting_context)
+      )
+      GROUP BY 1,2,3
+    ),
+    period_scoped_bu_days AS (
+      SELECT
+        period_scope,
+        bu,
+        SUM(working_days) AS working_days,
+        SUM(effective_days) AS effective_days,
+        SUM(tft_days) AS tft_days
+      FROM period_scoped_territory_days
+      GROUP BY 1,2
+      UNION ALL
+      SELECT
+        period_scope,
+        'total' AS bu,
+        SUM(working_days) AS working_days,
+        SUM(effective_days) AS effective_days,
+        SUM(tft_days) AS tft_days
+      FROM period_scoped_territory_days
+      GROUP BY 1,2
+    ),
+    interactions_matched AS (
+      SELECT
+        period_month,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        client_name,
+        doctor_key,
+        channel,
+        visit_type,
+        interactions
+      FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\`
+      JOIN reporting_context rc ON TRUE
+      WHERE reporting_version_id = @reportingVersionId
+        AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+    ),
+    tft_scoped AS (
+      SELECT
+        period_scope,
+        bu,
+        SUM(tft_days) AS tft_days
+      FROM (
+        SELECT DISTINCT
+          'YTD' AS period_scope,
+          bu,
+          period_month,
+          territory_normalized,
+          tft_days
+        FROM hcp_month
+        UNION DISTINCT
+        SELECT DISTINCT
+          'MTH' AS period_scope,
+          bu,
+          period_month,
+          territory_normalized,
+          tft_days
+        FROM hcp_month
+        WHERE period_month = (SELECT report_period_month FROM reporting_context)
+      )
+      GROUP BY 1,2
     )
   `;
 }
@@ -2685,26 +3212,26 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         )
       GROUP BY 1
     ),
-    ${fieldForceRawCtes()},
+    ${fieldForceServingCtes()},
     status_counts AS (
       SELECT
         period_scope,
         bu,
         COUNTIF(interacciones = 0) AS no_visitados,
-        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) < 0.8) AS subvisitados,
-        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) BETWEEN 0.8 AND 1.2) AS en_objetivo,
-        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) > 1.2) AS sobrevisitados
-      FROM period_scoped_doctors
+        COUNTIF(interacciones > 0 AND NOT in_frequency) AS subvisitados,
+        COUNTIF(in_frequency) AS en_objetivo,
+        COUNTIF(interacciones > objetivo) AS sobrevisitados
+      FROM period_scoped_doctors_enriched
       GROUP BY 1, 2
       UNION ALL
       SELECT
         period_scope,
         'total' AS bu,
         COUNTIF(interacciones = 0) AS no_visitados,
-        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) < 0.8) AS subvisitados,
-        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) BETWEEN 0.8 AND 1.2) AS en_objetivo,
-        COUNTIF(interacciones > 0 AND SAFE_DIVIDE(interacciones, objetivo) > 1.2) AS sobrevisitados
-      FROM period_scoped_doctors
+        COUNTIF(interacciones > 0 AND NOT in_frequency) AS subvisitados,
+        COUNTIF(in_frequency) AS en_objetivo,
+        COUNTIF(interacciones > objetivo) AS sobrevisitados
+      FROM period_scoped_doctors_enriched
       GROUP BY 1, 2
     ),
     bu_summary AS (
@@ -2714,19 +3241,28 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         COUNT(DISTINCT psd.territory_normalized) AS total_territorios,
         COUNT(DISTINCT psd.doctor_key) AS clientes,
         SUM(psd.objetivo) AS objetivo,
-        SUM(psd.objetivo_ajustado) AS objetivo_ajustado,
+        SUM(psd.objetivo_ajustado_scoped) AS objetivo_ajustado,
         SUM(psd.interacciones) AS interacciones,
-        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo), 0)) AS cobertura,
-        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo_ajustado), 0)) AS cobertura_ajustada,
-        COALESCE(MAX(t.tft_days), 0) AS dias_fuera,
+        COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)) AS clientes_con_interaccion,
+        COUNT(DISTINCT IF(psd.in_frequency, psd.doctor_key, NULL)) AS clientes_en_frecuencia,
+        COUNT(DISTINCT IF(psd.in_frequency_adjusted, psd.doctor_key, NULL)) AS clientes_en_frecuencia_ajustada,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura_ajustada,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.in_frequency, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS frecuencia,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.in_frequency_adjusted, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS frecuencia_ajustada,
+        COALESCE(MAX(d.working_days), 0) AS working_days,
+        COALESCE(MAX(d.effective_days), 0) AS effective_days,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(COALESCE(MAX(d.working_days), 0), 0)) AS cpd,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(COALESCE(MAX(d.effective_days), 0), 0)) AS cpd_adjusted,
+        COALESCE(MAX(d.tft_days), 0) AS dias_fuera,
         COALESCE(MAX(sc.no_visitados), 0) AS no_visitados,
         COALESCE(MAX(sc.subvisitados), 0) AS subvisitados,
         COALESCE(MAX(sc.en_objetivo), 0) AS en_objetivo,
         COALESCE(MAX(sc.sobrevisitados), 0) AS sobrevisitados
-      FROM period_scoped_doctors psd
-      LEFT JOIN tft_scoped t
-        ON t.period_scope = psd.period_scope
-       AND t.bu = psd.bu
+      FROM period_scoped_doctors_enriched psd
+      LEFT JOIN period_scoped_bu_days d
+        ON d.period_scope = psd.period_scope
+       AND d.bu = psd.bu
       LEFT JOIN status_counts sc
         ON sc.period_scope = psd.period_scope
        AND sc.bu = psd.bu
@@ -2738,19 +3274,28 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         COUNT(DISTINCT psd.territory_normalized) AS total_territorios,
         COUNT(DISTINCT psd.doctor_key) AS clientes,
         SUM(psd.objetivo) AS objetivo,
-        SUM(psd.objetivo_ajustado) AS objetivo_ajustado,
+        SUM(psd.objetivo_ajustado_scoped) AS objetivo_ajustado,
         SUM(psd.interacciones) AS interacciones,
-        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo), 0)) AS cobertura,
-        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo_ajustado), 0)) AS cobertura_ajustada,
-        COALESCE(SUM(DISTINCT t.tft_days), 0) AS dias_fuera,
+        COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)) AS clientes_con_interaccion,
+        COUNT(DISTINCT IF(psd.in_frequency, psd.doctor_key, NULL)) AS clientes_en_frecuencia,
+        COUNT(DISTINCT IF(psd.in_frequency_adjusted, psd.doctor_key, NULL)) AS clientes_en_frecuencia_ajustada,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura_ajustada,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.in_frequency, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS frecuencia,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.in_frequency_adjusted, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS frecuencia_ajustada,
+        COALESCE(MAX(d.working_days), 0) AS working_days,
+        COALESCE(MAX(d.effective_days), 0) AS effective_days,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(COALESCE(MAX(d.working_days), 0), 0)) AS cpd,
+        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(COALESCE(MAX(d.effective_days), 0), 0)) AS cpd_adjusted,
+        COALESCE(MAX(d.tft_days), 0) AS dias_fuera,
         COALESCE(MAX(sc.no_visitados), 0) AS no_visitados,
         COALESCE(MAX(sc.subvisitados), 0) AS subvisitados,
         COALESCE(MAX(sc.en_objetivo), 0) AS en_objetivo,
         COALESCE(MAX(sc.sobrevisitados), 0) AS sobrevisitados
-      FROM period_scoped_doctors psd
-      LEFT JOIN tft_scoped t
-        ON t.period_scope = psd.period_scope
-       AND t.bu = psd.bu
+      FROM period_scoped_doctors_enriched psd
+      LEFT JOIN period_scoped_bu_days d
+        ON d.period_scope = psd.period_scope
+       AND d.bu = 'total'
       LEFT JOIN status_counts sc
         ON sc.period_scope = psd.period_scope
        AND sc.bu = 'total'
@@ -2773,8 +3318,24 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         MAX(IF(period_scope = 'MTH', cobertura, NULL)) AS coverage_mth_ratio,
         MAX(IF(period_scope = 'YTD', cobertura_ajustada, NULL)) AS coverage_adjusted_ytd_ratio,
         MAX(IF(period_scope = 'MTH', cobertura_ajustada, NULL)) AS coverage_adjusted_mth_ratio,
+        MAX(IF(period_scope = 'YTD', frecuencia, NULL)) AS in_frequency_ytd_ratio,
+        MAX(IF(period_scope = 'MTH', frecuencia, NULL)) AS in_frequency_mth_ratio,
+        MAX(IF(period_scope = 'YTD', frecuencia_ajustada, NULL)) AS in_frequency_adjusted_ytd_ratio,
+        MAX(IF(period_scope = 'MTH', frecuencia_ajustada, NULL)) AS in_frequency_adjusted_mth_ratio,
+        MAX(IF(period_scope = 'YTD', clientes_en_frecuencia, NULL)) AS in_frequency_clients_ytd,
+        MAX(IF(period_scope = 'MTH', clientes_en_frecuencia, NULL)) AS in_frequency_clients_mth,
+        MAX(IF(period_scope = 'YTD', clientes_en_frecuencia_ajustada, NULL)) AS in_frequency_clients_adjusted_ytd,
+        MAX(IF(period_scope = 'MTH', clientes_en_frecuencia_ajustada, NULL)) AS in_frequency_clients_adjusted_mth,
         MAX(IF(period_scope = 'YTD', dias_fuera, NULL)) AS tft_days_ytd,
         MAX(IF(period_scope = 'MTH', dias_fuera, NULL)) AS tft_days_mth,
+        MAX(IF(period_scope = 'YTD', working_days, NULL)) AS working_days_ytd,
+        MAX(IF(period_scope = 'MTH', working_days, NULL)) AS working_days_mth,
+        MAX(IF(period_scope = 'YTD', effective_days, NULL)) AS effective_days_ytd,
+        MAX(IF(period_scope = 'MTH', effective_days, NULL)) AS effective_days_mth,
+        MAX(IF(period_scope = 'YTD', cpd, NULL)) AS cpd_ytd,
+        MAX(IF(period_scope = 'MTH', cpd, NULL)) AS cpd_mth,
+        MAX(IF(period_scope = 'YTD', cpd_adjusted, NULL)) AS cpd_adjusted_ytd,
+        MAX(IF(period_scope = 'MTH', cpd_adjusted, NULL)) AS cpd_adjusted_mth,
         MAX(IF(period_scope = 'YTD', no_visitados, NULL)) AS no_visitados_ytd,
         MAX(IF(period_scope = 'MTH', no_visitados, NULL)) AS no_visitados_mth,
         MAX(IF(period_scope = 'YTD', subvisitados, NULL)) AS subvisitados_ytd,
@@ -2826,8 +3387,24 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
       r.coverage_mth_ratio,
       r.coverage_adjusted_ytd_ratio,
       r.coverage_adjusted_mth_ratio,
+      r.in_frequency_ytd_ratio,
+      r.in_frequency_mth_ratio,
+      r.in_frequency_adjusted_ytd_ratio,
+      r.in_frequency_adjusted_mth_ratio,
+      r.in_frequency_clients_ytd,
+      r.in_frequency_clients_mth,
+      r.in_frequency_clients_adjusted_ytd,
+      r.in_frequency_clients_adjusted_mth,
       r.tft_days_ytd,
       r.tft_days_mth,
+      r.working_days_ytd,
+      r.working_days_mth,
+      r.effective_days_ytd,
+      r.effective_days_mth,
+      r.cpd_ytd,
+      r.cpd_mth,
+      r.cpd_adjusted_ytd,
+      r.cpd_adjusted_mth,
       r.no_visitados_ytd,
       r.no_visitados_mth,
       r.subvisitados_ytd,
@@ -2840,7 +3417,7 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
   `;
 
   const summaryRowsQuery = `
-    WITH ${fieldForceRawCtes()},
+    WITH ${fieldForceServingCtes()},
     scoped AS (
       SELECT
         period_scope,
@@ -2851,9 +3428,14 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         territory_normalized,
         COUNT(DISTINCT doctor_key) AS clientes,
         SUM(objetivo) AS objetivo,
-        SUM(objetivo_ajustado) AS objetivo_ajustado,
-        SUM(interacciones) AS interacciones
-      FROM period_scoped_doctors
+        SUM(objetivo_ajustado_scoped) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones,
+        COUNT(DISTINCT IF(interacciones > 0, doctor_key, NULL)) AS clientes_con_interaccion,
+        COUNT(DISTINCT IF(in_frequency, doctor_key, NULL)) AS clientes_en_frecuencia,
+        COUNT(DISTINCT IF(in_frequency_adjusted, doctor_key, NULL)) AS clientes_en_frecuencia_ajustada,
+        CAST(NULL AS NUMERIC) AS working_days,
+        CAST(NULL AS NUMERIC) AS effective_days
+      FROM period_scoped_doctors_enriched
       GROUP BY 1, 2, 3, 4, 5, 6
       UNION ALL
       SELECT
@@ -2865,10 +3447,54 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         CAST(NULL AS STRING) AS territory_normalized,
         COUNT(DISTINCT doctor_key) AS clientes,
         SUM(objetivo) AS objetivo,
-        SUM(objetivo_ajustado) AS objetivo_ajustado,
-        SUM(interacciones) AS interacciones
-      FROM period_scoped_doctors
+        SUM(objetivo_ajustado_scoped) AS objetivo_ajustado,
+        SUM(interacciones) AS interacciones,
+        COUNT(DISTINCT IF(interacciones > 0, doctor_key, NULL)) AS clientes_con_interaccion,
+        COUNT(DISTINCT IF(in_frequency, doctor_key, NULL)) AS clientes_en_frecuencia,
+        COUNT(DISTINCT IF(in_frequency_adjusted, doctor_key, NULL)) AS clientes_en_frecuencia_ajustada,
+        CAST(NULL AS NUMERIC) AS working_days,
+        CAST(NULL AS NUMERIC) AS effective_days
+      FROM period_scoped_doctors_enriched
       GROUP BY 1, 2, 3, 4, 5, 6
+    ),
+    scoped_with_days AS (
+      SELECT
+        s.* EXCEPT(working_days, effective_days),
+        COALESCE(SUM(d.working_days), 0) AS working_days,
+        COALESCE(SUM(d.effective_days), 0) AS effective_days,
+        COALESCE(SUM(d.tft_days), 0) AS dias_fuera
+      FROM scoped s
+      LEFT JOIN period_scoped_territory_days d
+        ON d.period_scope = s.period_scope
+       AND d.bu = s.bu
+       AND (
+         (s.aggregation_level = 'territory' AND d.territory_normalized = s.territory_normalized)
+         OR (s.aggregation_level = 'district')
+       )
+      LEFT JOIN (
+        SELECT DISTINCT period_scope, bu, district, territory_normalized
+        FROM period_scoped_doctors_enriched
+      ) territory_district
+        ON territory_district.period_scope = s.period_scope
+       AND territory_district.bu = s.bu
+       AND COALESCE(NULLIF(territory_district.district, ''), 'N/A') = s.district
+       AND territory_district.territory_normalized = d.territory_normalized
+      WHERE s.aggregation_level = 'territory'
+        OR territory_district.territory_normalized IS NOT NULL
+      GROUP BY
+        s.period_scope,
+        s.aggregation_level,
+        s.bu,
+        s.district,
+        s.territory_name,
+        s.territory_normalized,
+        s.clientes,
+        s.objetivo,
+        s.objetivo_ajustado,
+        s.interacciones,
+        s.clientes_con_interaccion,
+        s.clientes_en_frecuencia,
+        s.clientes_en_frecuencia_ajustada
     )
     SELECT
       period_scope,
@@ -2881,83 +3507,50 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
       objetivo,
       objetivo_ajustado,
       interacciones,
-      SAFE_DIVIDE(interacciones, NULLIF(objetivo, 0)) AS cobertura,
-      SAFE_DIVIDE(interacciones, NULLIF(objetivo_ajustado, 0)) AS cobertura_ajustada,
-      0 AS dias_fuera,
+      SAFE_DIVIDE(clientes_con_interaccion, NULLIF(clientes, 0)) AS cobertura,
+      SAFE_DIVIDE(clientes_con_interaccion, NULLIF(clientes, 0)) AS cobertura_ajustada,
+      clientes_en_frecuencia,
+      clientes_en_frecuencia_ajustada,
+      SAFE_DIVIDE(clientes_en_frecuencia, NULLIF(clientes, 0)) AS frecuencia,
+      SAFE_DIVIDE(clientes_en_frecuencia_ajustada, NULLIF(clientes, 0)) AS frecuencia_ajustada,
+      working_days,
+      effective_days,
+      SAFE_DIVIDE(interacciones, NULLIF(working_days, 0)) AS cpd,
+      SAFE_DIVIDE(interacciones, NULLIF(effective_days, 0)) AS cpd_adjusted,
+      dias_fuera,
       NULL AS indice_evolucion_bu
-    FROM scoped
-  `;
-
-  const doctorDetailRowsQuery = `
-    WITH ${fieldForceRawCtes()},
-    doctor_status AS (
-      SELECT
-        period_scope,
-        bu,
-        district,
-        territory_name,
-        territory_normalized,
-        COALESCE(NULLIF(TRIM(potencial), ''), 'N/A') AS potencial,
-        client_name,
-        doctor_key AS doctor_id,
-        objetivo,
-        objetivo_ajustado,
-        interacciones,
-        SAFE_DIVIDE(interacciones, NULLIF(objetivo, 0)) AS cobertura,
-        SAFE_DIVIDE(interacciones, NULLIF(objetivo_ajustado, 0)) AS cobertura_ajustada,
-        CASE
-          WHEN interacciones = 0 THEN 'no_visitado'
-          WHEN SAFE_DIVIDE(interacciones, objetivo) < 0.8 THEN 'subvisitado'
-          WHEN SAFE_DIVIDE(interacciones, objetivo) <= 1.2 THEN 'en_objetivo'
-          ELSE 'sobrevisitado'
-        END AS status_visita
-      FROM period_scoped_doctors
-    )
-    SELECT
-      period_scope,
-      bu,
-      district,
-      territory_name,
-      territory_normalized,
-      potencial,
-      client_name,
-      doctor_id,
-      objetivo,
-      objetivo_ajustado,
-      interacciones,
-      cobertura,
-      cobertura_ajustada,
-      status_visita
-    FROM doctor_status
+    FROM scoped_with_days
   `;
 
   const interactionMixRowsQuery = `
-    WITH ${fieldForceRawCtes()},
+    WITH ${fieldForceServingCtes()},
     grouped AS (
       SELECT
         'YTD' AS period_scope,
         bu,
+        potencial,
         channel,
         visit_type,
-        COUNT(DISTINCT interaction_id) AS interactions
+        SUM(interactions) AS interactions
       FROM interactions_matched
-      GROUP BY 1, 2, 3, 4
+      GROUP BY 1, 2, 3, 4, 5
       UNION ALL
       SELECT
         'MTH' AS period_scope,
         bu,
+        potencial,
         channel,
         visit_type,
-        COUNT(DISTINCT interaction_id) AS interactions
+        SUM(interactions) AS interactions
       FROM interactions_matched
       WHERE period_month = DATE(@reportPeriodMonth)
-      GROUP BY 1, 2, 3, 4
+      GROUP BY 1, 2, 3, 4, 5
     )
-    SELECT period_scope, bu, channel, visit_type, interactions FROM grouped
+    SELECT period_scope, bu, potencial, channel, visit_type, interactions FROM grouped
     UNION ALL
-    SELECT period_scope, 'total' AS bu, channel, visit_type, SUM(interactions) AS interactions
+    SELECT period_scope, 'total' AS bu, potencial, channel, visit_type, SUM(interactions) AS interactions
     FROM grouped
-    GROUP BY 1, 2, 3, 4
+    GROUP BY 1, 2, 3, 4, 5
   `;
 
   const params = {
@@ -2971,12 +3564,9 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
     client.query({ query: interactionMixRowsQuery, params }),
   ]);
 
-  const detailResult = await client.query({ query: doctorDetailRowsQuery, params });
-
   const [rows] = mainResult;
   const [summaryRawRows] = summaryResult;
   const [interactionMixRawRows] = interactionMixResult;
-  const [doctorRawRows] = detailResult;
 
   const typedRows = rows as Array<Record<string, unknown>>;
   if (typedRows.length === 0) return null;
@@ -3007,37 +3597,28 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
       row.coverage_adjusted_ytd_ratio == null ? null : Number(row.coverage_adjusted_ytd_ratio) * 100,
     coverageAdjustedMthPct:
       row.coverage_adjusted_mth_ratio == null ? null : Number(row.coverage_adjusted_mth_ratio) * 100,
+    inFrequencyYtdPct:
+      row.in_frequency_ytd_ratio == null ? null : Number(row.in_frequency_ytd_ratio) * 100,
+    inFrequencyMthPct:
+      row.in_frequency_mth_ratio == null ? null : Number(row.in_frequency_mth_ratio) * 100,
+    inFrequencyAdjustedYtdPct:
+      row.in_frequency_adjusted_ytd_ratio == null ? null : Number(row.in_frequency_adjusted_ytd_ratio) * 100,
+    inFrequencyAdjustedMthPct:
+      row.in_frequency_adjusted_mth_ratio == null ? null : Number(row.in_frequency_adjusted_mth_ratio) * 100,
+    inFrequencyClientsYtd: Number(row.in_frequency_clients_ytd ?? 0),
+    inFrequencyClientsMth: Number(row.in_frequency_clients_mth ?? 0),
+    inFrequencyClientsAdjustedYtd: Number(row.in_frequency_clients_adjusted_ytd ?? 0),
+    inFrequencyClientsAdjustedMth: Number(row.in_frequency_clients_adjusted_mth ?? 0),
     tftDaysYtd: Number(row.tft_days_ytd ?? 0),
     tftDaysMth: Number(row.tft_days_mth ?? 0),
-    workingDaysYtd: 20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)),
-    workingDaysMth: 20,
-    effectiveDaysYtd:
-      Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0) > 0
-        ? Math.max(
-          0,
-          (20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)))
-            - (Number(row.tft_days_ytd ?? 0) / Math.max(1, Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0))),
-        )
-        : 0,
-    effectiveDaysMth:
-      Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0) > 0
-        ? Math.max(
-          0,
-          20 - (Number(row.tft_days_mth ?? 0) / Math.max(1, Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0))),
-        )
-        : 0,
+    workingDaysYtd: Number(row.working_days_ytd ?? 0),
+    workingDaysMth: Number(row.working_days_mth ?? 0),
+    effectiveDaysYtd: Number(row.effective_days_ytd ?? 0),
+    effectiveDaysMth: Number(row.effective_days_mth ?? 0),
     avgDailyVisitsYtd:
-      ((20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)))
-        * Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0)) - Number(row.tft_days_ytd ?? 0) > 0
-        ? Number(row.sent_interactions_ytd ?? 0)
-          / (((20 * Math.max(1, Number(new Date(`${resolvedReportPeriodMonth}T00:00:00`).getMonth() + 1)))
-            * Number(row.total_territories_ytd ?? row.total_territories_mth ?? 0)) - Number(row.tft_days_ytd ?? 0))
-        : null,
+      row.cpd_adjusted_ytd == null ? null : Number(row.cpd_adjusted_ytd),
     avgDailyVisitsMth:
-      (20 * Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0)) - Number(row.tft_days_mth ?? 0) > 0
-        ? Number(row.sent_interactions_mth ?? 0)
-          / ((20 * Number(row.total_territories_mth ?? row.total_territories_ytd ?? 0)) - Number(row.tft_days_mth ?? 0))
-        : null,
+      row.cpd_adjusted_mth == null ? null : Number(row.cpd_adjusted_mth),
     noVisitadosYtd: Number(row.no_visitados_ytd ?? 0),
     noVisitadosMth: Number(row.no_visitados_mth ?? 0),
     subvisitadosYtd: Number(row.subvisitados_ytd ?? 0),
@@ -3066,6 +3647,14 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
     coverageMthPct: null,
     coverageAdjustedYtdPct: null,
     coverageAdjustedMthPct: null,
+    inFrequencyYtdPct: null,
+    inFrequencyMthPct: null,
+    inFrequencyAdjustedYtdPct: null,
+    inFrequencyAdjustedMthPct: null,
+    inFrequencyClientsYtd: 0,
+    inFrequencyClientsMth: 0,
+    inFrequencyClientsAdjustedYtd: 0,
+    inFrequencyClientsAdjustedMth: 0,
     tftDaysYtd: 0,
     tftDaysMth: 0,
     workingDaysYtd: 0,
@@ -3118,36 +3707,16 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
     interacciones: Number(row.interacciones ?? 0),
     coberturaBasePct: row.cobertura == null ? null : Number(row.cobertura) * 100,
     coberturaAdjustedPct: row.cobertura_ajustada == null ? null : Number(row.cobertura_ajustada) * 100,
+    inFrequencyClients: Number(row.clientes_en_frecuencia ?? 0),
+    inFrequencyClientsAdjusted: Number(row.clientes_en_frecuencia_ajustada ?? 0),
+    inFrequencyRatePct: row.frecuencia == null ? null : Number(row.frecuencia) * 100,
+    inFrequencyRateAdjustedPct: row.frecuencia_ajustada == null ? null : Number(row.frecuencia_ajustada) * 100,
+    workingDays: Number(row.working_days ?? 0),
+    effectiveDays: Number(row.effective_days ?? 0),
+    cpd: row.cpd == null ? null : Number(row.cpd),
+    cpdAdjusted: row.cpd_adjusted == null ? null : Number(row.cpd_adjusted),
     diasFuera: Number(row.dias_fuera ?? 0),
     indiceEvolucionBuPct: row.indice_evolucion_bu == null ? null : Number(row.indice_evolucion_bu),
-  }));
-
-  const doctorDetailRows: BusinessExcellenceFieldForceDoctorDetailRow[] = (
-    doctorRawRows as Array<Record<string, unknown>>
-  ).map((row) => ({
-    periodScope: String(row.period_scope ?? 'YTD').toUpperCase() === 'MTH' ? 'MTH' : 'YTD',
-    bu: String(row.bu ?? 'air').toLowerCase() === 'care' ? 'care' : 'air',
-    district: row.district ? String(row.district) : null,
-    territoryName: row.territory_name ? String(row.territory_name) : null,
-    territoryNormalized: row.territory_normalized ? String(row.territory_normalized) : null,
-    potencial: row.potencial ? String(row.potencial) : null,
-    clientName: row.client_name ? String(row.client_name) : null,
-    doctorId: String(row.doctor_id ?? ''),
-    objetivoBase: Number(row.objetivo ?? 0),
-    objetivoAdjusted: Number(row.objetivo_ajustado ?? 0),
-    interacciones: Number(row.interacciones ?? 0),
-    coberturaBasePct: row.cobertura == null ? null : Number(row.cobertura) * 100,
-    coberturaAdjustedPct: row.cobertura_ajustada == null ? null : Number(row.cobertura_ajustada) * 100,
-    statusVisita:
-      String(row.status_visita ?? 'sin_clasificacion') === 'no_visitado'
-        ? 'no_visitado'
-        : String(row.status_visita ?? 'sin_clasificacion') === 'subvisitado'
-          ? 'subvisitado'
-          : String(row.status_visita ?? 'sin_clasificacion') === 'en_objetivo'
-            ? 'en_objetivo'
-            : String(row.status_visita ?? 'sin_clasificacion') === 'sobrevisitado'
-              ? 'sobrevisitado'
-              : 'sin_clasificacion',
   }));
 
   const interactionMixRows: BusinessExcellenceFieldForceInteractionMixRow[] = (
@@ -3160,6 +3729,7 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
         : String(row.bu ?? 'total').toLowerCase() === 'care'
           ? 'care'
           : 'total',
+    potencial: row.potencial ? String(row.potencial) : null,
     channel: row.channel ? String(row.channel) : 'Unknown',
     visitType: row.visit_type ? String(row.visit_type) : 'Unknown',
     interactions: Number(row.interactions ?? 0),
@@ -3180,8 +3750,390 @@ export async function getBusinessExcellenceFieldForceExcellenceData(
     usedSentInteractionsMthAirCare: Number(firstRow.used_sent_interactions_mth_air_care ?? 0),
     rows: mappedRows,
     summaryRows,
-    doctorDetailRows,
+    doctorDetailRows: [],
     interactionMixRows,
+  };
+}
+
+export async function getBusinessExcellenceFieldForceDetailData({
+  reportingVersionId,
+  reportPeriodMonth,
+  view,
+  coverage,
+  bu,
+  detailMode,
+  potential,
+  channel,
+}: {
+  reportingVersionId: string;
+  reportPeriodMonth: string;
+  view: 'ytd' | 'mth';
+  coverage: 'base' | 'adjusted';
+  bu: 'total' | 'air' | 'care';
+  detailMode: 'territory' | 'district';
+  potential: string;
+  channel: string;
+}): Promise<BusinessExcellenceFieldForceDetailData> {
+  const client = getBigQueryClient();
+  const params = {
+    reportingVersionId,
+    reportPeriodMonth,
+    view: view.toUpperCase(),
+    coverage,
+    bu,
+    detailMode,
+    potential,
+    channel,
+  };
+
+  const detailCtes = `
+    WITH reporting_context AS (
+      SELECT
+        DATE(@reportPeriodMonth) AS report_period_month,
+        DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AS ytd_start_month
+    ),
+    scoped_month AS (
+      SELECT *
+      FROM \`${FIELD_FORCE_SERVING_HCP_MONTH}\`
+      JOIN reporting_context rc ON TRUE
+      WHERE reporting_version_id = @reportingVersionId
+        AND (
+          (@view = 'MTH' AND period_month = rc.report_period_month)
+          OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+        )
+        AND (@bu = 'total' OR LOWER(bu) = @bu)
+    ),
+    doctor_base AS (
+      SELECT
+        LOWER(bu) AS bu,
+        COALESCE(NULLIF(district, ''), 'N/A') AS district,
+        COALESCE(NULLIF(territory_name, ''), territory_normalized, 'N/A') AS territory_name,
+        territory_normalized,
+        COALESCE(NULLIF(TRIM(potencial), ''), 'N/A') AS potencial,
+        specialty_consolidated,
+        COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
+        doctor_key,
+        SUM(objective) AS objective_base,
+        SUM(adjusted_objective) AS objective_adjusted,
+        SUM(interactions) AS all_interactions
+      FROM scoped_month
+      GROUP BY 1,2,3,4,5,6,8
+    ),
+    channel_counts AS (
+      SELECT
+        LOWER(bu) AS bu,
+        territory_normalized,
+        doctor_key,
+        SUM(interactions) AS channel_interactions
+      FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\`
+      JOIN reporting_context rc ON TRUE
+      WHERE reporting_version_id = @reportingVersionId
+        AND (
+          (@view = 'MTH' AND period_month = rc.report_period_month)
+          OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+        )
+        AND (@bu = 'total' OR LOWER(bu) = @bu)
+        AND @channel != 'all'
+        AND channel = @channel
+      GROUP BY 1,2,3
+    ),
+    doctor_scoped AS (
+      SELECT
+        db.*,
+        IF(@channel = 'all', db.all_interactions, COALESCE(cc.channel_interactions, 0)) AS interactions,
+        IF(@coverage = 'adjusted', db.objective_adjusted, db.objective_base) AS selected_objective
+      FROM doctor_base db
+      LEFT JOIN channel_counts cc
+        ON cc.bu = db.bu
+       AND cc.territory_normalized = db.territory_normalized
+       AND cc.doctor_key = db.doctor_key
+    ),
+    doctor_filtered AS (
+      SELECT *
+      FROM doctor_scoped
+      WHERE
+        @potential = 'all'
+        OR (@potential IN ('P1', 'P2', 'P3') AND UPPER(potencial) = @potential)
+        OR (@potential = 'Otros' AND UPPER(potencial) NOT IN ('P1', 'P2', 'P3'))
+    ),
+    territory_days AS (
+      SELECT
+        LOWER(bu) AS bu,
+        territory_normalized,
+        SUM(days_standard) AS working_days,
+        SUM(days_adjusted) AS effective_days
+      FROM (
+        SELECT DISTINCT
+          period_month,
+          LOWER(bu) AS bu,
+          territory_normalized,
+          days_standard,
+          days_adjusted
+        FROM scoped_month
+      )
+      GROUP BY 1,2
+    ),
+    group_territories AS (
+      SELECT DISTINCT
+        CASE
+          WHEN @detailMode = 'district' THEN district
+          ELSE territory_name
+        END AS label,
+        bu,
+        territory_normalized
+      FROM doctor_filtered
+    ),
+    group_days AS (
+      SELECT
+        gt.label,
+        SUM(td.working_days) AS working_days,
+        SUM(td.effective_days) AS effective_days
+      FROM group_territories gt
+      LEFT JOIN territory_days td
+        ON td.bu = gt.bu
+       AND td.territory_normalized = gt.territory_normalized
+      GROUP BY 1
+    ),
+    detail_rows AS (
+      SELECT
+        CASE
+          WHEN @detailMode = 'district' THEN district
+          ELSE territory_name
+        END AS label,
+        COUNT(DISTINCT doctor_key) AS clients,
+        SUM(interactions) AS interacciones,
+        COUNT(DISTINCT IF(interactions > 0, doctor_key, NULL)) AS clients_with_interaction,
+        COUNT(DISTINCT IF(interactions >= selected_objective, doctor_key, NULL)) AS in_frequency_clients,
+        SUM(selected_objective) AS objetivo
+      FROM doctor_filtered
+      GROUP BY 1
+    )
+  `;
+
+  const detailRowsQuery = `
+    ${detailCtes}
+    SELECT
+      dr.label,
+      dr.clients,
+      dr.interacciones,
+      SAFE_DIVIDE(dr.clients_with_interaction, NULLIF(dr.clients, 0)) AS visit_coverage,
+      SAFE_DIVIDE(dr.in_frequency_clients, NULLIF(dr.clients, 0)) AS in_frequency_rate,
+      SAFE_DIVIDE(
+        dr.interacciones,
+        NULLIF(IF(@coverage = 'adjusted', gd.effective_days, gd.working_days), 0)
+      ) AS cpd,
+      dr.objetivo
+    FROM detail_rows dr
+    LEFT JOIN group_days gd ON gd.label = dr.label
+    ORDER BY dr.label
+  `;
+
+  const interactionMixQuery = `
+    ${detailCtes},
+    interactions_filtered AS (
+      SELECT
+        COALESCE(NULLIF(cm.visit_type, ''), 'Unknown') AS visit_type,
+        IF(@channel = 'all', 'All Channels', @channel) AS channel,
+        SUM(cm.interactions) AS interactions
+      FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\` cm
+      JOIN reporting_context rc ON TRUE
+      JOIN doctor_filtered df
+        ON df.bu = LOWER(cm.bu)
+       AND df.territory_normalized = cm.territory_normalized
+       AND df.doctor_key = cm.doctor_key
+      WHERE cm.reporting_version_id = @reportingVersionId
+        AND (
+          (@view = 'MTH' AND cm.period_month = rc.report_period_month)
+          OR (@view = 'YTD' AND cm.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+        )
+        AND (@channel = 'all' OR cm.channel = @channel)
+      GROUP BY 1,2
+    )
+    SELECT visit_type, channel, interactions
+    FROM interactions_filtered
+    ORDER BY interactions DESC
+    LIMIT 12
+  `;
+
+  const zoomQuery = `
+    ${detailCtes},
+    ranked AS (
+      SELECT
+        doctor_key,
+        COALESCE(NULLIF(client_name, ''), doctor_key) AS client_name,
+        territory_name,
+        district,
+        bu,
+        potencial,
+        COALESCE(NULLIF(specialty_consolidated, ''), 'N/A') AS specialty_consolidated,
+        selected_objective,
+        interactions,
+        interactions - selected_objective AS difference,
+        selected_objective - interactions AS gap
+      FROM doctor_filtered
+    )
+    SELECT 'overvisited' AS section, *
+    FROM ranked
+    WHERE difference > 0
+    ORDER BY difference DESC
+    LIMIT 20
+  `;
+
+  const subvisitedQuery = `
+    ${detailCtes},
+    ranked AS (
+      SELECT
+        doctor_key,
+        COALESCE(NULLIF(client_name, ''), doctor_key) AS client_name,
+        territory_name,
+        district,
+        bu,
+        potencial,
+        COALESCE(NULLIF(specialty_consolidated, ''), 'N/A') AS specialty_consolidated,
+        selected_objective,
+        interactions,
+        interactions - selected_objective AS difference,
+        selected_objective - interactions AS gap
+      FROM doctor_filtered
+    )
+    SELECT 'subvisited' AS section, *
+    FROM ranked
+    WHERE gap > 0
+    ORDER BY gap DESC
+    LIMIT 20
+  `;
+
+  const noVisitedQuery = `
+    ${detailCtes}
+    SELECT
+      doctor_key,
+      COALESCE(NULLIF(client_name, ''), doctor_key) AS client_name,
+      territory_name,
+      district,
+      bu,
+      potencial,
+      COALESCE(NULLIF(specialty_consolidated, ''), 'N/A') AS specialty_consolidated,
+      selected_objective,
+      interactions
+    FROM doctor_filtered
+    WHERE interactions = 0
+    ORDER BY client_name
+    LIMIT 200
+  `;
+
+  const statusQuery = `
+    ${detailCtes}
+    SELECT
+      COUNTIF(interactions >= selected_objective) AS in_frequency,
+      COUNTIF(interactions < selected_objective) AS out_frequency
+    FROM doctor_filtered
+  `;
+
+  const channelOptionsQuery = `
+    WITH reporting_context AS (
+      SELECT
+        DATE(@reportPeriodMonth) AS report_period_month,
+        DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AS ytd_start_month
+    )
+    SELECT DISTINCT channel
+    FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\`
+    JOIN reporting_context rc ON TRUE
+    WHERE reporting_version_id = @reportingVersionId
+      AND (
+        (@view = 'MTH' AND period_month = rc.report_period_month)
+        OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+      )
+      AND (@bu = 'total' OR LOWER(bu) = @bu)
+      AND channel IS NOT NULL
+      AND TRIM(channel) != ''
+    ORDER BY channel
+  `;
+
+  const [
+    detailResult,
+    interactionMixResult,
+    statusResult,
+    overvisitedResult,
+    subvisitedResult,
+    noVisitedResult,
+    channelOptionsResult,
+  ] = await Promise.all([
+    client.query({ query: detailRowsQuery, params }),
+    client.query({ query: interactionMixQuery, params }),
+    client.query({ query: statusQuery, params }),
+    client.query({ query: zoomQuery, params }),
+    client.query({ query: subvisitedQuery, params }),
+    client.query({ query: noVisitedQuery, params }),
+    client.query({ query: channelOptionsQuery, params }),
+  ]);
+
+  const [detailRawRows] = detailResult;
+  const [interactionMixRawRows] = interactionMixResult;
+  const [statusRawRows] = statusResult;
+  const [overvisitedRawRows] = overvisitedResult;
+  const [subvisitedRawRows] = subvisitedResult;
+  const [noVisitedRawRows] = noVisitedResult;
+  const [channelOptionRawRows] = channelOptionsResult;
+
+  const toZoomRow = (row: Record<string, unknown>) => ({
+    doctorId: String(row.doctor_key ?? ''),
+    clientName: String(row.client_name ?? row.doctor_key ?? ''),
+    territory: String(row.territory_name ?? 'N/A'),
+    district: String(row.district ?? 'N/A'),
+    bu: String(row.bu ?? 'air').toLowerCase() === 'care' ? 'care' as const : 'air' as const,
+    potencial: row.potencial ? String(row.potencial) : null,
+    specialtyConsolidated: String(row.specialty_consolidated ?? 'N/A'),
+    objective: Number(row.selected_objective ?? 0),
+    interacciones: Number(row.interactions ?? 0),
+    difference: row.difference == null ? undefined : Number(row.difference),
+    gap: row.gap == null ? undefined : Number(row.gap),
+  });
+
+  const detailRows = (detailRawRows as Array<Record<string, unknown>>).map((row) => ({
+    label: String(row.label ?? 'N/A'),
+    clients: Number(row.clients ?? 0),
+    interacciones: Number(row.interacciones ?? 0),
+    visitCoveragePct: row.visit_coverage == null ? null : Number(row.visit_coverage) * 100,
+    inFrequencyRatePct: row.in_frequency_rate == null ? null : Number(row.in_frequency_rate) * 100,
+    cpd: row.cpd == null ? null : Number(row.cpd),
+  }));
+
+  const interactionMixChart = (interactionMixRawRows as Array<Record<string, unknown>>).map((row) => {
+    const fullVisitType = String(row.visit_type ?? 'Unknown');
+    return {
+      visitType: fullVisitType.length > 30 ? `${fullVisitType.slice(0, 30)}...` : fullVisitType,
+      fullVisitType,
+      channel: String(row.channel ?? (channel === 'all' ? 'All Channels' : channel)),
+      interactions: Number(row.interactions ?? 0),
+    };
+  });
+
+  const statusRow = (statusRawRows as Array<Record<string, unknown>>)[0] ?? {};
+  const statusMixData = [
+    { name: 'In Frequency' as const, value: Number(statusRow.in_frequency ?? 0), color: '#10b981' },
+    { name: 'Out of Frequency' as const, value: Number(statusRow.out_frequency ?? 0), color: '#f59e0b' },
+  ].filter((item) => item.value > 0);
+
+  const opportunityData = [...detailRows]
+    .map((row) => ({
+      fullLabel: row.label,
+      label: row.label.length > 26 ? `${row.label.slice(0, 26)}...` : row.label,
+      objetivo: Number((detailRawRows as Array<Record<string, unknown>>).find((raw) => String(raw.label ?? 'N/A') === row.label)?.objetivo ?? 0),
+      interacciones: row.interacciones,
+      gap: Math.max(0, Number((detailRawRows as Array<Record<string, unknown>>).find((raw) => String(raw.label ?? 'N/A') === row.label)?.objetivo ?? 0) - row.interacciones),
+    }))
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, 10);
+
+  return {
+    detailRows,
+    interactionMixChart,
+    statusMixData,
+    opportunityData,
+    overvisitedTop: (overvisitedRawRows as Array<Record<string, unknown>>).map(toZoomRow),
+    subvisitedTop: (subvisitedRawRows as Array<Record<string, unknown>>).map(toZoomRow),
+    noVisitedRows: (noVisitedRawRows as Array<Record<string, unknown>>).map(toZoomRow),
+    channelOptions: (channelOptionRawRows as Array<Record<string, unknown>>).map((row) => String(row.channel)),
   };
 }
 
@@ -3198,22 +4150,21 @@ export async function getBusinessExcellenceFieldForceTopCardKpis(
   if (!resolvedReportPeriodMonth) return null;
 
   const query = `
-    WITH ${fieldForceRawCtes()},
+    WITH ${fieldForceServingCtes()},
     ytd_summary AS (
       SELECT
-        SAFE_DIVIDE(SUM(psd.interacciones), NULLIF(SUM(psd.objetivo_ajustado), 0)) AS cobertura_ajustada,
-        EXTRACT(MONTH FROM DATE(@reportPeriodMonth)) AS months_in_scope,
-        COUNT(DISTINCT psd.territory_normalized) AS territories_in_scope,
-        COALESCE((SELECT SUM(tft_days) FROM tft_scoped WHERE period_scope = 'YTD'), 0) AS tft_days
-      FROM period_scoped_doctors psd
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.in_frequency_adjusted, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura_ajustada,
+        MAX(d.working_days) AS working_days,
+        MAX(d.effective_days) AS effective_days
+      FROM period_scoped_doctors_enriched psd
+      LEFT JOIN period_scoped_bu_days d
+        ON d.period_scope = psd.period_scope
+       AND d.bu = 'total'
       WHERE psd.period_scope = 'YTD'
     )
     SELECT
       cobertura_ajustada,
-      SAFE_DIVIDE(
-        (20 * months_in_scope * territories_in_scope) - COALESCE(tft_days, 0),
-        NULLIF(20 * months_in_scope * territories_in_scope, 0)
-      ) AS porcentaje_tiempo_activo
+      SAFE_DIVIDE(effective_days, NULLIF(working_days, 0)) AS porcentaje_tiempo_activo
     FROM ytd_summary
   `;
 
@@ -3299,7 +4250,7 @@ export async function getBusinessExcellencePrivateSellOutMartRows(
   `;
 
   const [rows] = await client.query({ query, params });
-  return (rows as Array<Record<string, unknown>>).map((row) => ({
+  const martRows = (rows as Array<Record<string, unknown>>).map((row) => ({
     reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
     marketGroup: row.market_group ? String(row.market_group) : null,
     brandName: String(row.brand_name ?? 'Unmapped Brand'),
@@ -3339,6 +4290,38 @@ export async function getBusinessExcellencePrivateSellOutMartRows(
     varianceVsBudgetMthUnitsPct: asNullableNumber(row.variance_vs_budget_mth_units_pct),
     varianceVsBudgetMthNetSalesPct: asNullableNumber(row.variance_vs_budget_mth_net_sales_pct),
   }));
+  const cutoffDate = martRows.map((row) => row.lastAvailableMonth).filter(Boolean).sort().at(-1) ?? null;
+  const gob360PrivateRows = await getGob360PrivateMartRows(
+    resolvedReportingVersionId,
+    cutoffDate,
+    normalizedMarketGroup ?? null,
+  );
+  const byKey = new Map(martRows.map((row) => [`${row.marketGroup ?? 'No Market'}|||${row.brandName}`, row]));
+  for (const row of gob360PrivateRows) {
+    const key = `${row.marketGroup ?? 'No Market'}|||${row.brandName}`;
+    const current = byKey.get(key);
+    if (!current) {
+      byKey.set(key, row);
+      continue;
+    }
+    current.ytdUnits += row.ytdUnits;
+    current.ytdUnitsPy += row.ytdUnitsPy;
+    current.mthUnits += row.mthUnits;
+    current.mthUnitsPy += row.mthUnitsPy;
+    current.ytdNetSales += row.ytdNetSales;
+    current.mthNetSales += row.mthNetSales;
+    current.growthVsPyYtdUnitsPct =
+      current.ytdUnitsPy > 0 ? (current.ytdUnits - current.ytdUnitsPy) / current.ytdUnitsPy : null;
+    current.growthVsPyMthUnitsPct =
+      current.mthUnitsPy > 0 ? (current.mthUnits - current.mthUnitsPy) / current.mthUnitsPy : null;
+    current.msYtdUnitsPct = row.msYtdUnitsPct;
+    current.eiYtdUnits = row.eiYtdUnits;
+    current.msMthUnitsPct = row.msMthUnitsPct;
+    current.eiMthUnits = row.eiMthUnits;
+  }
+  return [...byKey.values()]
+    .sort((a, b) => b.ytdNetSales - a.ytdNetSales || b.ytdUnits - a.ytdUnits)
+    .slice(0, Math.max(1, limit));
 }
 
 export async function getBusinessExcellencePrivateSellOutMartRowsByBrand(
@@ -3555,7 +4538,7 @@ export async function getBusinessExcellencePrivateMarketChartPoints(
     params: { reportingVersionId: resolvedReportingVersionId },
   });
 
-  return (rows as Array<Record<string, unknown>>).map((row) => ({
+  const chartRows = (rows as Array<Record<string, unknown>>).map((row) => ({
     reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
     marketGroup: String(row.market_group ?? 'No Market'),
     scope: String(row.scope ?? 'all') as 'all' | 'chiesi',
@@ -3564,6 +4547,50 @@ export async function getBusinessExcellencePrivateMarketChartPoints(
     pmmNetSales: Number(row.pmm_net_sales ?? 0),
     closeupRx: Number(row.closeup_rx ?? 0),
   }));
+
+  const context = await getPublicMarketContext(resolvedReportingVersionId);
+  const mappingRows = await getGob360MappedClaves();
+  const mappingByClave = new Map(
+    mappingRows.map((row) => [
+      row.sourceClaveNormalized,
+      {
+        isChiesi: Boolean(row.productId && row.productId.trim() !== ''),
+        marketGroup: row.marketGroup?.trim() || 'No Market',
+        unitsFactor: Number((row as { unitsFactor?: number }).unitsFactor ?? 1),
+      },
+    ]),
+  );
+  const gob360PrivateRows = await getGob360AggRowsByClave(
+    mappingRows.map((row) => row.sourceClaveNormalized),
+    context.cutoffDate,
+    'private',
+  );
+  const byKey = new Map(chartRows.map((row) => [`${row.marketGroup}|||${row.scope}|||${row.periodMonth}`, row]));
+  for (const row of gob360PrivateRows) {
+    const mapping = mappingByClave.get(String(row.source_clave_normalized ?? ''));
+    if (!mapping) continue;
+    const eventRef = parseYearMonthFromDateText(String(row.event_date ?? ''));
+    if (eventRef.year === null || eventRef.month === null) continue;
+    const periodMonth = `${eventRef.year}-${String(eventRef.month).padStart(2, '0')}-01`;
+    const units = Number(row.pieces ?? 0) * mapping.unitsFactor;
+    const scopes: Array<'all' | 'chiesi'> = mapping.isChiesi ? ['all', 'chiesi'] : ['all'];
+    for (const scope of scopes) {
+      const key = `${mapping.marketGroup}|||${scope}|||${periodMonth}`;
+      const current = byKey.get(key) ?? {
+        reportingVersionId: resolvedReportingVersionId,
+        marketGroup: mapping.marketGroup,
+        scope,
+        periodMonth,
+        pmmUnits: 0,
+        pmmNetSales: 0,
+        closeupRx: 0,
+      };
+      current.pmmUnits += units;
+      byKey.set(key, current);
+    }
+  }
+
+  return [...byKey.values()].sort((a, b) => a.marketGroup.localeCompare(b.marketGroup) || a.periodMonth.localeCompare(b.periodMonth));
 }
 
 export async function getBusinessExcellencePrivateWeeklyZoom(
@@ -4362,6 +5389,10 @@ export async function getBusinessExcellencePrivateSellOutOverview(
   });
   const row = (rows as Array<Record<string, unknown>>)[0] ?? {};
   if (!row.latest_period) return null;
+  const gob360PrivateUnits = await getGob360PrivateUnitSummary(
+    String(row.latest_period),
+    normalizedFilters.marketGroup ?? null,
+  );
 
   return {
     latestPeriod: String(row.latest_period),
@@ -4369,9 +5400,9 @@ export async function getBusinessExcellencePrivateSellOutOverview(
     reportPeriodMonth: row.report_period_month ? String(row.report_period_month) : null,
     sourceAsOfMonth: row.source_as_of_month ? String(row.source_as_of_month) : null,
     lastMonthNetSales: Number(row.last_month_net_sales ?? 0),
-    lastMonthUnits: Number(row.last_month_units ?? 0),
+    lastMonthUnits: Number(row.last_month_units ?? 0) + gob360PrivateUnits.mthUnits,
     ytdNetSales: Number(row.ytd_net_sales ?? 0),
-    ytdUnits: Number(row.ytd_units ?? 0),
+    ytdUnits: Number(row.ytd_units ?? 0) + gob360PrivateUnits.ytdUnits,
   };
 }
 

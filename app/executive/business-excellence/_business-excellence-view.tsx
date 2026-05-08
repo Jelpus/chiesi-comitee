@@ -462,7 +462,7 @@ function HeroMetricCard({
   tone: 'emerald' | 'blue' | 'amber' | 'slate';
 }) {
   return (
-    <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone(tone)}`}>
+    <article title={helper} className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone(tone)}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{eyebrow}</p>
       <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{value}</p>
       <p className="mt-1 text-sm font-medium text-slate-800">{title}</p>
@@ -475,7 +475,7 @@ function FieldForceCoverageCard({ kpis }: { kpis: BusinessExcellenceFieldForceTo
   const coverage = kpis?.coverageYtdTftPct;
   const activeTime = kpis?.activeTimeYtdPct;
   return (
-    <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('slate')}`}>
+    <article title="Field Force YTD in-frequency rate adjusted by approved TFT and effective active time." className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('slate')}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Field Force Coverage</p>
       <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
         {coverage == null ? 'N/A' : `${coverage.toFixed(1)}%`}
@@ -555,7 +555,7 @@ function DashboardTopCards({
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('blue')}`}>
+      <article title="Private market YTD net sales and units for the selected reporting version." className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('blue')}`}>
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Total Private Sellout YTD</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div>
@@ -574,7 +574,7 @@ function DashboardTopCards({
         <p className="mt-3 text-sm text-slate-600">Chiesi Porfolio performance Private Market Sellout</p>
       </article>
 
-      <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('amber')}`}>
+      <article title="Private prescriptions YTD for the Chiesi portfolio in the selected reporting version." className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('amber')}`}>
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Total Private Prescriptions YTD</p>
         <div className="mt-4">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Prescriptions</p>
@@ -585,7 +585,7 @@ function DashboardTopCards({
         <p className="mt-3 text-sm text-slate-600">Chiesi Portfolio performance Private Market Prescriptions</p>
       </article>
 
-      <article className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('emerald')}`}>
+      <article title="Public market mapped product units YTD for the selected reporting version." className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('emerald')}`}>
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Total Public Sell Out YTD</p>
         <div className="mt-4">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Units</p>
@@ -2940,7 +2940,7 @@ const getCachedPrivateSellOutData = unstable_cache(
       productRows,
     };
   },
-  ['business-excellence-private-sell-out-v15'],
+  ['business-excellence-private-sell-out-v18'],
   { revalidate: 45 },
 );
 
@@ -2959,7 +2959,7 @@ const getCachedPrivatePrescriptionsOverview = unstable_cache(
 const getCachedPublicMarketOverview = unstable_cache(
   async (reportingVersionId: string) =>
     getBusinessExcellencePublicMarketOverview(reportingVersionId || undefined),
-  ['business-excellence-public-market-overview-v1'],
+  ['business-excellence-public-market-overview-v2'],
   { revalidate: 120 },
 );
 
@@ -2996,7 +2996,7 @@ async function getPublicMarketData(reportingVersionId: string) {
 
 const getCachedBusinessUnitChannelRows = unstable_cache(
   async (reportingVersionId: string) => getBusinessExcellenceBusinessUnitChannelRows(reportingVersionId || undefined),
-  ['business-excellence-bu-channel-v2'],
+  ['business-excellence-bu-channel-v3'],
   { revalidate: 120 },
 );
 

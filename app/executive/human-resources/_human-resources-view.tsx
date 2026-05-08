@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { unstable_cache } from 'next/cache';
+import type { ReactNode } from 'react';
 import { SectionHeader } from '@/components/ui/section-header';
 import { TrainingRankingTable } from '@/components/executive/human-resources/training-ranking-table';
 import {
@@ -23,6 +24,9 @@ import {
   getHumanResourcesTurnoverThemeData,
   getHumanResourcesTurnoverOverview,
 } from '@/lib/data/human-resources';
+import { getOpexRows } from '@/lib/data/opex';
+import type { OpexRow } from '@/lib/data/opex';
+import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 import type {
   HumanResourcesTrainingUserRow,
   HumanResourcesTrainingRankingDimension,
@@ -35,7 +39,7 @@ import type {
 } from '@/types/human-resources';
 
 export type HumanResourcesViewMode = 'insights' | 'scorecard' | 'dashboard';
-type HumanResourcesDashboardTab = 'turnover' | 'training';
+type HumanResourcesDashboardTab = 'turnover' | 'training' | 'payroll';
 
 type SearchParams = {
   version?: string;
@@ -93,6 +97,182 @@ function formatSignedPercent(value: number | null) {
   return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
 }
 
+function KpiHelp({ text }: { text: string }) {
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500"
+      title={text}
+      aria-label={text}
+    >
+      ?
+    </span>
+  );
+}
+
+function KpiLabel({ children, help }: { children: ReactNode; help: string }) {
+  return (
+    <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+      <span>{children}</span>
+      <KpiHelp text={help} />
+    </p>
+  );
+}
+
+function formatAmount(value: number | null) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatOpexPercent(value: number | null) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return `${value.toFixed(1)}%`;
+}
+
+function formatSignedOpexPercent(value: number | null) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
+function formatSignedAmount(value: number | null) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  const formatted = formatAmount(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
+function normalizeOpexText(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function getMetricYear(metricName: string): number | null {
+  const match = metricName.match(/(\d{4})$/);
+  if (!match) return null;
+  return Number(match[1]);
+}
+
+function resolvePayrollMetricMap(rows: OpexRow[]) {
+  const metrics = [...new Set(rows.map((row) => row.metricName))];
+  const actualMetrics = metrics.filter((metric) => metric.startsWith('actuals_'));
+  const budgetMetrics = metrics.filter((metric) => metric.startsWith('budget_'));
+  const actualSorted = actualMetrics
+    .map((metric) => ({ metric, year: getMetricYear(metric) ?? -1 }))
+    .sort((a, b) => b.year - a.year);
+  const currentActual = actualSorted[0]?.metric ?? null;
+  const pyActual = actualSorted[1]?.metric ?? null;
+  const currentYear = getMetricYear(currentActual ?? '');
+  const currentBudget = budgetMetrics.find((metric) => getMetricYear(metric) === currentYear) ?? null;
+  return { currentActual, pyActual, currentBudget, currentYear };
+}
+
+type PayrollAchievementBreakdownRow = {
+  label: string;
+  actual: number;
+  budget: number;
+  py: number;
+  achievementPct: number | null;
+  variance: number;
+  vsPyPct: number | null;
+  sharePct: number | null;
+};
+
+type PayrollAchievementData = {
+  reportPeriodMonth: string | null;
+  sourceAsOfMonth: string | null;
+  latestPeriodMonth: string | null;
+  ytd: {
+    actual: number;
+    budget: number;
+    py: number;
+    achievementPct: number | null;
+    variance: number;
+    vsPyPct: number | null;
+  };
+  mth: {
+    actual: number;
+    budget: number;
+    py: number;
+    achievementPct: number | null;
+    variance: number;
+    vsPyPct: number | null;
+  };
+  byCecoGroup: PayrollAchievementBreakdownRow[];
+  byBusinessUnit: PayrollAchievementBreakdownRow[];
+};
+
+function buildPayrollAchievementData(rows: OpexRow[]): PayrollAchievementData | null {
+  const payrollRows = rows.filter((row) => normalizeOpexText(row.element) === 'base salaries');
+  if (payrollRows.length === 0) return null;
+
+  const metricMap = resolvePayrollMetricMap(payrollRows);
+  if (!metricMap.currentActual) return null;
+
+  const aggregate = (scope: 'ytd' | 'mth') => {
+    let actual = 0;
+    let budget = 0;
+    let py = 0;
+    for (const row of payrollRows) {
+      const currentPeriod = scope === 'ytd' ? row.isYtd : row.isMth;
+      const pyPeriod = scope === 'ytd' ? row.isYtdPy : row.isMthPy;
+      if (row.metricName === metricMap.currentActual && currentPeriod) actual += row.amountValue;
+      if (metricMap.currentBudget && row.metricName === metricMap.currentBudget && currentPeriod) budget += row.amountValue;
+      if (metricMap.pyActual && row.metricName === metricMap.pyActual && pyPeriod) py += row.amountValue;
+    }
+    return {
+      actual,
+      budget,
+      py,
+      achievementPct: budget > 0 ? (actual / budget) * 100 : null,
+      variance: actual - budget,
+      vsPyPct: py > 0 ? ((actual - py) / py) * 100 : null,
+    };
+  };
+
+  const buildBreakdown = (dimension: 'cecoNameGroup' | 'businessUnit') => {
+    const byKey = new Map<string, { actual: number; budget: number; py: number }>();
+    for (const row of payrollRows) {
+      const label = (row[dimension] ?? '').trim() || 'Unassigned';
+      const current = byKey.get(label) ?? { actual: 0, budget: 0, py: 0 };
+      if (row.metricName === metricMap.currentActual && row.isYtd) current.actual += row.amountValue;
+      if (metricMap.currentBudget && row.metricName === metricMap.currentBudget && row.isYtd) current.budget += row.amountValue;
+      if (metricMap.pyActual && row.metricName === metricMap.pyActual && row.isYtdPy) current.py += row.amountValue;
+      byKey.set(label, current);
+    }
+    const totalActual = [...byKey.values()].reduce((sum, row) => sum + row.actual, 0);
+    return [...byKey.entries()]
+      .map(([label, values]) => ({
+        label,
+        actual: values.actual,
+        budget: values.budget,
+        py: values.py,
+        achievementPct: values.budget > 0 ? (values.actual / values.budget) * 100 : null,
+        variance: values.actual - values.budget,
+        vsPyPct: values.py > 0 ? ((values.actual - values.py) / values.py) * 100 : null,
+        sharePct: totalActual > 0 ? (values.actual / totalActual) * 100 : null,
+      }))
+      .filter((row) => !(row.actual === 0 && row.budget === 0 && row.py === 0))
+      .sort((a, b) => b.budget - a.budget || b.actual - a.actual);
+  };
+
+  const reportPeriodMonth = payrollRows.map((row) => row.reportPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+  const sourceAsOfMonth = payrollRows.map((row) => row.sourceAsOfMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+  const latestPeriodMonth = payrollRows.map((row) => row.latestPeriodMonth).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+
+  return {
+    reportPeriodMonth,
+    sourceAsOfMonth,
+    latestPeriodMonth,
+    ytd: aggregate('ytd'),
+    mth: aggregate('mth'),
+    byCecoGroup: buildBreakdown('cecoNameGroup'),
+    byBusinessUnit: buildBreakdown('businessUnit'),
+  };
+}
+
 function ModeTabs({ active, params }: { active: HumanResourcesViewMode; params: SearchParams }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -122,37 +302,57 @@ function TopCards({
   trainingHours,
   trainingCompletionRate,
   activeUsers,
+  payrollAchievement,
 }: {
   turnoverExits: number;
   turnoverVoluntary: number;
   trainingHours: number;
   trainingCompletionRate: number | null;
   activeUsers: number;
+  payrollAchievement: PayrollAchievementData | null;
 }) {
+  const payrollStatusInfo = payrollStatus(payrollAchievement?.ytd.achievementPct ?? null);
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Turnover YTD</p>
+        <KpiLabel help="Total employee exits accumulated year to date in the selected reporting version.">
+          Turnover YTD
+        </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
           {new Intl.NumberFormat('en-US').format(turnoverExits)}
         </p>
         <p className="mt-2 text-sm text-slate-600">Voluntary exits: {new Intl.NumberFormat('en-US').format(turnoverVoluntary)}</p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Training YTD Hours</p>
+        <KpiLabel help="Total learning hours and completion rate for the current year-to-date training cut.">
+          Training YTD
+        </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
           {new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(trainingHours)}
         </p>
+        <p className="mt-2 text-sm text-slate-600">Completion: {formatPercent(trainingCompletionRate)}</p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Training Completion</p>
-        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(trainingCompletionRate)}</p>
-      </article>
-      <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Active Learners YTD</p>
+        <KpiLabel help="Distinct employees with training activity in the current year-to-date cut.">
+          Active Learners YTD
+        </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
           {new Intl.NumberFormat('en-US').format(activeUsers)}
         </p>
+      </article>
+      <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
+        <KpiLabel help="Actual Base Salaries divided by budget for the current year-to-date payroll cut.">
+          Payroll Achievement YTD
+        </KpiLabel>
+        <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+          {formatOpexPercent(payrollAchievement?.ytd.achievementPct ?? null)}
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          Variance: {formatSignedAmount(payrollAchievement?.ytd.variance ?? null)}
+        </p>
+        <span className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${payrollStatusInfo.className}`}>
+          {payrollStatusInfo.label}
+        </span>
       </article>
     </div>
   );
@@ -166,6 +366,7 @@ function DashboardPanel({
   trainingInstructorRows,
   turnoverThemeData,
   trainingThemeData,
+  payrollAchievement,
   activeTab,
   turnoverScope,
   trainingScope,
@@ -178,6 +379,7 @@ function DashboardPanel({
   trainingInstructorRows: HumanResourcesTrainingRankingRow[];
   turnoverThemeData: HumanResourcesTurnoverThemeData | null;
   trainingThemeData: HumanResourcesTrainingThemeData | null;
+  payrollAchievement: PayrollAchievementData | null;
   activeTab: HumanResourcesDashboardTab;
   turnoverScope: HumanResourcesTurnoverScope;
   trainingScope: HumanResourcesTrainingScope;
@@ -214,7 +416,7 @@ function DashboardPanel({
   return (
     <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
       <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Human Resources Dashboard</p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Turnover & Training</h2>
+      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Turnover, Training & Payroll Achievement</h2>
       <div className="mt-4 flex flex-wrap gap-2">
         <Link
           href={buildTabHref('turnover')}
@@ -235,6 +437,16 @@ function DashboardPanel({
           }`}
         >
           Training
+        </Link>
+        <Link
+          href={buildTabHref('payroll')}
+          className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+            activeTab === 'payroll'
+              ? 'bg-slate-900 text-white shadow-[0_8px_22px_rgba(15,23,42,0.35)]'
+              : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+          }`}
+        >
+          Payroll Achievement
         </Link>
       </div>
 
@@ -267,7 +479,7 @@ function DashboardPanel({
             {turnoverThemeData ? <TurnoverThemeChartsPanel themeData={turnoverThemeData} /> : null}
             <TurnoverThemeDetailsPanel data={turnoverThemeData} />
           </div>
-        ) : (
+        ) : activeTab === 'training' ? (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Learning Analysis</p>
@@ -299,29 +511,41 @@ function DashboardPanel({
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Learning Scorecard</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Trained Employees YTD</p>
+                    <KpiLabel help="Distinct employees with completed or tracked learning activity year to date.">
+                      Trained Employees YTD
+                    </KpiLabel>
                     <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(trainingThemeData.summary.trainedEmployeesYtd)}</p>
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Coverage YTD</p>
+                    <KpiLabel help="Share of active employees covered by training year to date.">
+                      Coverage YTD
+                    </KpiLabel>
                     <p className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(trainingThemeData.summary.coverageRateYtd)}</p>
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Completed Events YTD</p>
+                    <KpiLabel help="Training events completed year to date in the selected training scope.">
+                      Completed Events YTD
+                    </KpiLabel>
                     <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(trainingThemeData.summary.completedEventsYtd)}</p>
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Learning Hours YTD</p>
+                    <KpiLabel help="Total learning hours accumulated year to date.">
+                      Learning Hours YTD
+                    </KpiLabel>
                     <p className="mt-1 text-xl font-semibold text-slate-900">
                       {new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(trainingThemeData.summary.learningHoursYtd)}
                     </p>
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Avg Hours / Trained</p>
+                    <KpiLabel help="Average learning hours per trained employee year to date.">
+                      Avg Hours / Trained
+                    </KpiLabel>
                     <p className="mt-1 text-xl font-semibold text-slate-900">{trainingThemeData.summary.avgHoursPerTrainedEmployeeYtd == null ? 'N/A' : trainingThemeData.summary.avgHoursPerTrainedEmployeeYtd.toFixed(1)}</p>
                   </div>
                   <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Growth vs PY (Hours)</p>
+                    <KpiLabel help="Current YTD learning hours compared with previous-year YTD learning hours.">
+                      Growth vs PY
+                    </KpiLabel>
                     <p className={`mt-1 text-xl font-semibold ${(trainingThemeData.summary.growthVsPyLearningHoursPct ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                       {formatSignedPercent(trainingThemeData.summary.growthVsPyLearningHoursPct)}
                     </p>
@@ -345,9 +569,192 @@ function DashboardPanel({
               }}
             />
           </div>
+        ) : (
+          <PayrollAchievementPanel data={payrollAchievement} />
         )}
       </div>
     </article>
+  );
+}
+
+function payrollStatus(achievementPct: number | null) {
+  if (achievementPct == null) return { label: 'No Budget', className: 'border-slate-200 bg-slate-50 text-slate-700' };
+  const deviation = Math.abs(achievementPct - 100);
+  if (deviation <= 3) return { label: 'On Plan', className: 'border-emerald-200 bg-emerald-50 text-emerald-800' };
+  if (deviation <= 7) return { label: 'Near Plan', className: 'border-amber-200 bg-amber-50 text-amber-800' };
+  if (achievementPct > 107) return { label: 'Over Budget', className: 'border-rose-200 bg-rose-50 text-rose-800' };
+  return { label: 'Below Budget', className: 'border-sky-200 bg-sky-50 text-sky-800' };
+}
+
+function PayrollBreakdownTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: PayrollAchievementBreakdownRow[];
+}) {
+  return (
+    <article className="rounded-[16px] border border-slate-200 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">{title}</p>
+      <div className="mt-3 overflow-x-auto">
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.12em] text-slate-500">
+              <th className="px-2 py-2">Segment</th>
+              <th className="px-2 py-2 text-right">Actual</th>
+              <th className="px-2 py-2 text-right">Budget</th>
+              <th className="px-2 py-2 text-right">Variance</th>
+              <th className="px-2 py-2 text-right">Achievement</th>
+              <th className="px-2 py-2 text-right">vs PY</th>
+              <th className="px-2 py-2 text-right">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 12).map((row) => {
+              const status = payrollStatus(row.achievementPct);
+              return (
+                <tr
+                  key={`${title}-${row.label}`}
+                  className="border-b border-slate-100 last:border-b-0"
+                >
+                  <td className="px-2 py-2 font-semibold text-slate-900">{row.label}</td>
+                  <td className="px-2 py-2 text-right text-slate-700">{formatAmount(row.actual)}</td>
+                  <td className="px-2 py-2 text-right text-slate-700">{formatAmount(row.budget)}</td>
+                  <td className={`px-2 py-2 text-right font-semibold ${row.variance <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {formatSignedAmount(row.variance)}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${status.className}`}>
+                      {formatOpexPercent(row.achievementPct)}
+                    </span>
+                  </td>
+                  <td className={`px-2 py-2 text-right font-semibold ${(row.vsPyPct ?? 0) <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {formatSignedOpexPercent(row.vsPyPct)}
+                  </td>
+                  <td className="px-2 py-2 text-right text-slate-700">{formatOpexPercent(row.sharePct)}</td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 ? (
+              <tr>
+                <td className="px-2 py-4 text-center text-slate-500" colSpan={7}>
+                  No Base Salaries rows available.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
+
+function PayrollAchievementPanel({ data }: { data: PayrollAchievementData | null }) {
+  if (!data) {
+    return (
+      <article className="rounded-[16px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
+        No payroll budget data available from OPEX Base Salaries.
+      </article>
+    );
+  }
+
+  const ytdStatus = payrollStatus(data.ytd.achievementPct);
+  const mthStatus = payrollStatus(data.mth.achievementPct);
+  const overBudgetRows = data.byCecoGroup.filter((row) => row.variance > 0).slice(0, 3);
+  const underBudgetRows = data.byCecoGroup.filter((row) => row.variance < 0).slice(0, 3);
+
+  return (
+    <div className="space-y-4">
+      <article className="rounded-[16px] border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Payroll Budget Achievement</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Base Salaries from OPEX, evaluated as actual payroll vs budget by YTD and current month.
+            </p>
+          </div>
+          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${ytdStatus.className}`}>
+            {ytdStatus.label}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3 xl:col-span-2">
+            <KpiLabel help="Actual Base Salaries posted year to date from OPEX.">
+              YTD Actual
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatAmount(data.ytd.actual)}</p>
+            <p className="text-xs text-slate-600">Budget {formatAmount(data.ytd.budget)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Actual Base Salaries divided by budget for the current year-to-date cut.">
+              YTD Achievement
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatOpexPercent(data.ytd.achievementPct)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Actual Base Salaries minus budget. Positive values indicate payroll above budget.">
+              Variance vs Budget
+            </KpiLabel>
+            <p className={`mt-1 text-xl font-semibold ${data.ytd.variance <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {formatSignedAmount(data.ytd.variance)}
+            </p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Year-to-date Base Salaries growth compared with the previous-year year-to-date cut.">
+              Growth vs PY
+            </KpiLabel>
+            <p className={`mt-1 text-xl font-semibold ${(data.ytd.vsPyPct ?? 0) <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {formatSignedOpexPercent(data.ytd.vsPyPct)}
+            </p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Current month actual Base Salaries divided by current month budget.">
+              MTH Achievement
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatOpexPercent(data.mth.achievementPct)}</p>
+            <p className={`mt-1 inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold ${mthStatus.className}`}>
+              {mthStatus.label}
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <article className="rounded-[16px] border border-rose-200 bg-rose-50/40 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-700">Over Budget Watch</p>
+          <div className="mt-3 space-y-2">
+            {overBudgetRows.map((row) => (
+              <div key={`over-${row.label}`} className="rounded-[10px] border border-rose-200 bg-white px-3 py-2">
+                <p className="text-sm font-semibold text-slate-900">{row.label}</p>
+                <p className="text-xs text-rose-800">
+                  {formatSignedAmount(row.variance)} vs budget | {formatOpexPercent(row.achievementPct)} achievement
+                </p>
+              </div>
+            ))}
+            {overBudgetRows.length === 0 ? <p className="text-sm text-slate-600">No CeCoGroup is over budget.</p> : null}
+          </div>
+        </article>
+        <article className="rounded-[16px] border border-sky-200 bg-sky-50/40 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-sky-700">Below Budget Capacity</p>
+          <div className="mt-3 space-y-2">
+            {underBudgetRows.map((row) => (
+              <div key={`under-${row.label}`} className="rounded-[10px] border border-sky-200 bg-white px-3 py-2">
+                <p className="text-sm font-semibold text-slate-900">{row.label}</p>
+                <p className="text-xs text-sky-800">
+                  {formatSignedAmount(row.variance)} vs budget | {formatOpexPercent(row.achievementPct)} achievement
+                </p>
+              </div>
+            ))}
+            {underBudgetRows.length === 0 ? <p className="text-sm text-slate-600">No CeCoGroup is materially below budget.</p> : null}
+          </div>
+        </article>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <PayrollBreakdownTable title="Base Salaries by CeCoGroup" rows={data.byCecoGroup} />
+        <PayrollBreakdownTable title="Base Salaries by Business Unit" rows={data.byBusinessUnit} />
+      </div>
+    </div>
   );
 }
 
@@ -408,31 +815,43 @@ function TurnoverTargetPanel({
       </p>
       <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Current YTD</p>
+          <KpiLabel help="Current year-to-date exits for the selected turnover scope.">
+            Current YTD
+          </KpiLabel>
           <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(data.summary.currentYtdExits)}</p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">PY YTD</p>
+          <KpiLabel help="Previous-year exits accumulated through the same month cut.">
+            PY YTD
+          </KpiLabel>
           <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(data.summary.previousYtdExits)}</p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Target YTD (-15% vs PY Voluntary)</p>
+          <KpiLabel help="Target trajectory for the current cut, based on reducing prior-year voluntary turnover by 15%.">
+            Target YTD
+          </KpiLabel>
           <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(data.summary.targetYtdExits)}</p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Variance vs Target</p>
+          <KpiLabel help="Current YTD exits minus target exits. Positive means above the target trajectory.">
+            Variance vs Target
+          </KpiLabel>
           <p className={`mt-1 text-xl font-semibold ${data.summary.varianceVsTarget <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
             {formatSignedInt(data.summary.varianceVsTarget)}
           </p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Growth vs PY</p>
+          <KpiLabel help="Current YTD exits compared with previous-year YTD exits.">
+            Growth vs PY
+          </KpiLabel>
           <p className={`mt-1 text-xl font-semibold ${data.summary.growthVsPyPct !== null && data.summary.growthVsPyPct <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
             {formatSignedPercent(data.summary.growthVsPyPct)}
           </p>
         </div>
         <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Target Status</p>
+          <KpiLabel help="On Track when turnover is at or below the target trajectory.">
+            Target Status
+          </KpiLabel>
           <p className={`mt-1 text-base font-semibold ${data.summary.onTrackToTarget ? 'text-emerald-700' : 'text-rose-700'}`}>
             {data.summary.onTrackToTarget ? 'On Track' : 'Above Target'}
           </p>
@@ -574,16 +993,21 @@ function NarrativePanel({
 function InsightsPanel({
   turnoverThemeTotal,
   trainingThemeTotal,
+  payrollAchievement,
 }: {
   turnoverThemeTotal: HumanResourcesTurnoverThemeData | null;
   trainingThemeTotal: HumanResourcesTrainingThemeData | null;
+  payrollAchievement: PayrollAchievementData | null;
 }) {
   const turnoverInsights = turnoverThemeTotal?.insights ?? [];
   const trainingInsights = trainingThemeTotal?.insights ?? [];
+  const payrollStatusLabel = payrollStatus(payrollAchievement?.ytd.achievementPct ?? null).label;
+  const payrollOverBudget = payrollAchievement?.byCecoGroup.filter((row) => row.variance > 0).slice(0, 3) ?? [];
+  const payrollUnderBudget = payrollAchievement?.byCecoGroup.filter((row) => row.variance < 0).slice(0, 3) ?? [];
   return (
     <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
       <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Insights</p>
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+      <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Turnover Signals</p>
           {turnoverInsights.map((insight) => (
@@ -625,6 +1049,44 @@ function InsightsPanel({
               <p className="mt-1 text-xs text-slate-700">{insight.message}</p>
             </div>
           ))}
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Payroll Signals</p>
+          {payrollAchievement ? (
+            <>
+              <div className="rounded-[12px] border border-slate-200 bg-slate-50/60 p-3">
+                <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Payroll Achievement</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {payrollStatusLabel}: {formatOpexPercent(payrollAchievement.ytd.achievementPct)} YTD.
+                </p>
+                <p className="mt-1 text-xs text-slate-700">
+                  Actual {formatAmount(payrollAchievement.ytd.actual)} vs budget {formatAmount(payrollAchievement.ytd.budget)}.
+                </p>
+              </div>
+              {payrollOverBudget.map((row) => (
+                <div key={`payroll-over-${row.label}`} className="rounded-[12px] border border-rose-200 bg-rose-50/70 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-rose-700">Over Budget</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{row.label}</p>
+                  <p className="mt-1 text-xs text-slate-700">
+                    {formatSignedAmount(row.variance)} vs budget, {formatOpexPercent(row.achievementPct)} achievement.
+                  </p>
+                </div>
+              ))}
+              {payrollOverBudget.length === 0 && payrollUnderBudget[0] ? (
+                <div className="rounded-[12px] border border-emerald-200 bg-emerald-50/70 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-emerald-700">Budget Capacity</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{payrollUnderBudget[0].label}</p>
+                  <p className="mt-1 text-xs text-slate-700">
+                    {formatSignedAmount(payrollUnderBudget[0].variance)} vs budget.
+                  </p>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="rounded-[12px] border border-slate-200 bg-slate-50/60 p-3 text-sm text-slate-600">
+              No payroll Base Salaries signal available.
+            </p>
+          )}
         </div>
       </div>
     </article>
@@ -770,9 +1232,11 @@ function ScorecardPanel({
 function ScorecardPanelV2({
   turnoverThemeTotal,
   trainingThemeTotal,
+  payrollAchievement,
 }: {
   turnoverThemeTotal: HumanResourcesTurnoverThemeData | null;
   trainingThemeTotal: HumanResourcesTrainingThemeData | null;
+  payrollAchievement: PayrollAchievementData | null;
 }) {
   const summary = turnoverThemeTotal?.summary;
   const topDepartment = turnoverThemeTotal?.topDepartments?.[0];
@@ -795,6 +1259,9 @@ function ScorecardPanelV2({
         : trainingCoverage >= 0.7
           ? 'Watch'
           : 'At Risk';
+  const payrollYtdStatus = payrollStatus(payrollAchievement?.ytd.achievementPct ?? null);
+  const payrollTopOverBudget = payrollAchievement?.byCecoGroup.find((row) => row.variance > 0) ?? null;
+  const payrollTopUnderBudget = payrollAchievement?.byCecoGroup.find((row) => row.variance < 0) ?? null;
 
   const working: string[] = [];
   const improve: string[] = [];
@@ -862,6 +1329,25 @@ function ScorecardPanelV2({
     actions.push('TRN|||Validate tuition capture quality and tag paid trainings consistently.');
   }
 
+  if (payrollAchievement) {
+    if (payrollAchievement.ytd.achievementPct != null && Math.abs(payrollAchievement.ytd.achievementPct - 100) <= 3) {
+      working.push(`PAY|||Payroll is on plan at ${formatOpexPercent(payrollAchievement.ytd.achievementPct)} YTD achievement.`);
+    } else if (payrollAchievement.ytd.variance > 0) {
+      improve.push(`PAY|||Payroll is over budget by ${formatSignedAmount(payrollAchievement.ytd.variance)} YTD.`);
+      actions.push('PAY|||Review Base Salaries drivers by CeCoGroup and freeze non-critical incremental payroll commitments.');
+    } else if (payrollAchievement.ytd.variance < 0) {
+      working.push(`PAY|||Payroll is below budget by ${formatSignedAmount(payrollAchievement.ytd.variance)} YTD.`);
+    }
+    if (payrollTopOverBudget) {
+      improve.push(
+        `PAY|||${payrollTopOverBudget.label} is the largest payroll variance: ${formatSignedAmount(payrollTopOverBudget.variance)} vs budget.`,
+      );
+      actions.push(`PAY|||Validate payroll accruals and headcount movements in ${payrollTopOverBudget.label}.`);
+    } else if (payrollTopUnderBudget) {
+      working.push(`PAY|||${payrollTopUnderBudget.label} has available payroll capacity (${formatSignedAmount(payrollTopUnderBudget.variance)}).`);
+    }
+  }
+
   if ((topDepartment?.contributionPct ?? 0) >= 0.35) {
     improve.push(
       `TOV|||${topDepartment?.label} concentrates ${formatPercent(topDepartment?.contributionPct ?? null)} of total exits.`,
@@ -907,7 +1393,7 @@ function ScorecardPanelV2({
             YTD vs PY + Target + Completion
           </p>
         </div>
-        <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        <div className="mt-4 grid gap-3 xl:grid-cols-3">
           <div className="rounded-[14px] border border-rose-200 bg-rose-50/70 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-700">Turnover</p>
             <p className="mt-1 text-xs text-rose-900">Exit pressure, target attainment and concentration risk.</p>
@@ -933,6 +1419,20 @@ function ScorecardPanelV2({
               {trainingStatus}
             </span>
           </div>
+          <div className="rounded-[14px] border border-violet-200 bg-violet-50/70 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-violet-700">Payroll Achievement</p>
+            <p className="mt-1 text-xs text-violet-900">Base Salaries budget discipline from OPEX.</p>
+            <p className="mt-2 text-xs text-slate-700">
+              YTD {formatAmount(payrollAchievement?.ytd.actual ?? 0)} | Budget {formatAmount(payrollAchievement?.ytd.budget ?? 0)}
+            </p>
+            <p className="mt-1 text-xs text-slate-700">
+              Variance {formatSignedAmount(payrollAchievement?.ytd.variance ?? null)} | vs PY{' '}
+              {formatSignedOpexPercent(payrollAchievement?.ytd.vsPyPct ?? null)}
+            </p>
+            <span className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${payrollYtdStatus.className}`}>
+              {payrollYtdStatus.label}
+            </span>
+          </div>
         </div>
       </article>
 
@@ -949,7 +1449,9 @@ function ScorecardPanelV2({
                     className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.12em] ${
                       tag === 'TRN'
                         ? 'border-blue-200 bg-blue-50 text-blue-800'
-                        : 'border-slate-300 bg-slate-50 text-slate-700'
+                        : tag === 'PAY'
+                          ? 'border-violet-200 bg-violet-50 text-violet-800'
+                          : 'border-slate-300 bg-slate-50 text-slate-700'
                     }`}
                   >
                     {tag}
@@ -973,7 +1475,9 @@ function ScorecardPanelV2({
                     className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.12em] ${
                       tag === 'TRN'
                         ? 'border-blue-200 bg-blue-50 text-blue-800'
-                        : 'border-slate-300 bg-slate-50 text-slate-700'
+                        : tag === 'PAY'
+                          ? 'border-violet-200 bg-violet-50 text-violet-800'
+                          : 'border-slate-300 bg-slate-50 text-slate-700'
                     }`}
                   >
                     {tag}
@@ -999,7 +1503,9 @@ function ScorecardPanelV2({
                   className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.12em] ${
                     tag === 'TRN'
                       ? 'border-blue-200 bg-blue-50 text-blue-800'
-                      : 'border-slate-300 bg-slate-50 text-slate-700'
+                      : tag === 'PAY'
+                        ? 'border-violet-200 bg-violet-50 text-violet-800'
+                        : 'border-slate-300 bg-slate-50 text-slate-700'
                   }`}
                 >
                   {tag}
@@ -1045,6 +1551,7 @@ const getCachedData = unstable_cache(
       trainingThemeTotal,
       trainingThemeOnline,
       trainingThemeFaceToFace,
+      opexRows,
     ] = await Promise.all([
       getHumanResourcesAuditSources(reportingVersionId || undefined),
       getHumanResourcesTurnoverOverview(reportingVersionId || undefined),
@@ -1056,7 +1563,9 @@ const getCachedData = unstable_cache(
       getHumanResourcesTrainingThemeData(reportingVersionId || undefined, 'total'),
       getHumanResourcesTrainingThemeData(reportingVersionId || undefined, 'online'),
       getHumanResourcesTrainingThemeData(reportingVersionId || undefined, 'face_to_face'),
+      getOpexRows(reportingVersionId || undefined),
     ]);
+    const payrollAchievement = buildPayrollAchievementData(opexRows);
 
     return {
       auditSources,
@@ -1069,9 +1578,10 @@ const getCachedData = unstable_cache(
       trainingThemeTotal,
       trainingThemeOnline,
       trainingThemeFaceToFace,
+      payrollAchievement,
     };
   },
-  ['human-resources-v5'],
+  ['human-resources-v7'],
   { revalidate: 90 },
 );
 
@@ -1092,9 +1602,16 @@ export async function HumanResourcesView({
   viewMode: HumanResourcesViewMode;
   searchParams?: SearchParams;
 }) {
-  const selectedReportingVersionId = searchParams.version ?? '';
+  const versions = await getReportingVersions({
+    statuses: searchParams.version ? ['draft', 'ready_to_show', 'closed'] : ['ready_to_show', 'closed'],
+  });
+  const selectedVersion =
+    versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];
+  const selectedReportingVersionId = selectedVersion?.reportingVersionId ?? searchParams.version ?? '';
   const activeDashboardTab: HumanResourcesDashboardTab =
-    searchParams.hrTab === 'training' ? 'training' : 'turnover';
+    searchParams.hrTab === 'training' || searchParams.hrTab === 'payroll'
+      ? searchParams.hrTab
+      : 'turnover';
   const turnoverScope: HumanResourcesTurnoverScope =
     searchParams.turnoverScope === 'voluntary' || searchParams.turnoverScope === 'involuntary'
       ? searchParams.turnoverScope
@@ -1174,6 +1691,7 @@ export async function HumanResourcesView({
         trainingHours={trainingOverview?.ytdTotalHours ?? 0}
         trainingCompletionRate={trainingOverview?.ytdCompletionRate ?? null}
         activeUsers={trainingOverview?.ytdActiveUsers ?? 0}
+        payrollAchievement={data.payrollAchievement}
       />
 
       {viewMode === 'dashboard' ? (
@@ -1185,6 +1703,7 @@ export async function HumanResourcesView({
           trainingInstructorRows={trainingInstructorRows}
           turnoverThemeData={turnoverThemeData}
           trainingThemeData={trainingThemeData}
+          payrollAchievement={data.payrollAchievement}
           activeTab={activeDashboardTab}
           turnoverScope={turnoverScope}
           trainingScope={trainingScope}
@@ -1196,6 +1715,7 @@ export async function HumanResourcesView({
         <InsightsPanel
           turnoverThemeTotal={data.turnoverThemeTotal}
           trainingThemeTotal={data.trainingThemeTotal}
+          payrollAchievement={data.payrollAchievement}
         />
       ) : null}
 
@@ -1203,6 +1723,7 @@ export async function HumanResourcesView({
         <ScorecardPanelV2
           turnoverThemeTotal={data.turnoverThemeTotal}
           trainingThemeTotal={data.trainingThemeTotal}
+          payrollAchievement={data.payrollAchievement}
         />
       ) : null}
 

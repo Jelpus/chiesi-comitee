@@ -1,6 +1,7 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { refreshSalesInternalServingArtifacts } from '@/lib/serving/refresh-sales-internal-serving';
+import { refreshBusinessExcellenceFieldForceServingArtifacts } from '@/lib/serving/refresh-business-excellence-field-force';
 
 type UploadPublishContext = {
   uploadId: string;
@@ -174,6 +175,7 @@ async function publishBusinessExcellenceCloseupUpload(context: UploadPublishCont
     params: { reportingVersionId: context.reportingVersionId },
   });
 
+  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
@@ -327,6 +329,7 @@ async function publishBusinessExcellenceDddUpload(context: UploadPublishContext)
     },
   });
 
+  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
@@ -476,6 +479,7 @@ async function publishBusinessExcellenceSellOutUpload(context: UploadPublishCont
     },
   });
 
+  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 

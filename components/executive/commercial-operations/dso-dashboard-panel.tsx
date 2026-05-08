@@ -2141,7 +2141,7 @@ export function DsoDashboardPanel({
               >
                 {governmentSummary.ytdAvgDelta == null
                   ? 'N/A'
-                  : `${governmentSummary.ytdAvgDelta > 0 ? '+' : ''}${governmentSummary.ytdAvgDelta.toFixed(1)}`}
+                  : formatSignedQuantity(governmentSummary.ytdAvgDelta)}
               </p>
               <p className="text-xs text-slate-600">Monthly average delta</p>
             </div>
@@ -2190,7 +2190,7 @@ export function DsoDashboardPanel({
             <div>
               <h3 className="text-base font-semibold tracking-tight text-slate-900">Delivered Trend (Monthly)</h3>
               <div className="mt-3">
-                <DsoTrendChart rows={governmentTrendRows} metricLabel="Delivered Qty" />
+                <DsoTrendChart rows={governmentTrendRows} metricLabel="Delivered Qty" valueFormat="quantity" />
               </div>
             </div>
             <div>
@@ -2208,6 +2208,7 @@ export function DsoDashboardPanel({
                   targetLabel="Forecast M+1"
                   mMinus1Label="Previous Month"
                   currentLabel="Current Month"
+                  valueFormat="quantity"
                 />
               </div>
               <div className="mt-3 rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">

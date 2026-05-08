@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { MedicalMslDashboardData, MedicalMslDashboardRow } from '@/lib/data/medical';
 
 function formatPercent(value: number | null | undefined) {
@@ -11,6 +12,27 @@ function formatPercent(value: number | null | undefined) {
 function formatInteger(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return 'N/A';
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+
+function KpiHelp({ text }: { text: string }) {
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500"
+      title={text}
+      aria-label={text}
+    >
+      ?
+    </span>
+  );
+}
+
+function KpiLabel({ children, help }: { children: ReactNode; help: string }) {
+  return (
+    <p className="flex items-center gap-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+      <span>{children}</span>
+      <KpiHelp text={help} />
+    </p>
+  );
 }
 
 type Props = {
@@ -81,27 +103,39 @@ export function MedicalFieldExecutionPanelClient({ data }: Props) {
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">MLS</p>
+          <KpiLabel help="Number of Medical Science Liaisons included in the selected YTD or MTH scope.">
+            MLS
+          </KpiLabel>
           <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatInteger(scopeSummary?.totalMls ?? 0)}</p>
         </article>
         <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Clients</p>
+          <KpiLabel help="Total assigned clients across the MLS population in the selected scope.">
+            Clients
+          </KpiLabel>
           <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatInteger(scopeSummary?.clients ?? 0)}</p>
         </article>
         <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Interactions</p>
+          <KpiLabel help="Total recorded Medical interactions for the selected YTD or MTH scope.">
+            Interactions
+          </KpiLabel>
           <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatInteger(scopeSummary?.interactions ?? 0)}</p>
         </article>
         <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Target</p>
+          <KpiLabel help="Expected interaction target for the selected scope, using the Medical MLS target logic.">
+            Target
+          </KpiLabel>
           <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatInteger(scopeSummary?.target ?? 0)}</p>
         </article>
         <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Coverage</p>
+          <KpiLabel help="Interactions divided by target for the selected MLS scope.">
+            Coverage
+          </KpiLabel>
           <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(scopeSummary?.coveragePct ?? null)}</p>
         </article>
         <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Reach</p>
+          <KpiLabel help="Unique clients reached divided by total assigned clients in the selected scope.">
+            Reach
+          </KpiLabel>
           <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(scopeSummary?.reachPct ?? null)}</p>
           <p className="mt-1 text-xs text-slate-600">{formatInteger(scopeSummary?.uniqueClientsReached ?? 0)} unique reached</p>
         </article>
@@ -178,4 +212,3 @@ export function MedicalFieldExecutionPanelClient({ data }: Props) {
     </div>
   );
 }
-

@@ -22,11 +22,17 @@ type DsoComparisonBarChartProps = {
   targetLabel?: string;
   mMinus1Label?: string;
   currentLabel?: string;
+  valueFormat?: 'decimal' | 'quantity';
 };
 
 function formatValue(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return 'N/A';
   return value.toFixed(1);
+}
+
+function formatQuantity(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 }
 
 export function DsoComparisonBarChart({
@@ -40,7 +46,9 @@ export function DsoComparisonBarChart({
   targetLabel = 'Current Target',
   mMinus1Label = 'Previous Month',
   currentLabel = 'Current Month',
+  valueFormat = 'decimal',
 }: DsoComparisonBarChartProps) {
+  const formatPrimaryValue = valueFormat === 'quantity' ? formatQuantity : formatValue;
   const baseRows = [
     { label: pyAvgLabel, value: pyAvg, color: '#94a3b8' },
     { label: mMinus1Label, value: mMinus1, color: '#86efac' },
@@ -77,9 +85,16 @@ export function DsoComparisonBarChart({
             textAnchor="end"
             height={68}
           />
-          <YAxis tickLine={false} axisLine={false} stroke="#64748b" fontSize={11} width={48} />
+          <YAxis
+            tickLine={false}
+            axisLine={false}
+            stroke="#64748b"
+            fontSize={11}
+            width={48}
+            tickFormatter={(value) => (typeof value === 'number' ? formatPrimaryValue(value) : String(value))}
+          />
           <Tooltip
-            formatter={(value: unknown) => [typeof value === 'number' ? formatValue(value) : 'N/A', metricLabel]}
+            formatter={(value: unknown) => [typeof value === 'number' ? formatPrimaryValue(value) : 'N/A', metricLabel]}
           />
           <Bar dataKey="value" radius={[6, 6, 0, 0]}>
             {rows.map((row) => (

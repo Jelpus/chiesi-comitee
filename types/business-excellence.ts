@@ -468,6 +468,14 @@ export type BusinessExcellenceFieldForceExcellenceRow = {
   coverageMthPct: number | null;
   coverageAdjustedYtdPct: number | null;
   coverageAdjustedMthPct: number | null;
+  inFrequencyYtdPct: number | null;
+  inFrequencyMthPct: number | null;
+  inFrequencyAdjustedYtdPct: number | null;
+  inFrequencyAdjustedMthPct: number | null;
+  inFrequencyClientsYtd: number;
+  inFrequencyClientsMth: number;
+  inFrequencyClientsAdjustedYtd: number;
+  inFrequencyClientsAdjustedMth: number;
   tftDaysYtd: number;
   tftDaysMth: number;
   workingDaysYtd: number;
@@ -501,6 +509,14 @@ export type BusinessExcellenceFieldForceSummaryRow = {
   interacciones: number;
   coberturaBasePct: number | null;
   coberturaAdjustedPct: number | null;
+  inFrequencyClients: number;
+  inFrequencyClientsAdjusted: number;
+  inFrequencyRatePct: number | null;
+  inFrequencyRateAdjustedPct: number | null;
+  workingDays: number;
+  effectiveDays: number;
+  cpd: number | null;
+  cpdAdjusted: number | null;
   diasFuera: number;
   indiceEvolucionBuPct: number | null;
 };
@@ -511,7 +527,9 @@ export type BusinessExcellenceFieldForceDoctorDetailRow = {
   district: string | null;
   territoryName: string | null;
   territoryNormalized: string | null;
+  specialtyConsolidated: string | null;
   potencial: string | null;
+  channel: string;
   clientName: string | null;
   doctorId: string;
   objetivoBase: number;
@@ -519,15 +537,75 @@ export type BusinessExcellenceFieldForceDoctorDetailRow = {
   interacciones: number;
   coberturaBasePct: number | null;
   coberturaAdjustedPct: number | null;
+  workingDays: number;
+  effectiveDays: number;
+  inFrequency: boolean;
+  inFrequencyAdjusted: boolean;
   statusVisita: 'no_visitado' | 'subvisitado' | 'en_objetivo' | 'sobrevisitado' | 'sin_clasificacion';
 };
 
 export type BusinessExcellenceFieldForceInteractionMixRow = {
   periodScope: 'YTD' | 'MTH';
   bu: 'total' | 'air' | 'care';
+  potencial: string | null;
   channel: string;
   visitType: string;
   interactions: number;
+};
+
+export type BusinessExcellenceFieldForceDetailRow = {
+  label: string;
+  clients: number;
+  interacciones: number;
+  visitCoveragePct: number | null;
+  inFrequencyRatePct: number | null;
+  cpd: number | null;
+};
+
+export type BusinessExcellenceFieldForceVisitTypeRow = {
+  visitType: string;
+  fullVisitType: string;
+  channel: string;
+  interactions: number;
+};
+
+export type BusinessExcellenceFieldForceStatusMixRow = {
+  name: 'In Frequency' | 'Out of Frequency';
+  value: number;
+  color: string;
+};
+
+export type BusinessExcellenceFieldForceOpportunityRow = {
+  label: string;
+  fullLabel: string;
+  objetivo: number;
+  interacciones: number;
+  gap: number;
+};
+
+export type BusinessExcellenceFieldForceHcpZoomRow = {
+  doctorId: string;
+  clientName: string;
+  territory: string;
+  district: string;
+  bu: 'air' | 'care';
+  potencial: string | null;
+  specialtyConsolidated: string;
+  objective: number;
+  interacciones: number;
+  difference?: number;
+  gap?: number;
+};
+
+export type BusinessExcellenceFieldForceDetailData = {
+  detailRows: BusinessExcellenceFieldForceDetailRow[];
+  interactionMixChart: BusinessExcellenceFieldForceVisitTypeRow[];
+  statusMixData: BusinessExcellenceFieldForceStatusMixRow[];
+  opportunityData: BusinessExcellenceFieldForceOpportunityRow[];
+  overvisitedTop: BusinessExcellenceFieldForceHcpZoomRow[];
+  subvisitedTop: BusinessExcellenceFieldForceHcpZoomRow[];
+  noVisitedRows: BusinessExcellenceFieldForceHcpZoomRow[];
+  channelOptions: string[];
 };
 
 export type BusinessExcellenceFieldForceExcellenceData = {

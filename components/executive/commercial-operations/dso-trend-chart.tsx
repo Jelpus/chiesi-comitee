@@ -21,6 +21,7 @@ type DsoTrendPoint = {
 type DsoTrendChartProps = {
   rows: DsoTrendPoint[];
   metricLabel?: string;
+  valueFormat?: 'decimal' | 'quantity';
 };
 
 function formatMonthShort(value: string) {
@@ -40,7 +41,9 @@ function formatWholeNumber(value: number | null | undefined) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 }
 
-export function DsoTrendChart({ rows, metricLabel = 'DSO' }: DsoTrendChartProps) {
+export function DsoTrendChart({ rows, metricLabel = 'DSO', valueFormat = 'decimal' }: DsoTrendChartProps) {
+  const formatPrimaryValue = valueFormat === 'quantity' ? formatWholeNumber : formatNumber;
+
   if (rows.length === 0) {
     return (
       <div className="flex h-[320px] items-center justify-center rounded-[16px] border border-dashed border-slate-200 text-sm text-slate-500">
@@ -69,6 +72,7 @@ export function DsoTrendChart({ rows, metricLabel = 'DSO' }: DsoTrendChartProps)
             tickLine={false}
             axisLine={false}
             width={48}
+            tickFormatter={(value) => (typeof value === 'number' ? formatPrimaryValue(value) : String(value))}
           />
           <YAxis
             yAxisId="right"
@@ -83,7 +87,7 @@ export function DsoTrendChart({ rows, metricLabel = 'DSO' }: DsoTrendChartProps)
             formatter={(value: unknown, name: unknown) => {
               if (String(name) === 'stockValue') return [typeof value === 'number' ? formatWholeNumber(value) : 'N/A', 'Stock'];
               if (String(name) === 'sellOutValue') return [typeof value === 'number' ? formatWholeNumber(value) : 'N/A', 'Sell-out'];
-              return [typeof value === 'number' ? formatNumber(value) : 'N/A', String(name) === 'dsoValue' ? metricLabel : 'Target'];
+              return [typeof value === 'number' ? formatPrimaryValue(value) : 'N/A', String(name) === 'dsoValue' ? metricLabel : 'Target'];
             }}
             labelFormatter={(label) => formatMonthShort(String(label))}
           />

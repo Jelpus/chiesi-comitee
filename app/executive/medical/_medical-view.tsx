@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import type { ReactNode } from 'react';
+import { MedicalDashboardTabs } from '@/components/executive/medical/medical-dashboard-tabs';
 import { MedicalFieldExecutionPanelClient } from '@/components/executive/medical/medical-field-execution-panel-client';
 import { SectionHeader } from '@/components/ui/section-header';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
@@ -43,6 +45,27 @@ function formatResult(value: number | null, qtyUnit: string, fallbackText: strin
   if (qtyUnit === '%') return `${value.toFixed(1)}%`;
   if (qtyUnit.toLowerCase() === 'count' || qtyUnit.toLowerCase() === 'index') return `${Math.round(value)}`;
   return value.toFixed(1);
+}
+
+function KpiHelp({ text }: { text: string }) {
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500"
+      title={text}
+      aria-label={text}
+    >
+      ?
+    </span>
+  );
+}
+
+function KpiLabel({ children, help }: { children: ReactNode; help: string }) {
+  return (
+    <p className="flex items-center gap-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+      <span>{children}</span>
+      <KpiHelp text={help} />
+    </p>
+  );
 }
 
 function statusClasses(status: MedicalKpiStatus) {
@@ -90,19 +113,25 @@ function TopCards({
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">KPIs On Track</p>
+        <KpiLabel help="Number of Medical KPIs currently classified as on track out of all active KPI targets in this reporting cut.">
+          KPIs On Track
+        </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
           {onTrack}/{totalKpis}
         </p>
         <p className="mt-1 text-xs text-slate-600">Current cut status</p>
       </article>
       <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">MSL Visit Coverage</p>
+        <KpiLabel help="YTD MSL interactions divided by the visit target for the selected Medical Salesforce cut.">
+          MSL Visit Coverage
+        </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(mslCoveragePct)}</p>
         <p className="mt-1 text-xs text-slate-600">Reach YTD {formatPercent(mslReachPct)}</p>
       </article>
       <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Health Score</p>
+        <KpiLabel help="Weighted KPI health: on-track KPIs count fully and watch KPIs count half, divided by total KPIs.">
+          Health Score
+        </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatPercent(healthScorePct)}</p>
         <p className="mt-1 text-xs text-slate-600">((On Track*1) + (Watch*0.5)) / Total</p>
       </article>
@@ -124,21 +153,57 @@ function StatusStack({
   const onTrackPct = total > 0 ? (onTrack / total) * 100 : 0;
   const watchPct = total > 0 ? (watch / total) * 100 : 0;
   const offTrackPct = total > 0 ? (offTrack / total) * 100 : 0;
+  const healthPct = total > 0 ? ((onTrack + watch * 0.5) / total) * 100 : null;
 
   return (
     <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-      <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Status Mix</p>
-      <div className="mt-3 h-4 w-full overflow-hidden rounded-full border border-slate-200">
-        <div className="flex h-full w-full">
-          <div className="bg-emerald-500" style={{ width: `${onTrackPct}%` }} />
-          <div className="bg-amber-400" style={{ width: `${watchPct}%` }} />
-          <div className="bg-rose-500" style={{ width: `${offTrackPct}%` }} />
+      <KpiLabel help="Distribution of Medical KPIs by on-track, watch, and off-track status.">
+        Status Mix
+      </KpiLabel>
+      <div className="mt-4 grid gap-4 md:grid-cols-[180px_minmax(0,1fr)]">
+        <div className="flex justify-center">
+          <div
+            className="relative h-40 w-40 rounded-full"
+            style={{
+              background: `conic-gradient(#10b981 0 ${onTrackPct}%, #f59e0b ${onTrackPct}% ${onTrackPct + watchPct}%, #f43f5e ${onTrackPct + watchPct}% 100%)`,
+            }}
+          >
+            <div className="absolute inset-6 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">Health</p>
+              <p className="text-2xl font-semibold text-slate-950">{formatPercent(healthPct)}</p>
+              <p className="text-xs text-slate-500">{total} KPIs</p>
+            </div>
+          </div>
         </div>
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-        <p className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">On Track {onTrack}</p>
-        <p className="rounded-md bg-amber-50 px-2 py-1 text-amber-800">Watch {watch}</p>
-        <p className="rounded-md bg-rose-50 px-2 py-1 text-rose-800">Off {offTrack}</p>
+        <div className="grid content-center gap-2 text-sm">
+          <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-semibold text-emerald-800">
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                On Track
+              </span>
+              <span className="text-emerald-900">{onTrack} ({formatPercent(onTrackPct)})</span>
+            </div>
+          </div>
+          <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-semibold text-amber-800">
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                Watch
+              </span>
+              <span className="text-amber-900">{watch} ({formatPercent(watchPct)})</span>
+            </div>
+          </div>
+          <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-semibold text-rose-800">
+                <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
+                Off Track
+              </span>
+              <span className="text-rose-900">{offTrack} ({formatPercent(offTrackPct)})</span>
+            </div>
+          </div>
+        </div>
       </div>
     </article>
   );
@@ -414,94 +479,99 @@ export async function MedicalView({ viewMode, searchParams = {} }: MedicalViewPr
         ) : null}
 
         {viewMode === 'dashboard' ? (
-          <div className="space-y-3">
-            <div className="grid gap-3 xl:grid-cols-2">
-              <StatusStack
-                onTrack={data.summary.onTrack}
-                watch={data.summary.watch}
-                offTrack={data.summary.offTrack}
-                total={data.summary.totalKpis}
-              />
-              <article className="rounded-[18px] border border-slate-200 bg-white p-4">
-                <p className="text-xs uppercase tracking-[0.14em] text-slate-500">KPI Coverage</p>
-                <div className="mt-3 space-y-2">
-                  {data.scores.map((item) => {
-                    const coverage = item.coveragePct ?? 0;
-                    const width = Math.max(0, Math.min(coverage, 140));
-                    return (
-                      <div key={`coverage-${item.kpiLabel}-${item.kpiName}`}>
-                        <div className="mb-1 flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-700">{item.kpiLabel}</span>
-                          <span className="text-slate-500">{formatPercent(item.coveragePct)}</span>
-                        </div>
-                        <div className="h-3 w-full overflow-hidden rounded-full border border-slate-200">
-                          <div
-                            className={`h-full ${item.status === 'on_track' ? 'bg-emerald-500' : item.status === 'watch' ? 'bg-amber-400' : 'bg-rose-500'}`}
-                            style={{ width: `${width}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+          <MedicalDashboardTabs
+            targetsContent={
+              <div className="space-y-3">
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <StatusStack
+                    onTrack={data.summary.onTrack}
+                    watch={data.summary.watch}
+                    offTrack={data.summary.offTrack}
+                    total={data.summary.totalKpis}
+                  />
+                  <article className="rounded-[18px] border border-slate-200 bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">KPI Coverage</p>
+                    <div className="mt-3 space-y-2">
+                      {data.scores.map((item) => {
+                        const coverage = item.coveragePct ?? 0;
+                        const width = Math.max(0, Math.min(coverage, 140));
+                        return (
+                          <div key={`coverage-${item.kpiLabel}-${item.kpiName}`}>
+                            <div className="mb-1 flex items-center justify-between text-xs">
+                              <span className="font-semibold text-slate-700">{item.kpiLabel}</span>
+                              <span className="text-slate-500">{formatPercent(item.coveragePct)}</span>
+                            </div>
+                            <div className="h-3 w-full overflow-hidden rounded-full border border-slate-200">
+                              <div
+                                className={`h-full ${item.status === 'on_track' ? 'bg-emerald-500' : item.status === 'watch' ? 'bg-amber-400' : 'bg-rose-500'}`}
+                                style={{ width: `${width}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </article>
                 </div>
-              </article>
-            </div>
 
-            <article className="overflow-hidden rounded-[18px] border border-slate-200 bg-white">
-              <div className="overflow-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-50">
-                    <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                      <th className="px-4 py-3">KPI</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Unit</th>
-                      <th className="px-4 py-3">Target</th>
-                      <th className="px-4 py-3">Result</th>
-                      <th className="px-4 py-3">Coverage</th>
-                      <th className="px-4 py-3">Comment</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {data.scores.map((item) => (
-                      <tr key={`${item.kpiLabel}-${item.kpiName}`}>
-                        <td className="px-4 py-3 font-semibold text-slate-900">{item.kpiLabel}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${statusClasses(item.status)}`}
-                          >
-                            {item.statusLabel}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-slate-700">{item.qtyUnit}</td>
-                        <td className="px-4 py-3 text-slate-700">{item.targetText}</td>
-                        <td className="px-4 py-3 text-slate-700">
-                          {formatResult(item.resultNumeric, item.qtyUnit, item.resultText)}
-                        </td>
-                        <td className="px-4 py-3 text-slate-700">{formatPercent(item.coveragePct)}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className="inline-flex cursor-help rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-700"
-                            title={item.comment || 'N/A'}
-                          >
-                            Comment
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {data.scores.length === 0 ? (
-                      <tr>
-                        <td className="px-4 py-6 text-center text-slate-500" colSpan={7}>
-                          No Medical submissions found for this period. Use `/forms/medical`.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                <article className="overflow-hidden rounded-[18px] border border-slate-200 bg-white">
+                  <div className="overflow-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                      <thead className="bg-slate-50">
+                        <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                          <th className="px-4 py-3">KPI</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Unit</th>
+                          <th className="px-4 py-3">Target</th>
+                          <th className="px-4 py-3">Result</th>
+                          <th className="px-4 py-3">Coverage</th>
+                          <th className="px-4 py-3">Comment</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {data.scores.map((item) => (
+                          <tr key={`${item.kpiLabel}-${item.kpiName}`}>
+                            <td className="px-4 py-3 font-semibold text-slate-900">{item.kpiLabel}</td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${statusClasses(item.status)}`}
+                              >
+                                {item.statusLabel}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-slate-700">{item.qtyUnit}</td>
+                            <td className="px-4 py-3 text-slate-700">{item.targetText}</td>
+                            <td className="px-4 py-3 text-slate-700">
+                              {formatResult(item.resultNumeric, item.qtyUnit, item.resultText)}
+                            </td>
+                            <td className="px-4 py-3 text-slate-700">{formatPercent(item.coveragePct)}</td>
+                            <td className="px-4 py-3">
+                              {item.comment && item.comment.trim() ? (
+                                <span
+                                  className="inline-flex cursor-help rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-700"
+                                  title={item.comment}
+                                >
+                                  Comment
+                                </span>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                        {data.scores.length === 0 ? (
+                          <tr>
+                            <td className="px-4 py-6 text-center text-slate-500" colSpan={7}>
+                              No Medical submissions found for this period. Use `/forms/medical`.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
               </div>
-            </article>
-
-            <MedicalFieldExecutionPanelClient data={dashboardData} />
-          </div>
+            }
+            mslContent={<MedicalFieldExecutionPanelClient data={dashboardData} />}
+          />
         ) : null}
 
         {!hasData ? (
