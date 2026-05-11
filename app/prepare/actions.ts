@@ -145,6 +145,88 @@ function revalidatePrepare(areaCode: string) {
   revalidatePath('/executive');
 }
 
+async function validatePrepareUploadRequest(formData: FormData) {
+  const moduleCode = String(formData.get('moduleCode') ?? '').trim();
+  const areaCode = String(formData.get('areaCode') ?? '').trim();
+  const reportingVersionId = String(formData.get('reportingVersionId') ?? '').trim();
+  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
+  const dddSource = normalizeDddSource(formData.get('dddSource'));
+  const confirmProductionVersion = String(formData.get('confirmProductionVersion') ?? '') === 'true';
+  const confirmSourceAsOfMonth = String(formData.get('confirmSourceAsOfMonth') ?? '') === 'true';
+
+  if (!moduleCode || !areaCode || !reportingVersionId) {
+    throw new Error('Faltan datos obligatorios para preparar la carga.');
+  }
+  if (!sourceAsOfMonth) {
+    throw new Error('Indica a que cierre de mes corresponde la informacion del archivo.');
+  }
+
+  await validateModuleArea(moduleCode, areaCode);
+  const version = await getReportingVersion(reportingVersionId);
+
+  if ((version.status === 'ready_to_show' || version.status === 'closed') && !confirmProductionVersion) {
+    throw new Error('Confirma explicitamente que quieres actualizar una version que ya esta en productivo.');
+  }
+
+  if (isDddLikeModule(moduleCode)) {
+    if (!dddSource) throw new Error('Selecciona la fuente o variante del archivo.');
+    const expected = expectedPreviousMonth(version.periodMonth);
+    if (expected && sourceAsOfMonth !== expected && !confirmSourceAsOfMonth) {
+      throw new Error('La fecha del cierre informado no coincide con el mes anterior esperado. Confirma para continuar.');
+    }
+  }
+
+  return {
+    moduleCode,
+    areaCode,
+    reportingVersionId,
+    sourceAsOfMonth,
+    dddSource,
+    version,
+  };
+}
+
+function buildUploadFormData(params: {
+  source: FormData;
+  moduleCode: string;
+  reportingVersionId: string;
+  periodMonth: string;
+  sourceAsOfMonth: string;
+  dddSource: string;
+}) {
+  const uploadFormData = new FormData();
+  const file = params.source.get('file');
+  const directUploadId = String(params.source.get('uploadId') ?? '').trim();
+  const directStoragePath = String(params.source.get('storagePath') ?? '').trim();
+  const directSourceFileName = String(params.source.get('sourceFileName') ?? '').trim();
+  const directSourceSheetsJson = String(params.source.get('sourceSheetsJson') ?? '').trim();
+
+  if (directUploadId && directStoragePath && directSourceFileName) {
+    uploadFormData.set('uploadId', directUploadId);
+    uploadFormData.set('storagePath', directStoragePath);
+    uploadFormData.set('sourceFileName', directSourceFileName);
+    uploadFormData.set('sourceSheetsJson', directSourceSheetsJson);
+  } else if (file) {
+    uploadFormData.set('file', file);
+  }
+
+  uploadFormData.set('moduleCode', params.moduleCode);
+  uploadFormData.set('reportingVersionId', params.reportingVersionId);
+  uploadFormData.set('periodMonth', params.periodMonth);
+  uploadFormData.set('sourceAsOfMonth', params.sourceAsOfMonth);
+  uploadFormData.set('dddSource', params.dddSource);
+  uploadFormData.set('selectedSheetName', String(params.source.get('selectedSheetName') ?? ''));
+  uploadFormData.set('headerRow', String(params.source.get('selectedHeaderRow') ?? '1'));
+  uploadFormData.set('opexJanPreviousCol', String(params.source.get('opexJanPreviousCol') ?? ''));
+  uploadFormData.set('opexJanBudgetCol', String(params.source.get('opexJanBudgetCol') ?? ''));
+  uploadFormData.set('opexJanCurrentCol', String(params.source.get('opexJanCurrentCol') ?? ''));
+
+  return {
+    uploadFormData,
+    useStorageRecord: Boolean(directUploadId && directStoragePath && directSourceFileName),
+  };
+}
+
 async function createReuseUploadRecord(params: {
   originalUploadId: string;
   moduleCode: string;
@@ -343,6 +425,117 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
       ok: false,
       status: 'error',
       message: error instanceof Error ? error.message : 'No se pudo completar la carga.',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export async function prepareCreateUploadRecord(formData: FormData): Promise<PrepareActionResult> {
+  try {
+    const request = await validatePrepareUploadRequest(formData);
+    const { uploadFormData, useStorageRecord } = buildUploadFormData({
+      source: formData,
+      moduleCode: request.moduleCode,
+      reportingVersionId: request.reportingVersionId,
+      periodMonth: request.version.periodMonth,
+      sourceAsOfMonth: request.sourceAsOfMonth,
+      dddSource: request.dddSource,
+    });
+
+    const created =
+      useStorageRecord
+        ? await createUploadRecordFromStorage(uploadFormData)
+        : await createUploadRecord(uploadFormData);
+    const uploadId = String(created.uploadId ?? '');
+    revalidatePrepare(request.areaCode);
+
+    return {
+      ok: true,
+      status: 'uploaded',
+      uploadId,
+      message: 'Archivo cargado correctamente. Listo para procesar.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      message: error instanceof Error ? error.message : 'No se pudo registrar la carga.',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export async function prepareProcessUpload(uploadId: string): Promise<PrepareActionResult> {
+  try {
+    const processResult = await processUpload(uploadId);
+    const result = await getUploadResult(uploadId);
+    return {
+      ok: true,
+      status: result.status,
+      uploadId,
+      rowsTotal: result.rowsTotal,
+      rowsValid: result.rowsValid,
+      rowsError: result.rowsError,
+      message: `Archivo procesado. Filas revisadas en muestra: ${processResult.sampleRowsChecked}.`,
+      errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      uploadId,
+      message: error instanceof Error ? error.message : 'No se pudo procesar la carga.',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export async function prepareNormalizeUpload(uploadId: string): Promise<PrepareActionResult> {
+  try {
+    await normalizeExistingUpload(uploadId);
+    const result = await getUploadResult(uploadId);
+    return {
+      ok: true,
+      status: result.status,
+      uploadId,
+      rowsTotal: result.rowsTotal,
+      rowsValid: result.rowsValid,
+      rowsError: result.rowsError,
+      message: 'Archivo normalizado correctamente.',
+      errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      uploadId,
+      message: error instanceof Error ? error.message : 'No se pudo normalizar la carga.',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export async function preparePublishUpload(uploadId: string, areaCode: string): Promise<PrepareActionResult> {
+  try {
+    await publishUpload(uploadId);
+    const result = await getUploadResult(uploadId);
+    revalidatePrepare(areaCode);
+    return {
+      ok: true,
+      status: result.status,
+      uploadId,
+      rowsTotal: result.rowsTotal,
+      rowsValid: result.rowsValid,
+      rowsError: result.rowsError,
+      message: 'Archivo cargado, validado y publicado correctamente.',
+      errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      uploadId,
+      message: error instanceof Error ? error.message : 'No se pudo publicar la carga.',
       errors: [error instanceof Error ? error.message : String(error)],
     };
   }

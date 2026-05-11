@@ -2,7 +2,13 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { CheckCircle2, Loader2, UploadCloud, XCircle } from 'lucide-react';
-import { confirmReusePreviousUpload, prepareUploadAndPublish } from '@/app/prepare/actions';
+import {
+  confirmReusePreviousUpload,
+  prepareCreateUploadRecord,
+  prepareNormalizeUpload,
+  prepareProcessUpload,
+  preparePublishUpload,
+} from '@/app/prepare/actions';
 import { SourceAsOfMonthField } from '@/components/prepare/source-as-of-month-field';
 import type { PrepareReportingVersion, PrepareRequirement } from '@/lib/data/prepare';
 
@@ -320,7 +326,25 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         formData.set('sourceFileName', directUpload.sourceFileName);
         formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
 
-        const result = await prepareUploadAndPublish(formData);
+        const created = await prepareCreateUploadRecord(formData);
+        if (!created.ok || !created.uploadId) {
+          throw new Error(created.message);
+        }
+
+        updateProgressStep(1, 'Estamos leyendo las filas del archivo.');
+        const processed = await prepareProcessUpload(created.uploadId);
+        if (!processed.ok) {
+          throw new Error(processed.message);
+        }
+
+        updateProgressStep(2, 'Estamos normalizando la informacion.');
+        const normalized = await prepareNormalizeUpload(created.uploadId);
+        if (!normalized.ok) {
+          throw new Error(normalized.message);
+        }
+
+        updateProgressStep(4, 'Estamos publicando los datos para la version seleccionada.');
+        const result = await preparePublishUpload(created.uploadId, requirement.module.areaCode);
         window.clearInterval(timer);
 
         if (result.ok) {
