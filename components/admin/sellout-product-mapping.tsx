@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { saveSellOutProductMapping } from '@/app/admin/products/actions';
+import { saveCuotasProductMapping, saveSellOutProductMapping } from '@/app/admin/products/actions';
 import type {
   SellOutProductMappingRow,
   SellOutUnmappedProductRow,
@@ -16,6 +16,7 @@ type SellOutProductMappingProps = {
   productOptions: DimProductOption[];
   marketGroupOptions: string[];
   label?: string;
+  mappingSource?: 'sell_out' | 'cuotas';
 };
 
 export function SellOutProductMapping({
@@ -24,6 +25,7 @@ export function SellOutProductMapping({
   productOptions,
   marketGroupOptions,
   label = 'Sell Out',
+  mappingSource = 'sell_out',
 }: SellOutProductMappingProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -43,6 +45,7 @@ export function SellOutProductMapping({
   const filteredMappedRows = mappedRows.filter((row) =>
     mappedMarketFilter ? (row.marketGroup ?? '') === mappedMarketFilter : true,
   );
+  const saveMapping = mappingSource === 'cuotas' ? saveCuotasProductMapping : saveSellOutProductMapping;
 
   if (unmappedRows.length === 0 && mappedRows.length === 0) {
     return (
@@ -200,7 +203,7 @@ export function SellOutProductMapping({
                                   payload.set('isActive', 'true');
                                   payload.set('createdBy', 'system');
                                   payload.set('updatedBy', 'system');
-                                  await saveSellOutProductMapping(payload);
+                                  await saveMapping(payload);
                                   setFeedback(`Mapping updated: "${row.sourceProductName}" (${label}).`);
                                   setEditMappedBySource((prev) => ({ ...prev, [key]: false }));
                                   router.refresh();
@@ -354,7 +357,7 @@ export function SellOutProductMapping({
                                 payload.set('isActive', 'true');
                                 payload.set('createdBy', 'system');
                                 payload.set('updatedBy', 'system');
-                                await saveSellOutProductMapping(payload);
+                                await saveMapping(payload);
                                 setFeedback(`Mapping saved (${label}): "${row.sourceProductName}" -> ${selected || 'no product_id'} (${selectedMarket || 'no market group'}).`);
                                 router.refresh();
                               } catch (error) {

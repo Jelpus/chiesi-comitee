@@ -5,6 +5,8 @@ import { SectionHeader } from '@/components/ui/section-header';
 import {
   getCloseupProductMappings,
   getCloseupUnmappedProducts,
+  getCuotasProductMappings,
+  getCuotasUnmappedProducts,
   getContractsProductMappings,
   getContractsUnmappedProducts,
   getDimProductOptions,
@@ -66,6 +68,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     stocksMappings,
     contractsUnmappedRows,
     contractsMappings,
+    cuotasUnmappedRows,
+    cuotasMappings,
     gob360UnmappedClaves,
     gob360Mappings,
   ] = await Promise.all([
@@ -82,6 +86,8 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
     getStocksProductMappings(700),
     getContractsUnmappedProducts(300),
     getContractsProductMappings(700),
+    getCuotasUnmappedProducts(300),
+    getCuotasProductMappings(700),
     getGob360UnmappedClaves(300),
     getGob360ProductMappings(700),
   ]);
@@ -104,6 +110,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   const contractsMappedKeys = new Set(
     contractsMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
   );
+  const cuotasMappedKeys = new Set(
+    cuotasMappings.map((row) => normalizeMappingKey(row.sourceProductName)),
+  );
   const gob360MappedKeys = new Set(gob360Mappings.map((row) => row.sourceClaveNormalized));
 
   const filteredCloseupUnmappedRows = unmappedCloseupRows.filter(
@@ -120,6 +129,9 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
   );
   const filteredContractsUnmappedRows = contractsUnmappedRows.filter(
     (row) => !contractsMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
+  );
+  const filteredCuotasUnmappedRows = cuotasUnmappedRows.filter(
+    (row) => !cuotasMappedKeys.has(normalizeMappingKey(row.sourceProductName)),
   );
   const filteredGob360UnmappedRows = gob360UnmappedClaves.filter(
     (row) => !gob360MappedKeys.has(row.sourceClaveNormalized),
@@ -194,6 +206,10 @@ export default async function ProductsPage({ searchParams }: ProductsPageProps) 
         contracts={{
           unmappedRows: filteredContractsUnmappedRows,
           mappedRows: contractsMappings,
+        }}
+        cuotas={{
+          unmappedRows: filteredCuotasUnmappedRows,
+          mappedRows: cuotasMappings,
         }}
       />
       <Gob360ConnectionTest />

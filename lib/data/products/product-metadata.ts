@@ -85,6 +85,8 @@ export type PmmProductMappingRow = CloseupProductMappingRow;
 export type PmmUnmappedProductRow = CloseupUnmappedProductRow;
 export type SellOutProductMappingRow = CloseupProductMappingRow;
 export type SellOutUnmappedProductRow = CloseupUnmappedProductRow;
+export type CuotasProductMappingRow = CloseupProductMappingRow;
+export type CuotasUnmappedProductRow = CloseupUnmappedProductRow;
 export type Gob360ProductMappingRow = {
   sourceClave: string;
   sourceClaveNormalized: string;
@@ -105,6 +107,7 @@ export type Gob360UnmappedClaveRow = {
 let ensureCloseupProductMappingTablePromise: Promise<void> | null = null;
 let ensurePmmProductMappingTablePromise: Promise<void> | null = null;
 let ensureSellOutProductMappingTablePromise: Promise<void> | null = null;
+let ensureCuotasProductMappingTablePromise: Promise<void> | null = null;
 let ensureGob360ProductMappingTablePromise: Promise<void> | null = null;
 let gob360Client: BigQuery | null = null;
 
@@ -210,6 +213,31 @@ async function ensureSellOutProductMappingTable() {
   }
 
   await ensureSellOutProductMappingTablePromise;
+}
+
+async function ensureCuotasProductMappingTable() {
+  if (!ensureCuotasProductMappingTablePromise) {
+    ensureCuotasProductMappingTablePromise = (async () => {
+      const client = getBigQueryClient();
+      await client.query({
+        query: `
+          CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_admin.cuotas_product_mapping\` (
+            source_product_name STRING NOT NULL,
+            source_product_name_normalized STRING NOT NULL,
+            product_id STRING,
+            market_group STRING,
+            is_active BOOL NOT NULL,
+            created_at TIMESTAMP NOT NULL,
+            created_by STRING,
+            updated_at TIMESTAMP NOT NULL,
+            updated_by STRING
+          )
+        `,
+      });
+    })();
+  }
+
+  await ensureCuotasProductMappingTablePromise;
 }
 
 async function ensureGob360ProductMappingTable() {
@@ -1269,6 +1297,142 @@ export async function getSellOutProductMappings(limit = 1000): Promise<SellOutPr
   }
 }
 
+export async function upsertCuotasProductMapping(input: {
+  sourceProductName: string;
+  productId?: string;
+  marketGroup?: string;
+  isActive?: boolean;
+  updatedBy?: string;
+  createdBy?: string;
+}) {
+  const sourceProductName = input.sourceProductName.trim();
+  const sourceProductNameNormalized = sourceProductName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  const productId = input.productId?.trim() || '';
+  const marketGroup = input.marketGroup?.trim() || '';
+  if (!sourceProductName || !sourceProductNameNormalized) {
+    throw new Error('sourceProductName is required.');
+  }
+  const resolvedIsActive = productId || marketGroup ? (input.isActive ?? true) : false;
+
+  await ensureCuotasProductMappingTable();
+  const client = getBigQueryClient();
+  const query = `
+    MERGE \`chiesi-committee.chiesi_committee_admin.cuotas_product_mapping\` AS target
+    USING (
+      SELECT
+        @sourceProductName AS source_product_name,
+        @sourceProductNameNormalized AS source_product_name_normalized,
+        NULLIF(@productId, '') AS product_id,
+        NULLIF(@marketGroup, '') AS market_group,
+        @isActive AS is_active,
+        @createdBy AS created_by,
+        @updatedBy AS updated_by
+    ) AS source
+    ON target.source_product_name_normalized = source.source_product_name_normalized
+    WHEN MATCHED THEN
+      UPDATE SET
+        source_product_name = source.source_product_name,
+        product_id = source.product_id,
+        market_group = source.market_group,
+        is_active = source.is_active,
+        updated_by = source.updated_by,
+        updated_at = CURRENT_TIMESTAMP()
+    WHEN NOT MATCHED THEN
+      INSERT (
+        source_product_name,
+        source_product_name_normalized,
+        product_id,
+        market_group,
+        is_active,
+        created_at,
+        created_by,
+        updated_at,
+        updated_by
+      )
+      VALUES (
+        source.source_product_name,
+        source.source_product_name_normalized,
+        source.product_id,
+        source.market_group,
+        source.is_active,
+        CURRENT_TIMESTAMP(),
+        source.created_by,
+        CURRENT_TIMESTAMP(),
+        source.updated_by
+      )
+  `;
+
+  await client.query({
+    query,
+    params: {
+      sourceProductName,
+      sourceProductNameNormalized,
+      productId,
+      marketGroup,
+      isActive: resolvedIsActive,
+      createdBy: input.createdBy?.trim() || 'system',
+      updatedBy: input.updatedBy?.trim() || 'system',
+    },
+  });
+
+  return { ok: true, sourceProductName, sourceProductNameNormalized, productId, marketGroup };
+}
+
+export async function getCuotasProductMappings(limit = 1000): Promise<CuotasProductMappingRow[]> {
+  await ensureCuotasProductMappingTable();
+  const client = getBigQueryClient();
+  const query = `
+    WITH source_keys AS (
+      SELECT DISTINCT source_product_normalized AS source_product_name_normalized
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_cuotas\`
+      WHERE source_product_raw IS NOT NULL
+        AND TRIM(source_product_raw) != ''
+    )
+    SELECT
+      m.source_product_name,
+      m.source_product_name_normalized,
+      m.product_id,
+      d.canonical_product_code,
+      d.canonical_product_name,
+      m.market_group,
+      m.is_active,
+      CAST(m.updated_at AS STRING) AS updated_at
+    FROM \`chiesi-committee.chiesi_committee_admin.cuotas_product_mapping\` m
+    JOIN source_keys s
+      ON s.source_product_name_normalized = m.source_product_name_normalized
+    LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_product\` d
+      ON d.product_id = m.product_id
+    WHERE m.is_active = TRUE
+      AND (
+        (m.product_id IS NOT NULL AND TRIM(m.product_id) != '')
+        OR (m.market_group IS NOT NULL AND TRIM(m.market_group) != '')
+      )
+    ORDER BY m.source_product_name ASC
+    LIMIT @limit
+  `;
+
+  try {
+    const [rows] = await client.query({ query, params: { limit } });
+    return (rows as Record<string, unknown>[]).map((row) => ({
+      sourceProductName: String(row.source_product_name ?? ''),
+      sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),
+      productId: row.product_id ? String(row.product_id) : null,
+      canonicalProductCode: row.canonical_product_code ? String(row.canonical_product_code) : null,
+      canonicalProductName: row.canonical_product_name ? String(row.canonical_product_name) : null,
+      marketGroup: row.market_group ? String(row.market_group) : null,
+      isActive: Boolean(row.is_active ?? true),
+      updatedAt: row.updated_at ? String(row.updated_at) : null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function getStocksProductMappings(limit = 1000): Promise<SellOutProductMappingRow[]> {
   await ensureSellOutProductMappingTable();
   const client = getBigQueryClient();
@@ -1436,6 +1600,65 @@ export async function getSellOutUnmappedProducts(
     occurrences: Number(row.occurrences ?? 0),
     lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
   }));
+}
+
+export async function getCuotasUnmappedProducts(
+  limit = 200,
+): Promise<CuotasUnmappedProductRow[]> {
+  await ensureCuotasProductMappingTable();
+  const client = getBigQueryClient();
+  const query = `
+    WITH normalized_mapping AS (
+      SELECT
+        source_product_name_normalized,
+        product_id,
+        market_group,
+        is_active
+      FROM \`chiesi-committee.chiesi_committee_admin.cuotas_product_mapping\`
+    ),
+    source_columns AS (
+      SELECT
+        s.source_product_raw AS source_product_name,
+        s.source_product_normalized AS source_product_name_normalized,
+        CAST(MAX(u.uploaded_at) AS STRING) AS last_seen_at,
+        COUNT(1) AS occurrences
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_cuotas\` s
+      JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        ON u.upload_id = s.upload_id
+      WHERE LOWER(TRIM(u.module_code)) IN ('business_excellence_cuotas', 'cuotas')
+        AND s.source_product_raw IS NOT NULL
+        AND TRIM(s.source_product_raw) != ''
+      GROUP BY source_product_name, source_product_name_normalized
+    )
+    SELECT
+      s.source_product_name,
+      s.source_product_name_normalized,
+      s.occurrences,
+      s.last_seen_at
+    FROM source_columns s
+    LEFT JOIN normalized_mapping m
+      ON m.source_product_name_normalized = s.source_product_name_normalized
+      AND m.is_active = TRUE
+      AND (
+        (m.product_id IS NOT NULL AND TRIM(m.product_id) != '')
+        OR (m.market_group IS NOT NULL AND TRIM(m.market_group) != '')
+      )
+    WHERE m.source_product_name_normalized IS NULL
+    ORDER BY s.source_product_name ASC
+    LIMIT @limit
+  `;
+
+  try {
+    const [rows] = await client.query({ query, params: { limit } });
+    return (rows as Record<string, unknown>[]).map((row) => ({
+      sourceProductName: String(row.source_product_name ?? ''),
+      sourceProductNameNormalized: String(row.source_product_name_normalized ?? ''),
+      occurrences: Number(row.occurrences ?? 0),
+      lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function getStocksUnmappedProducts(
@@ -1629,6 +1852,13 @@ export async function getSellOutMarketGroups(limit = 300): Promise<string[]> {
 }
 
 export async function getSharedMarketGroups(limit = 500): Promise<string[]> {
+  await Promise.all([
+    ensureCloseupProductMappingTable(),
+    ensurePmmProductMappingTable(),
+    ensureSellOutProductMappingTable(),
+    ensureCuotasProductMappingTable(),
+    ensureGob360ProductMappingTable(),
+  ]);
   const client = getBigQueryClient();
   const query = `
     WITH all_groups AS (
@@ -1637,6 +1867,8 @@ export async function getSharedMarketGroups(limit = 500): Promise<string[]> {
       SELECT market_group FROM \`chiesi-committee.chiesi_committee_admin.pmm_product_mapping\`
       UNION ALL
       SELECT market_group FROM \`chiesi-committee.chiesi_committee_admin.sell_out_product_mapping\`
+      UNION ALL
+      SELECT market_group FROM \`chiesi-committee.chiesi_committee_admin.cuotas_product_mapping\`
       UNION ALL
       SELECT market_group FROM \`chiesi-committee.chiesi_committee_admin.gob360_product_mapping\`
     )

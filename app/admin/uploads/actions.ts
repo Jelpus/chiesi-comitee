@@ -337,6 +337,38 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         return { ok: true, checked: sampleRows.length };
     }
 
+    if (moduleCode === 'business_excellence_cuotas' || moduleCode === 'cuotas') {
+        const hasPeriod = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Periodo', 'Period']) ?? '').trim().length > 0,
+        );
+        const hasAdvisor = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Asesor', 'Advisor']) ?? '').trim().length > 0,
+        );
+        const hasManager = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Gerente', 'Manager']) ?? '').trim().length > 0,
+        );
+        const hasProduct = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Producto', 'Product']) ?? '').trim().length > 0,
+        );
+        const hasChannel = sampleRows.some((row) =>
+            String(getRowValue(row.payload, ['Canal', 'Channel']) ?? '').trim().length > 0,
+        );
+        const hasQuota = sampleRows.some((row) =>
+            asNumber(getRowValue(row.payload, ['Cuota', 'Quota'])) != null,
+        );
+
+        if (!hasPeriod || !hasAdvisor || !hasManager || !hasProduct || !hasChannel || !hasQuota) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Cuotas: expected Periodo, Asesor, Gerente, Producto, Canal and numeric Cuota in first rows.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
     if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
         const hasProduct = sampleRows.some((row) =>
             String(getRowValue(row.payload, ['Producto', 'Product', 'producto_closeup', 'PRODUCTO_NAME']) ?? '')
@@ -1319,6 +1351,7 @@ async function deleteTemporaryNdjson(bucketName: string, objectPath: string) {
 }
 
 async function updateUploadCounters(uploadId: string, rowCount: number) {
+    await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
     const query = `
     UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
@@ -1326,7 +1359,8 @@ async function updateUploadCounters(uploadId: string, rowCount: number) {
       status = 'raw_loaded',
       rows_total = @rowsTotal,
       rows_valid = 0,
-      rows_error = 0
+      rows_error = 0,
+      last_error_message = NULL
     WHERE upload_id = @uploadId
   `;
 
@@ -1380,7 +1414,11 @@ async function setUploadError(uploadId: string, message: string, fallbackStatus:
     );
 }
 
-async function setUploadStatus(uploadId: string, status: string) {
+async function setUploadStatus(uploadId: string, status: string, options: { clearError?: boolean } = {}) {
+    if (options.clearError) {
+        await ensureUploadsErrorColumn();
+    }
+
     const client = getBigQueryClient();
 
     await runWithTableUpdateRetry(() =>
@@ -1389,6 +1427,7 @@ async function setUploadStatus(uploadId: string, status: string) {
       UPDATE \`chiesi-committee.chiesi_committee_raw.uploads\`
       SET
         status = @status
+        ${options.clearError ? ', last_error_message = NULL' : ''}
       WHERE upload_id = @uploadId
     `,
             params: { uploadId, status },
@@ -1401,6 +1440,7 @@ async function updateUploadNormalizationResult(params: {
     rowsValid: number;
     rowsError: number;
 }) {
+    await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
 
     await runWithTableUpdateRetry(() =>
@@ -1410,7 +1450,8 @@ async function updateUploadNormalizationResult(params: {
       SET
         status = 'normalized',
         rows_valid = @rowsValid,
-        rows_error = @rowsError
+        rows_error = @rowsError,
+        last_error_message = NULL
       WHERE upload_id = @uploadId
     `,
             params: params,
@@ -1912,6 +1953,40 @@ export async function processUpload(uploadId: string) {
                 rowOffset += 100000;
             }
             sampleRowsChecked = Math.min(rowsForRaw.length, 30);
+        } else if (moduleCode === 'business_excellence_cuotas' || moduleCode === 'cuotas') {
+            const workbookSheets = inspectExcelWorkbook(fileBuffer);
+            const requiredSheets = ['AIR', 'CARE'];
+            const sheetLookup = new Map(workbookSheets.map((sheetName) => [sheetName.trim().toUpperCase(), sheetName]));
+            const missingSheets = requiredSheets.filter((sheetName) => !sheetLookup.has(sheetName));
+            if (missingSheets.length > 0) {
+                throw new Error(`Cuotas workbook must include sheets: ${requiredSheets.join(', ')}. Missing: ${missingSheets.join(', ')}.`);
+            }
+
+            let rowOffset = 0;
+            for (const requiredSheet of requiredSheets) {
+                const sheetName = sheetLookup.get(requiredSheet)!;
+                const parsedSheetRows = parseExcelRows(fileBuffer, {
+                    sheetName,
+                    headerRow: context.selectedHeaderRow,
+                });
+                if (parsedSheetRows.length === 0) {
+                    throw new Error(`No rows were parsed from Cuotas sheet "${sheetName}".`);
+                }
+                const sampleCheck = validateSampleRows(moduleCode, parsedSheetRows);
+                if (!sampleCheck.ok) {
+                    throw new Error(`${sampleCheck.message} Sheet: ${sheetName}.`);
+                }
+                sampleRowsChecked += sampleCheck.checked;
+
+                rowsForRaw.push(
+                    ...parsedSheetRows.map((row) => ({
+                        rowNumber: row.rowNumber + rowOffset,
+                        payload: row.payload,
+                        sheetName: requiredSheet,
+                    })),
+                );
+                rowOffset += 100000;
+            }
         } else {
             const parsedRows = parseExcelRows(fileBuffer, {
                 sheetName: context.selectedSheetName,
@@ -2056,7 +2131,7 @@ export async function publishUpload(uploadId: string) {
 
     try {
         const result = await publishUploadToMart(uploadId);
-        await setUploadStatus(uploadId, 'published');
+        await setUploadStatus(uploadId, 'published', { clearError: true });
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         revalidatePath('/executive');

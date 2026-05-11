@@ -84,6 +84,23 @@ type SellOutNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type BusinessExcellenceCuotasNormalizedRow = {
+  rowNumber: number;
+  businessUnit: 'AIR' | 'CARE';
+  advisor: string;
+  manager: string;
+  sourceProductRaw: string;
+  sourceProductNormalized: string;
+  productId: string | null;
+  canonicalProductName: string | null;
+  marketGroup: string | null;
+  channel: string;
+  periodRaw: string;
+  periodMonth: string;
+  quotaValue: number;
+  payload: Record<string, unknown>;
+};
+
 type BrickAssignmentNormalizedRow = {
   rowNumber: number;
   brickCode: string;
@@ -1222,6 +1239,22 @@ function parseMonthYearField(monthValue: unknown, yearValue: unknown): string | 
   const year = parseYearToken(yearValue);
   if (!month || !year) return null;
   return `${year}-${month}-01`;
+}
+
+function parseCompactYearMonthField(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim().replace(/\.0$/, '');
+  const compact = raw.replace(/[^0-9]/g, '');
+  const match = compact.match(/^(\d{4})(\d{2})$/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    if (year >= 1900 && year <= 2200 && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, '0')}-01`;
+    }
+  }
+
+  return parseDateField(value);
 }
 
 function parseCloseupPeriodField(value: unknown): string | null {
@@ -2421,6 +2454,130 @@ async function loadSellOutStaging(uploadId: string, rows: SellOutNormalizedRow[]
   );
 }
 
+async function loadBusinessExcellenceCuotasStaging(
+  uploadId: string,
+  rows: BusinessExcellenceCuotasNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_admin.cuotas_product_mapping\` (
+        source_product_name STRING NOT NULL,
+        source_product_name_normalized STRING NOT NULL,
+        product_id STRING,
+        market_group STRING,
+        is_active BOOL NOT NULL,
+        created_at TIMESTAMP NOT NULL,
+        created_by STRING,
+        updated_at TIMESTAMP NOT NULL,
+        updated_by STRING
+      )
+    `,
+  });
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_cuotas\` (
+        upload_id STRING,
+        row_number INT64,
+        business_unit STRING,
+        advisor STRING,
+        manager STRING,
+        source_product_raw STRING,
+        source_product_normalized STRING,
+        product_id STRING,
+        canonical_product_name STRING,
+        market_group STRING,
+        channel STRING,
+        period_raw STRING,
+        period_month DATE,
+        quota_value NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_cuotas\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_cuotas\`
+    (
+      upload_id,
+      row_number,
+      business_unit,
+      advisor,
+      manager,
+      source_product_raw,
+      source_product_normalized,
+      product_id,
+      canonical_product_name,
+      market_group,
+      channel,
+      period_raw,
+      period_month,
+      quota_value,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.business_unit,
+      row.advisor,
+      row.manager,
+      row.source_product_raw,
+      row.source_product_normalized,
+      NULLIF(row.product_id, ''),
+      NULLIF(row.canonical_product_name, ''),
+      NULLIF(row.market_group, ''),
+      row.channel,
+      row.period_raw,
+      DATE(row.period_month),
+      SAFE_CAST(row.quota_value AS NUMERIC),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1800);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            business_unit: row.businessUnit,
+            advisor: row.advisor,
+            manager: row.manager,
+            source_product_raw: row.sourceProductRaw,
+            source_product_normalized: row.sourceProductNormalized,
+            product_id: row.productId ?? '',
+            canonical_product_name: row.canonicalProductName ?? '',
+            market_group: row.marketGroup ?? '',
+            channel: row.channel,
+            period_raw: row.periodRaw,
+            period_month: row.periodMonth,
+            quota_value: String(row.quotaValue),
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
 async function loadBrickAssignmentStaging(uploadId: string, rows: BrickAssignmentNormalizedRow[]) {
   const client = getBigQueryClient();
 
@@ -2931,6 +3088,102 @@ async function normalizeBusinessExcellenceSellOut(
   }
 
   normalizedRows.push(...dedupedByProductPeriod.values());
+  return { validations, normalizedRows };
+}
+
+function normalizeBusinessExcellenceCuotas(
+  rows: RawUploadRow[],
+  asOfMonth: string | null,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: BusinessExcellenceCuotasNormalizedRow[] = [];
+  const dedupedByNaturalKey = new Map<string, BusinessExcellenceCuotasNormalizedRow>();
+  const requiredAsOfMonth = asOfMonth && /^\d{4}-\d{2}-01$/.test(asOfMonth) ? asOfMonth : null;
+  let includesAsOfMonth = !requiredAsOfMonth;
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+    const errors: string[] = [];
+    const sheetName = String(row.sheet_name ?? '').trim().toUpperCase();
+    const businessUnit = sheetName === 'AIR' || sheetName === 'CARE' ? sheetName : null;
+    const periodRaw = String(pickValue(index, ['Periodo', 'Period']) ?? '').trim();
+    const periodMonth = parseCompactYearMonthField(periodRaw);
+    const advisor = String(pickValue(index, ['Asesor', 'Advisor']) ?? '').trim();
+    const manager = String(pickValue(index, ['Gerente', 'Manager']) ?? '').trim();
+    const sourceProductRaw = String(pickValue(index, ['Producto', 'Product']) ?? '').trim();
+    const channel = String(pickValue(index, ['Canal', 'Channel']) ?? '').trim();
+    const quotaValue = asNullableNumber(pickValue(index, ['Cuota', 'Quota']));
+
+    if (!hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'valid',
+        errors: [],
+      });
+      continue;
+    }
+
+    if (!businessUnit) errors.push('Cuotas row must come from AIR or CARE sheet.');
+    if (!periodMonth) errors.push('Unable to parse Cuotas Periodo as YYYYMM.');
+    if (!advisor) errors.push('Missing required Cuotas Asesor.');
+    if (!manager) errors.push('Missing required Cuotas Gerente.');
+    if (!sourceProductRaw) errors.push('Missing required Cuotas Producto.');
+    if (!channel) errors.push('Missing required Cuotas Canal.');
+    if (quotaValue == null) errors.push('Missing or invalid numeric Cuotas Cuota.');
+
+    if (periodMonth && requiredAsOfMonth && periodMonth === requiredAsOfMonth) {
+      includesAsOfMonth = true;
+    }
+
+    const status: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: status,
+      errors,
+    });
+
+    if (status === 'error') continue;
+
+    const sourceProductNormalized = normalizeText(sourceProductRaw);
+    const dedupKey = [
+      periodMonth,
+      businessUnit,
+      advisor,
+      manager,
+      sourceProductNormalized,
+      normalizeText(channel),
+    ].join('|||');
+    dedupedByNaturalKey.set(dedupKey, {
+      rowNumber: row.row_number,
+      businessUnit: businessUnit!,
+      advisor,
+      manager,
+      sourceProductRaw,
+      sourceProductNormalized,
+      productId: null,
+      canonicalProductName: null,
+      marketGroup: null,
+      channel,
+      periodRaw,
+      periodMonth: periodMonth!,
+      quotaValue: quotaValue!,
+      payload,
+    });
+  }
+
+  if (!includesAsOfMonth && requiredAsOfMonth) {
+    validations.push({
+      rowNumber: 0,
+      validationStatus: 'error',
+      errors: [`Data As Of (${requiredAsOfMonth}) is not included in Cuotas Periodo values.`],
+    });
+  }
+
+  if (includesAsOfMonth) {
+    normalizedRows.push(...dedupedByNaturalKey.values());
+  }
+
   return { validations, normalizedRows };
 }
 
@@ -6513,6 +6766,14 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     );
     await updateRawValidationStatus(uploadId, validations);
     await loadSellOutStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'business_excellence_cuotas' || moduleCode === 'cuotas') {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    const { validations, normalizedRows } = normalizeBusinessExcellenceCuotas(rows, asOfMonth);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadBusinessExcellenceCuotasStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 

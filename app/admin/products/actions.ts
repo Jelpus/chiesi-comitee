@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import {
   testGob360Connection,
   upsertSellOutProductMapping,
+  upsertCuotasProductMapping,
   upsertGob360ProductMapping,
   reorderProductMetadata,
   upsertPmmProductMapping,
@@ -143,6 +144,30 @@ export async function saveSellOutProductMapping(formData: FormData) {
   const updatedBy = String(formData.get('updatedBy') ?? 'system');
 
   const result = await upsertSellOutProductMapping({
+    sourceProductName,
+    productId,
+    marketGroup,
+    isActive,
+    createdBy,
+    updatedBy,
+  });
+
+  revalidatePath('/admin/products');
+  revalidatePath('/admin/uploads');
+  revalidatePath('/admin/uploads/logs');
+
+  return result;
+}
+
+export async function saveCuotasProductMapping(formData: FormData) {
+  const sourceProductName = String(formData.get('sourceProductName') ?? '');
+  const productId = String(formData.get('productId') ?? '');
+  const marketGroup = String(formData.get('marketGroup') ?? '');
+  const isActive = String(formData.get('isActive') ?? 'true') === 'true';
+  const createdBy = String(formData.get('createdBy') ?? 'system');
+  const updatedBy = String(formData.get('updatedBy') ?? 'system');
+
+  const result = await upsertCuotasProductMapping({
     sourceProductName,
     productId,
     marketGroup,
