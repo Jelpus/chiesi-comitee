@@ -2028,6 +2028,261 @@ async function loadPmmStaging(uploadId: string, rows: PmmNormalizedRow[]) {
   );
 }
 
+async function normalizeBusinessExcellencePmmInBigQuery(
+  uploadId: string,
+  asOfMonth: string | null,
+): Promise<NormalizeUploadResult> {
+  const client = getBigQueryClient();
+  const effectiveAsOfMonth = asOfMonth && /^\d{4}-\d{2}-01$/.test(asOfMonth) ? asOfMonth : null;
+
+  await client.query({
+    query: `
+      ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_pmm\`
+      ADD COLUMN IF NOT EXISTS brick STRING
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_pmm\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT
+            reporting_version_id,
+            period_month,
+            COALESCE(
+              NULLIF(TRIM(ddd_source), ''),
+              CASE
+                WHEN LOWER(source_file_name) LIKE '%innovair%' THEN 'innovair'
+                WHEN LOWER(source_file_name) LIKE '%ribuspir%' THEN 'ribuspir'
+                WHEN LOWER(source_file_name) LIKE '%rinoclenil%' THEN 'rinoclenil'
+                ELSE 'unknown'
+              END
+            ) AS source_key
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+         AND COALESCE(
+           NULLIF(TRIM(u.ddd_source), ''),
+           CASE
+             WHEN LOWER(u.source_file_name) LIKE '%innovair%' THEN 'innovair'
+             WHEN LOWER(u.source_file_name) LIKE '%ribuspir%' THEN 'ribuspir'
+             WHEN LOWER(u.source_file_name) LIKE '%rinoclenil%' THEN 'rinoclenil'
+             ELSE 'unknown'
+           END
+         ) = c.source_key
+        WHERE LOWER(TRIM(u.module_code)) IN ('business_excellence_ddd', 'business_excellence_pmm', 'pmm', 'ddd')
+          AND u.upload_id != @uploadId
+      )
+    `,
+    params: { uploadId },
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_pmm\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  const commonCtes = `
+    WITH raw AS (
+      SELECT
+        row_number,
+        row_payload_json,
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.PACK_DES')), '') AS pack_des,
+        COALESCE(
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.MONTH')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.Month')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.MES')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.Mes')), '')
+        ) AS month_raw,
+        COALESCE(
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.YEAR')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.Year')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.ANO')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.Anio')), '')
+        ) AS year_raw,
+        COALESCE(
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.BRICK_COD')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.BRICK')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.Brick')), ''),
+          NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.BRICK_DES')), '')
+        ) AS brick,
+        SAFE_CAST(REPLACE(REGEXP_REPLACE(JSON_VALUE(row_payload_json, '$.UN'), r'\\s', ''), ',', '.') AS NUMERIC) AS units_value,
+        SAFE_CAST(REPLACE(REGEXP_REPLACE(JSON_VALUE(row_payload_json, '$.LC'), r'\\s', ''), ',', '.') AS NUMERIC) AS net_sales_value
+      FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+      WHERE upload_id = @uploadId
+    ),
+    parsed AS (
+      SELECT
+        *,
+        CASE
+          WHEN SAFE_CAST(month_raw AS INT64) BETWEEN 1 AND 12
+           AND SAFE_CAST(year_raw AS INT64) IS NOT NULL
+            THEN DATE(SAFE_CAST(year_raw AS INT64), SAFE_CAST(month_raw AS INT64), 1)
+          ELSE NULL
+        END AS parsed_period_month,
+        DATE_SUB(DATE(@asOfMonth), INTERVAL 23 MONTH) AS min_included_month,
+        DATE(@asOfMonth) AS max_included_month
+      FROM raw
+    ),
+    classified AS (
+      SELECT
+        *,
+        ARRAY_CONCAT(
+          IF(pack_des IS NULL, ['Missing required PMM product column (PACK_DES).'], []),
+          IF(parsed_period_month IS NULL, ['Unable to parse PMM MONTH/YEAR values.'], []),
+          IF(units_value IS NULL AND net_sales_value IS NULL, ['No numeric PMM values found (UN/LC).'], [])
+        ) AS validation_errors,
+        parsed_period_month IS NOT NULL
+          AND parsed_period_month BETWEEN min_included_month AND max_included_month AS inside_window
+      FROM parsed
+    )
+  `;
+
+  await client.query({
+    query: `
+      UPDATE \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\` AS target
+      SET
+        validation_status = CASE
+          WHEN ARRAY_LENGTH(source.validation_errors) > 0 THEN 'error'
+          WHEN NOT source.inside_window THEN 'skipped'
+          ELSE 'valid'
+        END,
+        validation_error_json = CASE
+          WHEN ARRAY_LENGTH(source.validation_errors) > 0 THEN TO_JSON(source.validation_errors)
+          WHEN NOT source.inside_window THEN TO_JSON([CONCAT(
+            'Skipped: outside 24-month window (',
+            CAST(source.min_included_month AS STRING),
+            ' to ',
+            CAST(source.max_included_month AS STRING),
+            ').'
+          )])
+          ELSE PARSE_JSON('[]')
+        END
+      FROM (
+        ${commonCtes}
+        SELECT * FROM classified
+      ) AS source
+      WHERE target.upload_id = @uploadId
+        AND target.row_number = source.row_number
+    `,
+    params: { uploadId, asOfMonth: effectiveAsOfMonth ?? '9999-12-01' },
+  });
+
+  const [insertJob] = await client.createQueryJob({
+    location: 'EU',
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_pmm\`
+      (
+        upload_id,
+        row_number,
+        pack_des_raw,
+        pack_des_normalized,
+        product_id,
+        canonical_product_name,
+        market_group,
+        brick,
+        source_month_raw,
+        source_year_raw,
+        source_date,
+        period_month,
+        sales_group,
+        amount_value,
+        source_payload_json,
+        normalized_at
+      )
+      ${commonCtes}
+      SELECT
+        @uploadId,
+        row_number,
+        pack_des,
+        TRIM(REGEXP_REPLACE(REGEXP_REPLACE(LOWER(NORMALIZE(pack_des, NFD)), r'\\pM', ''), r'[^a-z0-9]+', ' ')),
+        NULL,
+        NULL,
+        NULL,
+        brick,
+        month_raw,
+        year_raw,
+        parsed_period_month,
+        parsed_period_month,
+        sales_group,
+        amount_value,
+        PARSE_JSON('{}'),
+        CURRENT_TIMESTAMP()
+      FROM classified,
+      UNNEST([
+        STRUCT('Units' AS sales_group, units_value AS amount_value),
+        STRUCT('Net Sales' AS sales_group, net_sales_value AS amount_value)
+      ])
+      WHERE ARRAY_LENGTH(validation_errors) = 0
+        AND inside_window
+        AND amount_value IS NOT NULL
+    `,
+    params: { uploadId, asOfMonth: effectiveAsOfMonth ?? '9999-12-01' },
+  });
+  await insertJob.promise();
+
+  const [summaryRows] = await client.query({
+    query: `
+      SELECT
+        COUNTIF(validation_status = 'valid') AS rows_valid,
+        COUNTIF(validation_status = 'skipped') AS rows_skipped,
+        COUNTIF(validation_status = 'error') AS rows_error
+      FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  const [normalizedRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS normalized_rows
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_pmm\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  const [issueRows] = await client.query({
+    query: `
+      SELECT reason, COUNT(1) AS count
+      FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`,
+      UNNEST(JSON_VALUE_ARRAY(validation_error_json)) AS reason
+      WHERE upload_id = @uploadId
+        AND reason IS NOT NULL
+        AND reason != ''
+      GROUP BY reason
+      ORDER BY count DESC, reason
+      LIMIT 3
+    `,
+    params: { uploadId },
+  });
+
+  const summary = (summaryRows as Array<Record<string, unknown>>)[0] ?? {};
+  const normalized = (normalizedRows as Array<Record<string, unknown>>)[0] ?? {};
+
+  return {
+    ok: true,
+    normalizedRows: Number(normalized.normalized_rows ?? 0),
+    rowsValid: Number(summary.rows_valid ?? 0),
+    rowsSkipped: Number(summary.rows_skipped ?? 0),
+    rowsError: Number(summary.rows_error ?? 0),
+    topValidationIssues: (issueRows as Array<Record<string, unknown>>).map((row) => ({
+      reason: String(row.reason ?? ''),
+      count: Number(row.count ?? 0),
+    })),
+  };
+}
+
 async function loadSellOutStaging(uploadId: string, rows: SellOutNormalizedRow[]) {
   const client = getBigQueryClient();
   await client.query({
@@ -6223,6 +6478,11 @@ async function loadOpexMovementsStaging(
 }
 
 export async function normalizeUpload(uploadId: string, moduleCode: string): Promise<NormalizeUploadResult> {
+  if (moduleCode === 'business_excellence_ddd' || moduleCode === 'business_excellence_pmm' || moduleCode === 'pmm' || moduleCode === 'ddd') {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    return normalizeBusinessExcellencePmmInBigQuery(uploadId, asOfMonth);
+  }
+
   const rows = await getRawRows(uploadId);
 
   if (moduleCode === 'sales_internal') {
@@ -6236,14 +6496,6 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = await normalizeBusinessExcellenceCloseup(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadCloseupStaging(uploadId, normalizedRows);
-    return buildNormalizeUploadResult(validations, normalizedRows.length);
-  }
-
-  if (moduleCode === 'business_excellence_ddd' || moduleCode === 'business_excellence_pmm' || moduleCode === 'pmm' || moduleCode === 'ddd') {
-    const asOfMonth = await getUploadAsOfMonth(uploadId);
-    const { validations, normalizedRows } = await normalizeBusinessExcellencePmm(rows, asOfMonth);
-    await updateRawValidationStatus(uploadId, validations);
-    await loadPmmStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
