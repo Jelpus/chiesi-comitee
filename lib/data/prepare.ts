@@ -28,7 +28,6 @@ export type PrepareUploadRow = {
   uploadedBy: string;
   uploadedAt: string;
   sourceFileName: string;
-  storagePath: string;
   status: string;
   rowsTotal: number;
   rowsValid: number;
@@ -122,6 +121,15 @@ const explicitDddSourceRequirements: Record<string, string[]> = {
   business_excellence_budget_sell_out: ['gobierno', 'privado'],
 };
 
+const CLIENT_TEXT_LIMIT = 1200;
+
+function limitClientText(value: unknown, limit = CLIENT_TEXT_LIMIT) {
+  if (value == null) return null;
+  const text = String(value);
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}...`;
+}
+
 function normalizeStatus(value: unknown): PrepareReportingVersionStatus {
   if (value === 'ready_to_show' || value === 'closed') return value;
   return 'draft';
@@ -156,7 +164,7 @@ function toModuleRow(row: Record<string, unknown>): ModuleRow {
     emailOwner: row.email_owner == null ? null : String(row.email_owner),
     displayOrder: Number(row.display_order ?? 999),
     isActive: Boolean(row.is_active),
-    notes: row.notes == null ? null : String(row.notes),
+    notes: limitClientText(row.notes, 500),
     createdAt: row.created_at == null ? null : String(row.created_at),
     createdBy: row.created_by == null ? null : String(row.created_by),
     updatedAt: row.updated_at == null ? null : String(row.updated_at),
@@ -187,14 +195,13 @@ function toUpload(row: Record<string, unknown> | undefined): PrepareUploadRow | 
     uploadedBy: String(row.uploaded_by ?? ''),
     uploadedAt: String(row.uploaded_at ?? ''),
     sourceFileName: String(row.source_file_name ?? ''),
-    storagePath: String(row.storage_path ?? ''),
     status: String(row.status ?? ''),
     rowsTotal: Number(row.rows_total ?? 0),
     rowsValid: Number(row.rows_valid ?? 0),
     rowsError: Number(row.rows_error ?? 0),
     selectedSheetName: String(row.selected_sheet_name ?? ''),
     selectedHeaderRow: Number(row.selected_header_row ?? 1),
-    lastErrorMessage: row.last_error_message == null ? null : String(row.last_error_message),
+    lastErrorMessage: limitClientText(row.last_error_message),
     opexJanPreviousCol: row.opex_jan_previous_col == null ? null : Number(row.opex_jan_previous_col),
     opexJanBudgetCol: row.opex_jan_budget_col == null ? null : Number(row.opex_jan_budget_col),
     opexJanCurrentCol: row.opex_jan_current_col == null ? null : Number(row.opex_jan_current_col),
@@ -290,8 +297,9 @@ export async function getPrepareModules(areaCode?: string): Promise<ModuleRow[]>
   return (rows as Array<Record<string, unknown>>).map(toModuleRow);
 }
 
-async function getUploadsForVersion(reportingVersionId: string): Promise<PrepareUploadRow[]> {
+async function getUploadsForVersion(reportingVersionId: string, moduleCodes?: string[]): Promise<PrepareUploadRow[]> {
   if (!reportingVersionId) return [];
+  if (moduleCodes && moduleCodes.length === 0) return [];
   const client = getBigQueryClient();
   const [rows] = await client.query({
     query: `
@@ -305,7 +313,6 @@ async function getUploadsForVersion(reportingVersionId: string): Promise<Prepare
         uploaded_by,
         CAST(uploaded_at AS STRING) AS uploaded_at,
         source_file_name,
-        storage_path,
         status,
         rows_total,
         rows_valid,
@@ -318,12 +325,13 @@ async function getUploadsForVersion(reportingVersionId: string): Promise<Prepare
         opex_jan_current_col
       FROM \`${UPLOADS_TABLE}\`
       WHERE reporting_version_id = @reportingVersionId
+        ${moduleCodes ? 'AND module_code IN UNNEST(@moduleCodes)' : ''}
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY module_code, COALESCE(ddd_source, '')
         ORDER BY uploaded_at DESC
       ) = 1
     `,
-    params: { reportingVersionId },
+    params: moduleCodes ? { reportingVersionId, moduleCodes } : { reportingVersionId },
   });
   return (rows as Array<Record<string, unknown>>).map((row) => toUpload(row)).filter((row): row is PrepareUploadRow => Boolean(row));
 }
@@ -343,7 +351,6 @@ async function getLatestPublishedUploads(moduleCodes: string[]): Promise<Prepare
         uploaded_by,
         CAST(uploaded_at AS STRING) AS uploaded_at,
         source_file_name,
-        storage_path,
         status,
         rows_total,
         rows_valid,
@@ -465,7 +472,7 @@ export async function getPrepareAreaData(areaCode: string, reportingVersionId?: 
   const modules = await getPrepareModules(areaCode);
   const moduleCodes = modules.map((moduleItem) => moduleItem.moduleCode);
   const [currentUploads, latestUploads, reuseConfirmations] = await Promise.all([
-    selectedVersion ? getUploadsForVersion(selectedVersion.reportingVersionId) : Promise.resolve([]),
+    selectedVersion ? getUploadsForVersion(selectedVersion.reportingVersionId, moduleCodes) : Promise.resolve([]),
     getLatestPublishedUploads(moduleCodes),
     selectedVersion ? getReuseConfirmations(selectedVersion.reportingVersionId) : Promise.resolve([]),
   ]);
