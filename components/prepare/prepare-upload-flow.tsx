@@ -69,7 +69,13 @@ function formatUploadStepError(step: string, message: string, uploadId?: string)
     ? ` El upload ${uploadId} ya quedo registrado; los pasos anteriores aparecen completados.`
     : '';
 
-  return `Fallo en "${step}": Vercel interrumpio la funcion antes de devolver un detalle controlado.${uploadHint} Si ocurre en Publicar informacion, normalmente es memoria o tiempo durante la publicacion. Detalle tecnico: ${message}`;
+  const likelyCause = step === 'Procesar filas'
+    ? 'En este paso se descarga y parsea el archivo para cargar RAW; con archivos grandes normalmente es memoria durante la lectura del Excel/CSV.'
+    : step === 'Publicar informacion'
+      ? 'En este paso se publican los datos finales; normalmente es memoria o tiempo durante la publicacion.'
+      : 'Normalmente es memoria o tiempo durante el proceso.';
+
+  return `Fallo en "${step}": Vercel interrumpio la funcion antes de devolver un detalle controlado.${uploadHint} ${likelyCause} Detalle tecnico: ${message}`;
 }
 
 function isProductionVersion(version: PrepareReportingVersion) {
@@ -86,6 +92,34 @@ function isDddLike(moduleCode: string) {
 
 function isCsvFileName(fileName: string) {
   return /\.csv$/i.test(fileName.trim());
+}
+
+function getResumeWorkflowStep(status?: string): UploadWorkflowStep | null {
+  if (!status) return null;
+  if (['uploaded', 'error', 'parsing', 'loading_raw'].includes(status)) return 'process';
+  if (['raw_loaded', 'normalizing'].includes(status)) return 'normalize';
+  if (['normalized', 'publishing'].includes(status)) return 'publish';
+  return null;
+}
+
+function workflowStepIndex(step: UploadWorkflowStep) {
+  if (step === 'process') return 2;
+  if (step === 'normalize') return 3;
+  if (step === 'publish') return 4;
+  return 4;
+}
+
+function workflowResumeDetail(step: UploadWorkflowStep, uploadId: string) {
+  if (step === 'process') {
+    return `Carga ${uploadId} ya registrada. Pulsa continuar para procesar filas.`;
+  }
+  if (step === 'normalize') {
+    return `Carga ${uploadId} ya tiene filas RAW. Pulsa continuar para normalizar y validar datos.`;
+  }
+  if (step === 'publish') {
+    return `Carga ${uploadId} ya esta normalizada. Pulsa continuar para publicar la informacion.`;
+  }
+  return `Carga ${uploadId} lista.`;
 }
 
 function initialProgress(): ProgressModalState {
@@ -221,6 +255,8 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     defaults.selectedSheetName ? 'Agrega un archivo para continuar...' : '',
   );
   const shouldShowSheetConfig = Boolean(selectedFile);
+  const resumableStep = getResumeWorkflowStep(requirement.currentUpload?.status);
+  const canResumeCurrentUpload = Boolean(requirement.currentUpload?.uploadId && resumableStep);
   const continueLabel =
     activeUploadWorkflow?.nextStep === 'process'
       ? 'Procesar filas'
@@ -263,6 +299,22 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       detail,
       finalState: 'waiting',
     }));
+  }
+
+  function resumeCurrentUpload() {
+    const uploadId = requirement.currentUpload?.uploadId;
+    if (!uploadId || !resumableStep) return;
+
+    setMessage(null);
+    setError(null);
+    setActiveUploadWorkflow({ uploadId, nextStep: resumableStep });
+    openProgressModal({
+      title: 'Continuar carga',
+      detail: workflowResumeDetail(resumableStep, uploadId),
+      steps: uploadPublishSteps,
+      activeStep: workflowStepIndex(resumableStep),
+    });
+    waitForNextStep(workflowStepIndex(resumableStep), workflowResumeDetail(resumableStep, uploadId));
   }
 
   async function inspectWorkbook(file: File) {
@@ -521,6 +573,26 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
   return (
     <div className="space-y-4">
+      {canResumeCurrentUpload && requirement.currentUpload ? (
+        <div className="rounded-[22px] border border-blue-200 bg-blue-50 p-4">
+          <p className="text-sm font-bold text-blue-950">
+            Hay una carga iniciada para esta version.
+          </p>
+          <p className="mt-1 text-xs leading-5 text-blue-800">
+            Upload {requirement.currentUpload.uploadId} · estado actual: {requirement.currentUpload.status}. Puedes continuar desde el paso pendiente sin volver a subir el archivo.
+          </p>
+          <button
+            type="button"
+            onClick={resumeCurrentUpload}
+            disabled={isPending}
+            className="mt-3 inline-flex items-center gap-2 rounded-full bg-blue-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-blue-900 disabled:opacity-50"
+          >
+            {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Continuar carga iniciada
+          </button>
+        </div>
+      ) : null}
+
       {requirement.latestUpload && requirement.reusable ? (
         <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
           <p className="text-sm font-bold text-slate-950">

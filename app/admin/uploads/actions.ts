@@ -134,6 +134,17 @@ function isTableUpdateQuotaError(error: unknown) {
     );
 }
 
+function isMemoryPressureError(error: unknown) {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+        message.includes('heap out of memory') ||
+        message.includes('allocation failed') ||
+        message.includes('array buffer allocation failed') ||
+        message.includes('invalid string length')
+    );
+}
+
 async function runWithTableUpdateRetry<T>(fn: () => Promise<T>, retries = 4) {
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -1648,6 +1659,8 @@ export async function processUpload(uploadId: string) {
         status !== 'uploaded' &&
         status !== 'raw_loaded' &&
         status !== 'error' &&
+        status !== 'parsing' &&
+        status !== 'loading_raw' &&
         status !== 'normalized' &&
         status !== 'published'
     ) {
@@ -1753,7 +1766,9 @@ export async function processUpload(uploadId: string) {
             rowsError: 0,
         };
     } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown process error';
+        const message = isMemoryPressureError(error)
+            ? 'Process failed because the file exceeded available memory while reading/parsing rows. Try splitting the source file, exporting to CSV, or processing it from Admin Uploads with a larger runtime.'
+            : error instanceof Error ? error.message : 'Unknown process error';
         const [countRows] = await getBigQueryClient().query({
             query: `
         SELECT COUNT(1) AS total
@@ -1777,7 +1792,7 @@ export async function normalizeExistingUpload(uploadId: string) {
 
     const context = await getUploadProcessContext(uploadId);
     const { moduleCode, status } = context;
-    if (status !== 'raw_loaded' && status !== 'normalized' && status !== 'published') {
+    if (status !== 'raw_loaded' && status !== 'normalizing' && status !== 'normalized' && status !== 'published') {
         throw new Error(`Upload ${uploadId} is not ready to normalize (current status: ${status}).`);
     }
 
@@ -1824,7 +1839,7 @@ export async function publishUpload(uploadId: string) {
     }
 
     const { status } = await getUploadContext(uploadId);
-    if (status !== 'normalized' && status !== 'published') {
+    if (status !== 'normalized' && status !== 'publishing' && status !== 'published') {
         throw new Error(`Upload ${uploadId} is not ready to publish (status: ${status}).`);
     }
 
