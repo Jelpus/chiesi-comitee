@@ -36,6 +36,35 @@ type SignedUploadResponse = {
   message?: string;
 };
 
+const uploadPublishSteps = [
+  'Subir archivo a almacenamiento',
+  'Registrar carga',
+  'Procesar filas',
+  'Normalizar y validar datos',
+  'Publicar informacion',
+];
+
+function formatUploadStepError(step: string, message: string, uploadId?: string) {
+  const normalized = message.toLowerCase();
+  const isRuntimeTransportError =
+    normalized.includes('unexpected response') ||
+    normalized.includes('received from the server') ||
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('runtime error') ||
+    normalized.includes('out of available memory');
+
+  if (!isRuntimeTransportError) {
+    return `Fallo en "${step}": ${message}`;
+  }
+
+  const uploadHint = uploadId
+    ? ` El upload ${uploadId} ya quedo registrado; los pasos anteriores aparecen completados.`
+    : '';
+
+  return `Fallo en "${step}": Vercel interrumpio la funcion antes de devolver un detalle controlado.${uploadHint} Si ocurre en Publicar informacion, normalmente es memoria o tiempo durante la publicacion. Detalle tecnico: ${message}`;
+}
+
 function isProductionVersion(version: PrepareReportingVersion) {
   return version.status === 'ready_to_show' || version.status === 'closed';
 }
@@ -300,52 +329,48 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
     openProgressModal({
       title: 'Publicando archivo',
-      detail: 'Estamos cargando el archivo y ejecutando el proceso completo. Esto puede tardar unos minutos.',
-      steps: ['Subiendo archivo', 'Procesando filas', 'Normalizando datos', 'Validando resultados', 'Publicando informacion'],
+      detail: 'Paso 1 de 5: subiendo el archivo al almacenamiento.',
+      steps: uploadPublishSteps,
       activeStep: 0,
     });
 
     startTransition(async () => {
-      let stageStep = 0;
-      const stageMessages = [
-        'El archivo se esta guardando en el almacenamiento.',
-        'Estamos leyendo las filas del archivo.',
-        'Estamos normalizando la informacion.',
-        'Estamos validando filas correctas y filas con error.',
-        'Estamos publicando los datos para la version seleccionada.',
-      ];
-      const timer = window.setInterval(() => {
-        stageStep = Math.min(stageStep + 1, stageMessages.length - 1);
-        updateProgressStep(stageStep, stageMessages[stageStep]);
-      }, 2600);
-
+      let currentStep = uploadPublishSteps[0];
+      let activeUploadId: string | undefined;
       try {
+        currentStep = uploadPublishSteps[0];
+        updateProgressStep(0, 'Paso 1 de 5: subiendo el archivo al almacenamiento.');
         const directUpload = await uploadFileDirectly(selectedFile);
         formData.set('uploadId', directUpload.uploadId);
         formData.set('storagePath', directUpload.storagePath);
         formData.set('sourceFileName', directUpload.sourceFileName);
         formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
 
+        currentStep = uploadPublishSteps[1];
+        updateProgressStep(1, 'Paso 2 de 5: registrando la carga y guardando metadatos.');
         const created = await prepareCreateUploadRecord(formData);
         if (!created.ok || !created.uploadId) {
           throw new Error(created.message);
         }
+        activeUploadId = created.uploadId;
 
-        updateProgressStep(1, 'Estamos leyendo las filas del archivo.');
-        const processed = await prepareProcessUpload(created.uploadId);
+        currentStep = uploadPublishSteps[2];
+        updateProgressStep(2, 'Paso 3 de 5: leyendo el archivo y cargando filas RAW.');
+        const processed = await prepareProcessUpload(activeUploadId);
         if (!processed.ok) {
           throw new Error(processed.message);
         }
 
-        updateProgressStep(2, 'Estamos normalizando la informacion.');
-        const normalized = await prepareNormalizeUpload(created.uploadId);
+        currentStep = uploadPublishSteps[3];
+        updateProgressStep(3, 'Paso 4 de 5: normalizando datos y revisando validaciones.');
+        const normalized = await prepareNormalizeUpload(activeUploadId);
         if (!normalized.ok) {
           throw new Error(normalized.message);
         }
 
-        updateProgressStep(4, 'Estamos publicando los datos para la version seleccionada.');
-        const result = await preparePublishUpload(created.uploadId, requirement.module.areaCode);
-        window.clearInterval(timer);
+        currentStep = uploadPublishSteps[4];
+        updateProgressStep(4, 'Paso 5 de 5: publicando la informacion para la version seleccionada.');
+        const result = await preparePublishUpload(activeUploadId, requirement.module.areaCode);
 
         if (result.ok) {
           setMessage(result.message);
@@ -355,14 +380,15 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           finishProgressModal('success', result.message);
           onCompleted?.();
         } else {
-          setError(result.message);
-          finishProgressModal('error', result.message);
+          const detailedError = formatUploadStepError(currentStep, result.message, activeUploadId);
+          setError(detailedError);
+          finishProgressModal('error', detailedError);
         }
       } catch (uploadError) {
-        window.clearInterval(timer);
         const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
-        setError(errorMessage);
-        finishProgressModal('error', errorMessage);
+        const detailedError = formatUploadStepError(currentStep, errorMessage, activeUploadId);
+        setError(detailedError);
+        finishProgressModal('error', detailedError);
       }
     });
   }
