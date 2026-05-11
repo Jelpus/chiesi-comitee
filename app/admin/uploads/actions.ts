@@ -4,6 +4,7 @@ import 'server-only';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { once } from 'events';
+import { createInterface } from 'readline';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
 import { inspectExcelWorkbook, parseExcelRows } from '@/lib/uploads/parse-excel';
@@ -23,6 +24,65 @@ type ParsedUploadRow = {
 
 function isCsvFileName(fileName: string) {
     return /\.csv$/i.test(fileName.trim());
+}
+
+function detectCsvDelimiterFromLine(line: string) {
+    const candidates = [',', ';', '\t', '|'];
+    let best = ',';
+    let bestCount = -1;
+    for (const delimiter of candidates) {
+        const count = Math.max(0, line.split(delimiter).length - 1);
+        if (count > bestCount) {
+            best = delimiter;
+            bestCount = count;
+        }
+    }
+    return best;
+}
+
+function parseCsvLineForRaw(line: string, delimiter: string) {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i += 1) {
+        const char = line[i];
+
+        if (char === '"') {
+            const nextChar = line[i + 1];
+            if (inQuotes && nextChar === '"') {
+                current += '"';
+                i += 1;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (char === delimiter && !inQuotes) {
+            result.push(current);
+            current = '';
+            continue;
+        }
+
+        current += char;
+    }
+
+    result.push(current);
+    return result;
+}
+
+function normalizeCsvHeaderForRaw(header: unknown, index: number) {
+    const raw = String(header ?? '').replace(/^\uFEFF/, '').trim();
+    return raw || `column_${index + 1}`;
+}
+
+function normalizeCsvCellForRaw(value: unknown): unknown {
+    if (value == null || value === '') return null;
+    if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {
+        return value;
+    }
+    return String(value);
 }
 
 function normalizeWorkbookSheetName(value: string) {
@@ -1105,6 +1165,127 @@ async function writeRawRowsNdjsonToGcs(params: {
     };
 }
 
+async function writeCsvRawRowsNdjsonToGcsFromGcs(params: {
+    uploadId: string;
+    moduleCode: string;
+    storagePath: string;
+    headerRow: number;
+}) {
+    const { bucketName, objectPath } = parseGcsPath(params.storagePath);
+    const storageClient = getStorageClient();
+    const bucket = storageClient.bucket(bucketName);
+    const ndjsonObjectPath = `${objectPath}.raw_rows.ndjson`;
+    const sourceFile = bucket.file(objectPath);
+    const targetFile = bucket.file(ndjsonObjectPath);
+    const readStream = sourceFile.createReadStream();
+    const lineReader = createInterface({
+        input: readStream,
+        crlfDelay: Infinity,
+    });
+    const writeStream = targetFile.createWriteStream({
+        resumable: false,
+        contentType: 'application/x-ndjson',
+    });
+
+    const headerRow = Math.max(1, params.headerRow || 1);
+    let lineNumber = 0;
+    let delimiter = ',';
+    let headers: string[] = [];
+    let rowCount = 0;
+    const sampleRows: ParsedUploadRow[] = [];
+    let sampleChecked = false;
+
+    try {
+        for await (const rawLine of lineReader) {
+            lineNumber += 1;
+            const line = String(rawLine ?? '');
+            if (lineNumber < headerRow) continue;
+
+            if (lineNumber === headerRow) {
+                delimiter = detectCsvDelimiterFromLine(line);
+                headers = parseCsvLineForRaw(line, delimiter).map((value, index) =>
+                    normalizeCsvHeaderForRaw(value, index),
+                );
+                if (headers.length === 0) {
+                    throw new Error('No headers were parsed from CSV file.');
+                }
+                continue;
+            }
+
+            if (!line.trim()) continue;
+
+            const cells = parseCsvLineForRaw(line, delimiter);
+            const payload: Record<string, unknown> = {};
+            headers.forEach((header, colIndex) => {
+                const normalizedValue = normalizeCsvCellForRaw(cells[colIndex] ?? null);
+                payload[header] = normalizedValue;
+                payload[`column_${colIndex + 1}`] = normalizedValue;
+            });
+
+            rowCount += 1;
+            const parsedRow = {
+                rowNumber: lineNumber,
+                payload,
+            };
+
+            if (sampleRows.length < 10) {
+                sampleRows.push(parsedRow);
+                if (sampleRows.length === 10 && !sampleChecked) {
+                    const sampleCheck = validateSampleRows(params.moduleCode, sampleRows);
+                    if (!sampleCheck.ok) {
+                        throw new Error(sampleCheck.message);
+                    }
+                    sampleChecked = true;
+                }
+            }
+
+            const rawPayload = {
+                upload_id: params.uploadId,
+                raw_row_id: `${params.uploadId}_${lineNumber}`,
+                row_number: lineNumber,
+                row_payload_json: payload,
+                validation_status: 'pending',
+                validation_error_json: [],
+                sheet_name: 'CSV',
+            };
+
+            if (!writeStream.write(`${JSON.stringify(rawPayload)}\n`)) {
+                await once(writeStream, 'drain');
+            }
+        }
+
+        if (rowCount === 0) {
+            throw new Error('No rows were parsed from CSV file. Check delimiter/encoding and selected header row.');
+        }
+
+        if (!sampleChecked) {
+            const sampleCheck = validateSampleRows(params.moduleCode, sampleRows);
+            if (!sampleCheck.ok) {
+                throw new Error(sampleCheck.message);
+            }
+        }
+
+        writeStream.end();
+        await new Promise<void>((resolve, reject) => {
+            writeStream.on('finish', () => resolve());
+            writeStream.on('error', (error) => reject(error));
+        });
+
+        return {
+            gcsUri: `gs://${bucketName}/${ndjsonObjectPath}`,
+            bucketName,
+            ndjsonObjectPath,
+            rowCount,
+            sampleRowsChecked: sampleRows.length,
+        };
+    } catch (error) {
+        readStream.destroy();
+        writeStream.destroy();
+        await targetFile.delete({ ignoreNotFound: true }).catch(() => undefined);
+        throw error;
+    }
+}
+
 async function loadRawRowsIntoBigQueryFromGcs(gcsUri: string) {
     const client = getBigQueryClient();
     const projectId = process.env.GCP_PROJECT_ID || 'chiesi-committee';
@@ -1671,6 +1852,34 @@ export async function processUpload(uploadId: string) {
     try {
         // Phase 1: load RAW only.
         await setUploadStatus(uploadId, 'parsing');
+
+        if (context.selectedSheetName.toUpperCase() === 'CSV') {
+            await setUploadStatus(uploadId, 'loading_raw');
+            await clearUploadRawRows(uploadId);
+            const tempFile = await writeCsvRawRowsNdjsonToGcsFromGcs({
+                uploadId,
+                moduleCode,
+                storagePath: context.storagePath,
+                headerRow: context.selectedHeaderRow,
+            });
+            try {
+                await loadRawRowsIntoBigQueryFromGcs(tempFile.gcsUri);
+            } finally {
+                await deleteTemporaryNdjson(tempFile.bucketName, tempFile.ndjsonObjectPath);
+            }
+            await updateUploadCounters(uploadId, tempFile.rowCount);
+
+            revalidatePath('/admin/uploads');
+            revalidatePath('/admin/uploads/logs');
+            return {
+                ok: true as const,
+                phase: 'raw_loaded' as const,
+                sampleRowsChecked: tempFile.sampleRowsChecked,
+                normalizedRows: 0,
+                rowsValid: 0,
+                rowsError: 0,
+            };
+        }
 
         const storageClient = getStorageClient();
         const { bucketName, objectPath } = parseGcsPath(context.storagePath);
