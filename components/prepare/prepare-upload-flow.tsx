@@ -24,7 +24,14 @@ type ProgressModalState = {
   detail: string;
   steps: string[];
   activeStep: number;
-  finalState: 'running' | 'success' | 'error';
+  finalState: 'running' | 'waiting' | 'success' | 'error';
+};
+
+type UploadWorkflowStep = 'process' | 'normalize' | 'publish' | 'done';
+
+type ActiveUploadWorkflow = {
+  uploadId: string;
+  nextStep: UploadWorkflowStep;
 };
 
 type SignedUploadResponse = {
@@ -95,9 +102,15 @@ function initialProgress(): ProgressModalState {
 function ProgressModal({
   state,
   onClose,
+  onContinue,
+  continueLabel = 'Continuar',
+  continueDisabled = false,
 }: {
   state: ProgressModalState;
   onClose: () => void;
+  onContinue?: () => void;
+  continueLabel?: string;
+  continueDisabled?: boolean;
 }) {
   if (!state.open) return null;
 
@@ -128,6 +141,7 @@ function ProgressModal({
           {state.steps.map((step, index) => {
             const isDone = state.finalState === 'success' || index < state.activeStep;
             const isActive = state.finalState === 'running' && index === state.activeStep;
+            const isWaitingNext = state.finalState === 'waiting' && index === state.activeStep;
             const isError = state.finalState === 'error' && index === state.activeStep;
 
             return (
@@ -137,7 +151,7 @@ function ProgressModal({
                     ? 'border-rose-200 bg-rose-50 text-rose-800'
                     : isDone
                       ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                      : isActive
+                      : isActive || isWaitingNext
                         ? 'border-slate-300 bg-slate-50 text-slate-950'
                         : 'border-slate-200 bg-white text-slate-500'
                   }`}
@@ -148,6 +162,8 @@ function ProgressModal({
                   <CheckCircle2 className="h-5 w-5 shrink-0" />
                 ) : isActive ? (
                   <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
+                ) : isWaitingNext ? (
+                  <span className="h-5 w-5 shrink-0 rounded-full border border-current" />
                 ) : (
                   <span className="h-5 w-5 shrink-0 rounded-full border border-current opacity-40" />
                 )}
@@ -160,6 +176,23 @@ function ProgressModal({
             <p className="text-xs leading-5 text-slate-500">
               No cierres esta ventana. Si tu conexion es lenta, el proceso puede tardar un poco mas.
             </p>
+          ) : null}
+
+          {state.finalState === 'waiting' && onContinue ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-xs font-semibold leading-5 text-slate-600">
+                El paso anterior termino. Pulsa continuar para ejecutar el siguiente proceso.
+              </p>
+              <button
+                type="button"
+                onClick={onContinue}
+                disabled={continueDisabled}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-slate-800 disabled:opacity-50"
+              >
+                {continueDisabled ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {continueLabel}
+              </button>
+            </div>
           ) : null}
         </div>
       </section>
@@ -175,6 +208,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [progressModal, setProgressModal] = useState<ProgressModalState>(initialProgress);
+  const [activeUploadWorkflow, setActiveUploadWorkflow] = useState<ActiveUploadWorkflow | null>(null);
 
   const production = isProductionVersion(selectedVersion);
   const defaults = requirement.inferredDefaults;
@@ -187,6 +221,14 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     defaults.selectedSheetName ? 'Agrega un archivo para continuar...' : '',
   );
   const shouldShowSheetConfig = Boolean(selectedFile);
+  const continueLabel =
+    activeUploadWorkflow?.nextStep === 'process'
+      ? 'Procesar filas'
+      : activeUploadWorkflow?.nextStep === 'normalize'
+        ? 'Normalizar'
+        : activeUploadWorkflow?.nextStep === 'publish'
+          ? 'Publicar'
+          : 'Continuar';
 
   function openProgressModal(input: Omit<ProgressModalState, 'open' | 'finalState'>) {
     setProgressModal({
@@ -201,6 +243,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       ...current,
       activeStep,
       detail,
+      finalState: 'running',
     }));
   }
 
@@ -210,6 +253,15 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       activeStep: finalState === 'success' ? Math.max(current.steps.length - 1, 0) : current.activeStep,
       detail,
       finalState,
+    }));
+  }
+
+  function waitForNextStep(activeStep: number, detail: string) {
+    setProgressModal((current) => ({
+      ...current,
+      activeStep,
+      detail,
+      finalState: 'waiting',
     }));
   }
 
@@ -320,6 +372,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   function runUpload(formData: FormData) {
     setMessage(null);
     setError(null);
+    setActiveUploadWorkflow(null);
     if (!selectedFile) {
       setError('Selecciona un archivo antes de continuar.');
       return;
@@ -353,40 +406,76 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           throw new Error(created.message);
         }
         activeUploadId = created.uploadId;
+        setActiveUploadWorkflow({ uploadId: activeUploadId, nextStep: 'process' });
+        waitForNextStep(
+          2,
+          `Carga registrada correctamente. Upload ${activeUploadId}. Pulsa continuar para procesar filas.`,
+        );
+      } catch (uploadError) {
+        const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
+        const detailedError = formatUploadStepError(currentStep, errorMessage, activeUploadId);
+        setError(detailedError);
+        finishProgressModal('error', detailedError);
+      }
+    });
+  }
 
-        currentStep = uploadPublishSteps[2];
-        updateProgressStep(2, 'Paso 3 de 5: leyendo el archivo y cargando filas RAW.');
-        const processed = await prepareProcessUpload(activeUploadId);
+  function continueUploadWorkflow() {
+    if (!activeUploadWorkflow || activeUploadWorkflow.nextStep === 'done') return;
+
+    startTransition(async () => {
+      let currentStep = uploadPublishSteps[2];
+      try {
+        if (activeUploadWorkflow.nextStep === 'process') {
+          currentStep = uploadPublishSteps[2];
+          updateProgressStep(2, 'Paso 3 de 5: leyendo el archivo y cargando filas RAW.');
+          const processed = await prepareProcessUpload(activeUploadWorkflow.uploadId);
         if (!processed.ok) {
           throw new Error(processed.message);
         }
+          setActiveUploadWorkflow({ uploadId: activeUploadWorkflow.uploadId, nextStep: 'normalize' });
+          waitForNextStep(
+            3,
+            'Filas procesadas correctamente. Pulsa continuar para normalizar y validar datos.',
+          );
+          return;
+        }
 
-        currentStep = uploadPublishSteps[3];
-        updateProgressStep(3, 'Paso 4 de 5: normalizando datos y revisando validaciones.');
-        const normalized = await prepareNormalizeUpload(activeUploadId);
+        if (activeUploadWorkflow.nextStep === 'normalize') {
+          currentStep = uploadPublishSteps[3];
+          updateProgressStep(3, 'Paso 4 de 5: normalizando datos y revisando validaciones.');
+          const normalized = await prepareNormalizeUpload(activeUploadWorkflow.uploadId);
         if (!normalized.ok) {
           throw new Error(normalized.message);
+        }
+          setActiveUploadWorkflow({ uploadId: activeUploadWorkflow.uploadId, nextStep: 'publish' });
+          waitForNextStep(
+            4,
+            'Datos normalizados y validados correctamente. Pulsa continuar para publicar la informacion.',
+          );
+          return;
         }
 
         currentStep = uploadPublishSteps[4];
         updateProgressStep(4, 'Paso 5 de 5: publicando la informacion para la version seleccionada.');
-        const result = await preparePublishUpload(activeUploadId, requirement.module.areaCode);
+        const result = await preparePublishUpload(activeUploadWorkflow.uploadId, requirement.module.areaCode);
 
         if (result.ok) {
           setMessage(result.message);
           formRef.current?.reset();
           setSelectedFile(null);
           setDetectedSheetNames([]);
+          setActiveUploadWorkflow({ uploadId: activeUploadWorkflow.uploadId, nextStep: 'done' });
           finishProgressModal('success', result.message);
           onCompleted?.();
         } else {
-          const detailedError = formatUploadStepError(currentStep, result.message, activeUploadId);
+          const detailedError = formatUploadStepError(currentStep, result.message, activeUploadWorkflow.uploadId);
           setError(detailedError);
           finishProgressModal('error', detailedError);
         }
-      } catch (uploadError) {
-        const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
-        const detailedError = formatUploadStepError(currentStep, errorMessage, activeUploadId);
+      } catch (workflowError) {
+        const errorMessage = workflowError instanceof Error ? workflowError.message : 'No se pudo completar la carga.';
+        const detailedError = formatUploadStepError(currentStep, errorMessage, activeUploadWorkflow.uploadId);
         setError(detailedError);
         finishProgressModal('error', detailedError);
       }
@@ -560,7 +649,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           
           <button
             type="submit"
-            disabled={isPending || isInspecting}
+            disabled={isPending || isInspecting || Boolean(activeUploadWorkflow && activeUploadWorkflow.nextStep !== 'done')}
             className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 disabled:opacity-50"
           >
             {isPending || isInspecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
@@ -574,6 +663,9 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
       <ProgressModal
         state={progressModal}
+        onContinue={continueUploadWorkflow}
+        continueLabel={continueLabel}
+        continueDisabled={isPending}
         onClose={() => setProgressModal((current) => ({ ...current, open: false }))}
       />
     </div>
