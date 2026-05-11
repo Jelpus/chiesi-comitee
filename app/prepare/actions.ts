@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import {
   createUploadRecord,
+  createUploadRecordFromStorage,
   normalizeExistingUpload,
   processUpload,
   publishUpload,
@@ -291,7 +292,20 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
 
     const uploadFormData = new FormData();
     const file = formData.get('file');
-    if (file) uploadFormData.set('file', file);
+    const directUploadId = String(formData.get('uploadId') ?? '').trim();
+    const directStoragePath = String(formData.get('storagePath') ?? '').trim();
+    const directSourceFileName = String(formData.get('sourceFileName') ?? '').trim();
+    const directSourceSheetsJson = String(formData.get('sourceSheetsJson') ?? '').trim();
+
+    if (directUploadId && directStoragePath && directSourceFileName) {
+      uploadFormData.set('uploadId', directUploadId);
+      uploadFormData.set('storagePath', directStoragePath);
+      uploadFormData.set('sourceFileName', directSourceFileName);
+      uploadFormData.set('sourceSheetsJson', directSourceSheetsJson);
+    } else if (file) {
+      uploadFormData.set('file', file);
+    }
+
     uploadFormData.set('moduleCode', moduleCode);
     uploadFormData.set('reportingVersionId', reportingVersionId);
     uploadFormData.set('periodMonth', version.periodMonth);
@@ -303,7 +317,10 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
     uploadFormData.set('opexJanBudgetCol', String(formData.get('opexJanBudgetCol') ?? ''));
     uploadFormData.set('opexJanCurrentCol', String(formData.get('opexJanCurrentCol') ?? ''));
 
-    const created = await createUploadRecord(uploadFormData);
+    const created =
+      directUploadId && directStoragePath && directSourceFileName
+        ? await createUploadRecordFromStorage(uploadFormData)
+        : await createUploadRecord(uploadFormData);
     const uploadId = String(created.uploadId ?? '');
 
     await processUpload(uploadId);

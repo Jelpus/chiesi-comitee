@@ -1468,6 +1468,99 @@ export async function createUploadRecord(formData: FormData) {
   return { ok: true, uploadId };
 }
 
+export async function createUploadRecordFromStorage(formData: FormData) {
+  const uploadId = String(formData.get('uploadId') ?? '').trim();
+  const moduleCode = String(formData.get('moduleCode') ?? '');
+  const reportingVersionId = String(formData.get('reportingVersionId') ?? '');
+  const periodMonth = String(formData.get('periodMonth') ?? '');
+  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? periodMonth);
+  const dddSource = String(formData.get('dddSource') ?? '');
+  const opexJanPreviousCol = parseOptionalPositiveInt(formData.get('opexJanPreviousCol'));
+  const opexJanBudgetCol = parseOptionalPositiveInt(formData.get('opexJanBudgetCol'));
+  const opexJanCurrentCol = parseOptionalPositiveInt(formData.get('opexJanCurrentCol'));
+  const selectedSheetName = String(formData.get('selectedSheetName') ?? '').trim();
+  const headerRowValue = Number(formData.get('headerRow') ?? 1);
+  const headerRow = Number.isFinite(headerRowValue) && headerRowValue > 0 ? headerRowValue : 1;
+  const sourceFileName = String(formData.get('sourceFileName') ?? '').trim();
+  const storagePath = String(formData.get('storagePath') ?? '').trim();
+  const sourceSheetsJson = String(formData.get('sourceSheetsJson') ?? '').trim();
+
+  if (!uploadId || !sourceFileName || !storagePath.startsWith('gs://')) {
+    throw new Error('Faltan datos del archivo subido a storage.');
+  }
+
+  if (!moduleCode || !reportingVersionId || !periodMonth) {
+    throw new Error('Missing required form fields.');
+  }
+
+  const bucketName = getUploadsBucketName();
+  const parsedStoragePath = parseGcsPath(storagePath);
+  if (parsedStoragePath.bucketName !== bucketName) {
+    throw new Error('El archivo subido no corresponde al bucket configurado.');
+  }
+  if (!parsedStoragePath.objectPath.includes(uploadId)) {
+    throw new Error('El archivo subido no corresponde al upload generado.');
+  }
+
+  const storageClient = getStorageClient();
+  const [exists] = await storageClient.bucket(bucketName).file(parsedStoragePath.objectPath).exists();
+  if (!exists) {
+    throw new Error('El archivo aun no existe en storage. Reintenta la carga.');
+  }
+
+  let sourceSheets: string[] = [];
+  try {
+    const parsedSheets = JSON.parse(sourceSheetsJson || '[]');
+    if (Array.isArray(parsedSheets)) {
+      sourceSheets = parsedSheets
+        .map((sheetName) => String(sheetName ?? '').trim())
+        .filter(Boolean);
+    }
+  } catch {
+    sourceSheets = [];
+  }
+
+  if (sourceSheets.length === 0) {
+    sourceSheets = isCsvFileName(sourceFileName) ? ['CSV'] : [selectedSheetName || 'UNKNOWN'];
+  }
+
+  const effectiveSelectedSheetName =
+    selectedSheetName && sourceSheets.includes(selectedSheetName)
+      ? selectedSheetName
+      : sourceSheets[0] ?? 'UNKNOWN';
+
+  await insertUploadRecord({
+    uploadId,
+    moduleCode,
+    periodMonth,
+    sourceFileName,
+    storagePath,
+    reportingVersionId,
+    sourceSheetsJson: JSON.stringify(sourceSheets),
+    selectedSheetName: effectiveSelectedSheetName,
+    selectedHeaderRow: headerRow,
+    sourceAsOfMonth: sourceAsOfMonth || periodMonth,
+    dddSource:
+      moduleCode === 'business_excellence_ddd' ||
+      moduleCode === 'business_excellence_pmm' ||
+      moduleCode === 'pmm' ||
+      moduleCode === 'business_excellence_budget_sell_out' ||
+      moduleCode === 'business_excellence_sell_out' ||
+      moduleCode === 'sell_out'
+        ? dddSource
+        : '',
+    opexJanPreviousCol: moduleCode === 'opex_by_cc' ? opexJanPreviousCol : null,
+    opexJanBudgetCol: moduleCode === 'opex_by_cc' ? opexJanBudgetCol : null,
+    opexJanCurrentCol: moduleCode === 'opex_by_cc' ? opexJanCurrentCol : null,
+  });
+
+  await setUploadStatus(uploadId, 'uploaded');
+
+  revalidatePath('/admin/uploads');
+  revalidatePath('/admin/uploads/logs');
+  return { ok: true, uploadId };
+}
+
 export async function inspectUploadWorkbook(formData: FormData) {
   const file = formData.get('file');
   const moduleCode = String(formData.get('moduleCode') ?? '').trim();

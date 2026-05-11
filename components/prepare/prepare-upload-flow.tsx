@@ -2,7 +2,6 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { CheckCircle2, Loader2, UploadCloud, XCircle } from 'lucide-react';
-import { inspectUploadWorkbook } from '@/app/admin/uploads/actions';
 import { confirmReusePreviousUpload, prepareUploadAndPublish } from '@/app/prepare/actions';
 import { SourceAsOfMonthField } from '@/components/prepare/source-as-of-month-field';
 import type { PrepareReportingVersion, PrepareRequirement } from '@/lib/data/prepare';
@@ -22,6 +21,15 @@ type ProgressModalState = {
   finalState: 'running' | 'success' | 'error';
 };
 
+type SignedUploadResponse = {
+  ok: boolean;
+  uploadId?: string;
+  signedUrl?: string;
+  storagePath?: string;
+  contentType?: string;
+  message?: string;
+};
+
 function isProductionVersion(version: PrepareReportingVersion) {
   return version.status === 'ready_to_show' || version.status === 'closed';
 }
@@ -32,6 +40,10 @@ function isDddLike(moduleCode: string) {
     moduleCode === 'business_excellence_pmm' ||
     moduleCode === 'business_excellence_budget_sell_out'
   );
+}
+
+function isCsvFileName(fileName: string) {
+  return /\.csv$/i.test(fileName.trim());
 }
 
 function initialProgress(): ProgressModalState {
@@ -135,6 +147,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   const [sheetOptions, setSheetOptions] = useState<string[]>(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
   const [selectedSheetName, setSelectedSheetName] = useState(defaults.selectedSheetName);
   const [selectedHeaderRow, setSelectedHeaderRow] = useState(String(defaults.selectedHeaderRow || 1));
+  const [detectedSheetNames, setDetectedSheetNames] = useState<string[]>(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
   const [inspectMessage, setInspectMessage] = useState(
     defaults.selectedSheetName ? 'Agrega un archivo para continuar...' : '',
   );
@@ -165,28 +178,42 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     }));
   }
 
-  function inspectWorkbook(file: File) {
-    const inspectFormData = new FormData();
-    inspectFormData.append('file', file, file.name);
-    inspectFormData.append('moduleCode', requirement.module.moduleCode);
-
+  async function inspectWorkbook(file: File) {
     setInspectMessage('Leyendo hojas del archivo...');
     openProgressModal({
       title: 'Leyendo archivo',
-      detail: 'Estamos detectando las hojas disponibles y buscando la mejor configuracion previa.',
-      steps: ['Subiendo archivo temporal', 'Detectando hojas', 'Buscando sugerencias', 'Listo para continuar'],
+      detail: 'Estamos detectando las hojas disponibles desde tu navegador.',
+      steps: ['Leyendo archivo local', 'Detectando hojas', 'Buscando sugerencias', 'Listo para continuar'],
       activeStep: 0,
     });
 
     startInspectTransition(async () => {
       try {
         updateProgressStep(1, 'Detectando hojas del libro.');
-        const result = await inspectUploadWorkbook(inspectFormData);
+        const sheetNames = isCsvFileName(file.name)
+          ? ['CSV']
+          : await file.arrayBuffer().then(async (buffer) => {
+              const xlsx = await import('xlsx');
+              const workbook = xlsx.read(buffer, { type: 'array', bookSheets: true });
+              return workbook.SheetNames;
+            });
+
+        if (sheetNames.length === 0) {
+          throw new Error('No se detectaron hojas en el archivo.');
+        }
+
         updateProgressStep(2, 'Aplicando sugerencia de hoja y fila de encabezados.');
-        setSheetOptions(result.sheetNames);
-        setSelectedSheetName(result.suggestedSheetName);
-        setSelectedHeaderRow(String(result.suggestedHeaderRow));
-        setInspectMessage(`Hojas detectadas: ${result.sheetNames.length}. Se preselecciono la mejor sugerencia.`);
+        const suggestedSheetName =
+          defaults.selectedSheetName && sheetNames.includes(defaults.selectedSheetName)
+            ? defaults.selectedSheetName
+            : sheetNames[0] ?? '';
+        const suggestedHeaderRow = defaults.selectedHeaderRow || 1;
+
+        setDetectedSheetNames(sheetNames);
+        setSheetOptions(sheetNames);
+        setSelectedSheetName(suggestedSheetName);
+        setSelectedHeaderRow(String(suggestedHeaderRow));
+        setInspectMessage(`Hojas detectadas: ${sheetNames.length}. Se preselecciono la mejor sugerencia.`);
         finishProgressModal('success', 'Archivo leido correctamente. Revisa la hoja y la fila antes de publicar.');
       } catch (inspectError) {
         const errorMessage =
@@ -195,6 +222,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
             : 'No se pudo leer el archivo. Puedes completar hoja y fila manualmente.';
 
         setSheetOptions([]);
+        setDetectedSheetNames([]);
         setSelectedSheetName(defaults.selectedSheetName);
         setSelectedHeaderRow(String(defaults.selectedHeaderRow || 1));
         setInspectMessage(errorMessage);
@@ -210,6 +238,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
     if (!file) {
       setSheetOptions(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
+      setDetectedSheetNames(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
       setSelectedSheetName(defaults.selectedSheetName);
       setSelectedHeaderRow(String(defaults.selectedHeaderRow || 1));
       setInspectMessage(defaults.selectedSheetName ? 'Sugerencia basada en la carga anterior.' : '');
@@ -219,6 +248,40 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     inspectWorkbook(file);
   }
 
+  async function uploadFileDirectly(file: File) {
+    const contentType = file.type || 'application/octet-stream';
+    const response = await fetch('/api/uploads/signed-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType,
+        moduleCode: requirement.module.moduleCode,
+        periodMonth: selectedVersion.periodMonth,
+      }),
+    });
+    const signedUpload = (await response.json()) as SignedUploadResponse;
+    if (!response.ok || !signedUpload.ok || !signedUpload.signedUrl || !signedUpload.uploadId || !signedUpload.storagePath) {
+      throw new Error(signedUpload.message || 'No se pudo preparar la subida del archivo.');
+    }
+
+    const uploadResponse = await fetch(signedUpload.signedUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': signedUpload.contentType || contentType },
+      body: file,
+    });
+    if (!uploadResponse.ok) {
+      throw new Error('No se pudo subir el archivo al almacenamiento.');
+    }
+
+    return {
+      uploadId: signedUpload.uploadId,
+      storagePath: signedUpload.storagePath,
+      sourceFileName: file.name,
+      sourceSheetsJson: JSON.stringify(detectedSheetNames.length > 0 ? detectedSheetNames : sheetOptions),
+    };
+  }
+
   function runUpload(formData: FormData) {
     setMessage(null);
     setError(null);
@@ -226,7 +289,6 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       setError('Selecciona un archivo antes de continuar.');
       return;
     }
-    formData.set('file', selectedFile, selectedFile.name);
     formData.set('selectedSheetName', selectedSheetName);
     formData.set('selectedHeaderRow', selectedHeaderRow);
 
@@ -251,18 +313,32 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         updateProgressStep(stageStep, stageMessages[stageStep]);
       }, 2600);
 
-      const result = await prepareUploadAndPublish(formData);
-      window.clearInterval(timer);
+      try {
+        const directUpload = await uploadFileDirectly(selectedFile);
+        formData.set('uploadId', directUpload.uploadId);
+        formData.set('storagePath', directUpload.storagePath);
+        formData.set('sourceFileName', directUpload.sourceFileName);
+        formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
 
-      if (result.ok) {
-        setMessage(result.message);
-        formRef.current?.reset();
-        setSelectedFile(null);
-        finishProgressModal('success', result.message);
-        onCompleted?.();
-      } else {
-        setError(result.message);
-        finishProgressModal('error', result.message);
+        const result = await prepareUploadAndPublish(formData);
+        window.clearInterval(timer);
+
+        if (result.ok) {
+          setMessage(result.message);
+          formRef.current?.reset();
+          setSelectedFile(null);
+          setDetectedSheetNames([]);
+          finishProgressModal('success', result.message);
+          onCompleted?.();
+        } else {
+          setError(result.message);
+          finishProgressModal('error', result.message);
+        }
+      } catch (uploadError) {
+        window.clearInterval(timer);
+        const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
+        setError(errorMessage);
+        finishProgressModal('error', errorMessage);
       }
     });
   }
