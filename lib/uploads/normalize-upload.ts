@@ -1600,6 +1600,27 @@ async function getRawRows(uploadId: string): Promise<RawUploadRow[]> {
   return rows as RawUploadRow[];
 }
 
+async function getRawRowsPage(uploadId: string, lastRowNumber: number, limit: number): Promise<RawUploadRow[]> {
+  const client = getBigQueryClient();
+  const query = `
+    SELECT
+      row_number,
+      row_payload_json,
+      sheet_name
+    FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+    WHERE upload_id = @uploadId
+      AND row_number > @lastRowNumber
+    ORDER BY row_number
+    LIMIT @limit
+  `;
+
+  const [rows] = await client.query({
+    query,
+    params: { uploadId, lastRowNumber, limit },
+  });
+  return rows as RawUploadRow[];
+}
+
 async function getUploadAsOfMonth(uploadId: string) {
   const client = getBigQueryClient();
   const query = `
@@ -1801,7 +1822,7 @@ async function loadSalesInternalStaging(uploadId: string, rows: SalesInternalNor
   );
 }
 
-async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]) {
+async function clearCloseupStagingForUpload(uploadId: string) {
   const client = getBigQueryClient();
   await ensureCloseupStagingSchema();
 
@@ -1834,8 +1855,11 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
     `,
     params: { uploadId },
   });
+}
 
+async function appendCloseupStagingRows(uploadId: string, rows: CloseupNormalizedRow[]) {
   if (rows.length === 0) return;
+  const client = getBigQueryClient();
 
   const query = `
     INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\`
@@ -1928,6 +1952,11 @@ async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]
     },
     4,
   );
+}
+
+async function loadCloseupStaging(uploadId: string, rows: CloseupNormalizedRow[]) {
+  await clearCloseupStagingForUpload(uploadId);
+  await appendCloseupStagingRows(uploadId, rows);
 }
 
 async function loadPmmStaging(uploadId: string, rows: PmmNormalizedRow[]) {
@@ -2888,6 +2917,49 @@ async function normalizeBusinessExcellenceCloseup(rows: RawUploadRow[]) {
   }
 
   return { validations, normalizedRows };
+}
+
+async function normalizeBusinessExcellenceCloseupChunked(uploadId: string): Promise<NormalizeUploadResult> {
+  const batchSize = 5000;
+  let lastRowNumber = 0;
+  let normalizedRows = 0;
+  let rowsValid = 0;
+  let rowsSkipped = 0;
+  let rowsError = 0;
+  const issueCounts = new Map<string, number>();
+
+  await clearCloseupStagingForUpload(uploadId);
+
+  while (true) {
+    const rows = await getRawRowsPage(uploadId, lastRowNumber, batchSize);
+    if (rows.length === 0) break;
+
+    lastRowNumber = Math.max(...rows.map((row) => Number(row.row_number ?? 0)));
+    const result = await normalizeBusinessExcellenceCloseup(rows);
+    await updateRawValidationStatus(uploadId, result.validations);
+    await appendCloseupStagingRows(uploadId, result.normalizedRows);
+
+    normalizedRows += result.normalizedRows.length;
+    rowsValid += countValidRows(result.validations);
+    rowsSkipped += countSkippedRows(result.validations);
+    rowsError += countErrorRows(result.validations);
+
+    for (const issue of summarizeValidationIssues(result.validations, Number.MAX_SAFE_INTEGER)) {
+      issueCounts.set(issue.reason, (issueCounts.get(issue.reason) ?? 0) + issue.count);
+    }
+  }
+
+  return {
+    ok: true,
+    normalizedRows,
+    rowsValid,
+    rowsSkipped,
+    rowsError,
+    topValidationIssues: Array.from(issueCounts.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+      .slice(0, 3),
+  };
 }
 
 async function normalizeBusinessExcellencePmm(
@@ -6736,19 +6808,16 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     return normalizeBusinessExcellencePmmInBigQuery(uploadId, asOfMonth);
   }
 
+  if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
+    return normalizeBusinessExcellenceCloseupChunked(uploadId);
+  }
+
   const rows = await getRawRows(uploadId);
 
   if (moduleCode === 'sales_internal') {
     const { validations, normalizedRows } = normalizeSalesInternal(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadSalesInternalStaging(uploadId, normalizedRows);
-    return buildNormalizeUploadResult(validations, normalizedRows.length);
-  }
-
-  if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
-    const { validations, normalizedRows } = await normalizeBusinessExcellenceCloseup(rows);
-    await updateRawValidationStatus(uploadId, validations);
-    await loadCloseupStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
