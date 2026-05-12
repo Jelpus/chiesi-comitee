@@ -7,7 +7,7 @@ import { once } from 'events';
 import { createInterface } from 'readline';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
-import { inspectExcelWorkbook, iterateExcelRows, parseExcelRows } from '@/lib/uploads/parse-excel';
+import { inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
 import { normalizeUpload } from '@/lib/uploads/normalize-upload';
 import { publishUploadToMart } from '@/lib/uploads/publish-upload';
 
@@ -1151,52 +1151,6 @@ async function clearUploadRawRows(uploadId: string) {
     });
 }
 
-async function writeRawRowsNdjsonToGcs(params: {
-    uploadId: string;
-    rows: Array<{ rowNumber: number; payload: Record<string, unknown>; sheetName: string }>;
-    storagePath: string;
-}) {
-    const { bucketName, objectPath } = parseGcsPath(params.storagePath);
-    const storageClient = getStorageClient();
-    const bucket = storageClient.bucket(bucketName);
-    const ndjsonObjectPath = `${objectPath}.raw_rows.ndjson`;
-    const file = bucket.file(ndjsonObjectPath);
-
-    const writeStream = file.createWriteStream({
-        resumable: false,
-        contentType: 'application/x-ndjson',
-    });
-
-    for (const row of params.rows) {
-        const payload = {
-            upload_id: params.uploadId,
-            raw_row_id: `${params.uploadId}_${row.rowNumber}`,
-            row_number: row.rowNumber,
-            row_payload_json: row.payload,
-            validation_status: 'pending',
-            validation_error_json: [],
-            sheet_name: row.sheetName,
-        };
-
-        const line = `${JSON.stringify(payload)}\n`;
-        if (!writeStream.write(line)) {
-            await once(writeStream, 'drain');
-        }
-    }
-
-    writeStream.end();
-    await new Promise<void>((resolve, reject) => {
-        writeStream.on('finish', () => resolve());
-        writeStream.on('error', (error) => reject(error));
-    });
-
-    return {
-        gcsUri: `gs://${bucketName}/${ndjsonObjectPath}`,
-        bucketName,
-        ndjsonObjectPath,
-    };
-}
-
 async function writeExcelRawRowsNdjsonToGcsFromGcs(params: {
     uploadId: string;
     moduleCode: string;
@@ -2011,38 +1965,36 @@ export async function processUpload(uploadId: string) {
             };
         }
 
-        const storageClient = getStorageClient();
-        const { bucketName, objectPath } = parseGcsPath(context.storagePath);
-        const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
+        await setUploadStatus(uploadId, 'loading_raw');
+        await clearUploadRawRows(uploadId);
 
-        let rowsForRaw: Array<{ rowNumber: number; payload: Record<string, unknown>; sheetName: string }> = [];
+        let tempFile: {
+            gcsUri: string;
+            bucketName: string;
+            ndjsonObjectPath: string;
+            rowCount: number;
+            sampleRowsChecked: number;
+        };
 
         if (moduleCode === 'opex_by_cc') {
+            const storageClient = getStorageClient();
+            const { bucketName, objectPath } = parseGcsPath(context.storagePath);
+            const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
             const workbookSheets = inspectExcelWorkbook(fileBuffer);
             const [antSheetName, budgetSheetName, currentSheetName] = resolveOpexRequiredSheets(workbookSheets);
-            const opexSheets = [antSheetName, budgetSheetName, currentSheetName];
-            let rowOffset = 0;
-
-            for (const sheetName of opexSheets) {
-                const parsedSheetRows = parseExcelRows(fileBuffer, {
-                    sheetName,
-                    headerRow: context.selectedHeaderRow,
-                });
-                if (parsedSheetRows.length === 0) {
-                    throw new Error(`No rows were parsed from OPEX sheet "${sheetName}".`);
-                }
-
-                rowsForRaw.push(
-                    ...parsedSheetRows.map((row) => ({
-                        rowNumber: row.rowNumber + rowOffset,
-                        payload: row.payload,
-                        sheetName,
-                    })),
-                );
-                rowOffset += 100000;
-            }
-            sampleRowsChecked = Math.min(rowsForRaw.length, 30);
+            tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
+                uploadId,
+                moduleCode,
+                storagePath: context.storagePath,
+                sheetNames: [antSheetName, budgetSheetName, currentSheetName],
+                headerRow: context.selectedHeaderRow,
+                validateSamples: false,
+            });
+            sampleRowsChecked = Math.min(tempFile.rowCount, 30);
         } else if (moduleCode === 'business_excellence_cuotas' || moduleCode === 'cuotas') {
+            const storageClient = getStorageClient();
+            const { bucketName, objectPath } = parseGcsPath(context.storagePath);
+            const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
             const workbookSheets = inspectExcelWorkbook(fileBuffer);
             const requiredSheets = ['AIR', 'CARE'];
             const sheetLookup = new Map(workbookSheets.map((sheetName) => [sheetName.trim().toUpperCase(), sheetName]));
@@ -2050,83 +2002,31 @@ export async function processUpload(uploadId: string) {
             if (missingSheets.length > 0) {
                 throw new Error(`Cuotas workbook must include sheets: ${requiredSheets.join(', ')}. Missing: ${missingSheets.join(', ')}.`);
             }
-
-            let rowOffset = 0;
-            for (const requiredSheet of requiredSheets) {
-                const sheetName = sheetLookup.get(requiredSheet)!;
-                const parsedSheetRows = parseExcelRows(fileBuffer, {
-                    sheetName,
-                    headerRow: context.selectedHeaderRow,
-                });
-                if (parsedSheetRows.length === 0) {
-                    throw new Error(`No rows were parsed from Cuotas sheet "${sheetName}".`);
-                }
-                const sampleCheck = validateSampleRows(moduleCode, parsedSheetRows);
-                if (!sampleCheck.ok) {
-                    throw new Error(`${sampleCheck.message} Sheet: ${sheetName}.`);
-                }
-                sampleRowsChecked += sampleCheck.checked;
-
-                rowsForRaw.push(
-                    ...parsedSheetRows.map((row) => ({
-                        rowNumber: row.rowNumber + rowOffset,
-                        payload: row.payload,
-                        sheetName: requiredSheet,
-                    })),
-                );
-                rowOffset += 100000;
-            }
-        } else {
-            const parsedRows = parseExcelRows(fileBuffer, {
-                sheetName: context.selectedSheetName,
+            tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
+                uploadId,
+                moduleCode,
+                storagePath: context.storagePath,
+                sheetNames: requiredSheets.map((requiredSheet) => sheetLookup.get(requiredSheet)!),
                 headerRow: context.selectedHeaderRow,
             });
-            if (parsedRows.length === 0) {
-                throw new Error(
-                    'No rows were parsed from source file. Check delimiter/encoding and selected header row.',
-                );
-            }
-            const sampleCheck = validateSampleRows(moduleCode, parsedRows);
-            if (!sampleCheck.ok) {
-                throw new Error(sampleCheck.message);
-            }
-            sampleRowsChecked = sampleCheck.checked;
-
-            rowsForRaw = parsedRows.map((row) => ({
-                rowNumber: row.rowNumber,
-                payload: row.payload,
-                sheetName: context.selectedSheetName,
-            }));
+            sampleRowsChecked = tempFile.sampleRowsChecked;
+        } else {
+            tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
+                uploadId,
+                moduleCode,
+                storagePath: context.storagePath,
+                sheetNames: [context.selectedSheetName],
+                headerRow: context.selectedHeaderRow,
+            });
+            sampleRowsChecked = tempFile.sampleRowsChecked;
         }
 
-        if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
-            rowsForRaw = rowsForRaw;
-        }
-        if (
-            moduleCode === 'business_excellence_ddd' ||
-            moduleCode === 'business_excellence_pmm' ||
-            moduleCode === 'pmm' ||
-            moduleCode === 'ddd' ||
-            moduleCode === 'business_excellence_budget_sell_out' ||
-            moduleCode === 'business_excellence_sell_out' ||
-            moduleCode === 'sell_out'
-        ) {
-            rowsForRaw = rowsForRaw;
-        }
-
-        await setUploadStatus(uploadId, 'loading_raw');
-        await clearUploadRawRows(uploadId);
-        const tempFile = await writeRawRowsNdjsonToGcs({
-            uploadId,
-            rows: rowsForRaw,
-            storagePath: context.storagePath,
-        });
         try {
             await loadRawRowsIntoBigQueryFromGcs(tempFile.gcsUri);
         } finally {
             await deleteTemporaryNdjson(tempFile.bucketName, tempFile.ndjsonObjectPath);
         }
-        await updateUploadCounters(uploadId, rowsForRaw.length);
+        await updateUploadCounters(uploadId, tempFile.rowCount);
 
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
