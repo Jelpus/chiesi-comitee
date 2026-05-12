@@ -11,6 +11,10 @@ type ParsedExcelRow = {
   payload: Record<string, unknown>;
 };
 
+export type ParsedExcelRowWithSheet = ParsedExcelRow & {
+  sheetName: string;
+};
+
 function decodeCsvBuffer(buffer: Buffer) {
   const utf8 = buffer.toString('utf8').replace(/^\uFEFF/, '');
   const replacementCharCount = (utf8.match(/\uFFFD/g) ?? []).length;
@@ -126,6 +130,12 @@ function normalizeCellValue(value: unknown): unknown {
   }
 
   return String(value);
+}
+
+function getCellRawValue(cell: XLSX.CellObject | undefined): unknown {
+  if (!cell) return null;
+  if (cell.v == null || cell.v === '') return null;
+  return normalizeCellValue(cell.v);
 }
 
 function toMatrix(sheet: XLSX.WorkSheet) {
@@ -248,4 +258,55 @@ export function parseExcelRows(buffer: Buffer, options?: ParseExcelOptions): Par
   }
 
   return rows;
+}
+
+export function* iterateExcelRows(
+  buffer: Buffer,
+  options?: ParseExcelOptions,
+): Generator<ParsedExcelRowWithSheet> {
+  if ((options?.sheetName ?? '').toUpperCase() === 'CSV') {
+    for (const row of parseCsvRows(buffer, options)) {
+      yield { ...row, sheetName: 'CSV' };
+    }
+    return;
+  }
+
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const targetSheetName = getTargetSheetName(workbook, options?.sheetName);
+  const sheet = workbook.Sheets[targetSheetName];
+  if (!sheet?.['!ref']) return;
+
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+  const headerRow = Math.max(1, options?.headerRow ?? 1);
+  const headerIndex = headerRow - 1;
+  if (headerIndex < range.s.r || headerIndex > range.e.r) return;
+
+  const headers: string[] = [];
+  for (let colIndex = range.s.c; colIndex <= range.e.c; colIndex += 1) {
+    const address = XLSX.utils.encode_cell({ r: headerIndex, c: colIndex });
+    headers.push(normalizeHeader(getCellRawValue(sheet[address]), colIndex - range.s.c));
+  }
+  if (headers.length === 0) return;
+
+  for (let rowIndex = headerIndex + 1; rowIndex <= range.e.r; rowIndex += 1) {
+    const payload: Record<string, unknown> = {};
+    let hasValue = false;
+
+    headers.forEach((header, relativeColIndex) => {
+      const colIndex = range.s.c + relativeColIndex;
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+      const normalizedValue = getCellRawValue(sheet[address]);
+      if (normalizedValue != null && normalizedValue !== '') hasValue = true;
+      payload[header] = normalizedValue;
+      payload[`column_${relativeColIndex + 1}`] = normalizedValue;
+    });
+
+    if (!hasValue) continue;
+
+    yield {
+      rowNumber: rowIndex + 1,
+      payload,
+      sheetName: targetSheetName,
+    };
+  }
 }

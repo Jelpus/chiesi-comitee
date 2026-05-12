@@ -7,7 +7,7 @@ import { once } from 'events';
 import { createInterface } from 'readline';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
-import { inspectExcelWorkbook, parseExcelRows } from '@/lib/uploads/parse-excel';
+import { inspectExcelWorkbook, iterateExcelRows, parseExcelRows } from '@/lib/uploads/parse-excel';
 import { normalizeUpload } from '@/lib/uploads/normalize-upload';
 import { publishUploadToMart } from '@/lib/uploads/publish-upload';
 
@@ -1194,6 +1194,95 @@ async function writeRawRowsNdjsonToGcs(params: {
         gcsUri: `gs://${bucketName}/${ndjsonObjectPath}`,
         bucketName,
         ndjsonObjectPath,
+    };
+}
+
+async function writeExcelRawRowsNdjsonToGcsFromGcs(params: {
+    uploadId: string;
+    moduleCode: string;
+    storagePath: string;
+    sheetNames: string[];
+    headerRow: number;
+    rowOffsetStep?: number;
+    validateSamples?: boolean;
+}) {
+    const { bucketName, objectPath } = parseGcsPath(params.storagePath);
+    const storageClient = getStorageClient();
+    const bucket = storageClient.bucket(bucketName);
+    const ndjsonObjectPath = `${objectPath}.raw_rows.ndjson`;
+    const file = bucket.file(ndjsonObjectPath);
+    const [fileBuffer] = await bucket.file(objectPath).download();
+    const writeStream = file.createWriteStream({
+        resumable: false,
+        contentType: 'application/x-ndjson',
+    });
+
+    let rowCount = 0;
+    let sampleRowsChecked = 0;
+    const rowOffsetStep = params.rowOffsetStep ?? 100000;
+
+    try {
+        for (const [sheetIndex, sheetName] of params.sheetNames.entries()) {
+            const sampleRows: ParsedUploadRow[] = [];
+            let sheetRowCount = 0;
+            const rowOffset = sheetIndex * rowOffsetStep;
+
+            for (const row of iterateExcelRows(fileBuffer, {
+                sheetName,
+                headerRow: params.headerRow,
+            })) {
+                const rowNumber = row.rowNumber + rowOffset;
+                sheetRowCount += 1;
+                rowCount += 1;
+
+                if (params.validateSamples !== false && sampleRows.length < 10) {
+                    sampleRows.push({ rowNumber, payload: row.payload });
+                }
+
+                const payload = {
+                    upload_id: params.uploadId,
+                    raw_row_id: `${params.uploadId}_${rowNumber}`,
+                    row_number: rowNumber,
+                    row_payload_json: row.payload,
+                    validation_status: 'pending',
+                    validation_error_json: [],
+                    sheet_name: sheetName,
+                };
+
+                if (!writeStream.write(`${JSON.stringify(payload)}\n`)) {
+                    await once(writeStream, 'drain');
+                }
+            }
+
+            if (sheetRowCount === 0) {
+                throw new Error(`No rows were parsed from sheet "${sheetName}".`);
+            }
+
+            if (params.validateSamples !== false) {
+                const sampleCheck = validateSampleRows(params.moduleCode, sampleRows);
+                if (!sampleCheck.ok) {
+                    throw new Error(`${sampleCheck.message} Sheet: ${sheetName}.`);
+                }
+                sampleRowsChecked += sampleCheck.checked;
+            }
+        }
+    } catch (error) {
+        writeStream.destroy(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+    }
+
+    writeStream.end();
+    await new Promise<void>((resolve, reject) => {
+        writeStream.on('finish', () => resolve());
+        writeStream.on('error', (error) => reject(error));
+    });
+
+    return {
+        gcsUri: `gs://${bucketName}/${ndjsonObjectPath}`,
+        bucketName,
+        ndjsonObjectPath,
+        rowCount,
+        sampleRowsChecked,
     };
 }
 
