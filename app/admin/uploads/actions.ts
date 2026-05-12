@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { once } from 'events';
 import { createInterface } from 'readline';
+import ExcelJS from 'exceljs';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
 import { inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
@@ -24,6 +25,10 @@ type ParsedUploadRow = {
 
 function isCsvFileName(fileName: string) {
     return /\.csv$/i.test(fileName.trim());
+}
+
+function isXlsxPath(fileName: string) {
+    return /\.xlsx$/i.test(fileName.trim());
 }
 
 function detectCsvDelimiterFromLine(line: string) {
@@ -81,6 +86,34 @@ function normalizeCsvCellForRaw(value: unknown): unknown {
     if (value == null || value === '') return null;
     if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {
         return value;
+    }
+    return String(value);
+}
+
+function normalizeExcelJsHeaderForRaw(header: unknown, index: number) {
+    const raw = normalizeExcelJsCellForRaw(header);
+    const text = String(raw ?? '').trim();
+    return text || `column_${index + 1}`;
+}
+
+function normalizeExcelJsCellForRaw(value: unknown): unknown {
+    if (value == null || value === '') return null;
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {
+        return value;
+    }
+    if (typeof value === 'object') {
+        const cellValue = value as {
+            result?: unknown;
+            text?: unknown;
+            hyperlink?: unknown;
+            richText?: Array<{ text?: unknown }>;
+        };
+        if (cellValue.result != null) return normalizeExcelJsCellForRaw(cellValue.result);
+        if (cellValue.text != null) return normalizeExcelJsCellForRaw(cellValue.text);
+        if (Array.isArray(cellValue.richText)) {
+            return cellValue.richText.map((item) => String(item.text ?? '')).join('');
+        }
     }
     return String(value);
 }
@@ -1240,6 +1273,143 @@ async function writeExcelRawRowsNdjsonToGcsFromGcs(params: {
     };
 }
 
+async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
+    uploadId: string;
+    moduleCode: string;
+    storagePath: string;
+    sheetName: string;
+    headerRow: number;
+}) {
+    const { bucketName, objectPath } = parseGcsPath(params.storagePath);
+    const storageClient = getStorageClient();
+    const bucket = storageClient.bucket(bucketName);
+    const sourceFile = bucket.file(objectPath);
+    const ndjsonObjectPath = `${objectPath}.raw_rows.ndjson`;
+    const targetFile = bucket.file(ndjsonObjectPath);
+    const readStream = sourceFile.createReadStream();
+    const writeStream = targetFile.createWriteStream({
+        resumable: false,
+        contentType: 'application/x-ndjson',
+    });
+    const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
+        entries: 'emit',
+        sharedStrings: 'cache',
+        hyperlinks: 'ignore',
+        styles: 'ignore',
+        worksheets: 'emit',
+    });
+
+    const targetSheetName = params.sheetName.trim();
+    const headerRow = Math.max(1, params.headerRow || 1);
+    let rowCount = 0;
+    let sampleRowsChecked = 0;
+    let matchedSheet = false;
+    let parsedAnySheet = false;
+
+    try {
+        for await (const worksheetReader of workbookReader) {
+            parsedAnySheet = true;
+            const worksheetName = String((worksheetReader as { name?: unknown }).name ?? '').trim();
+            if (targetSheetName && worksheetName && worksheetName !== targetSheetName) {
+                continue;
+            }
+
+            matchedSheet = true;
+            let headers: string[] = [];
+            const sampleRows: ParsedUploadRow[] = [];
+
+            for await (const rowOrRows of worksheetReader as AsyncIterable<ExcelJS.Row | ExcelJS.Row[]>) {
+                const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
+
+                for (const row of rows) {
+                    const rowNumber = Number(row.number ?? 0);
+                    if (!Number.isFinite(rowNumber) || rowNumber < headerRow) continue;
+
+                    if (rowNumber === headerRow) {
+                        const headerCount = Math.max(
+                            row.cellCount,
+                            Array.isArray(row.values) ? row.values.length - 1 : 0,
+                        );
+                        headers = [];
+                        for (let colIndex = 1; colIndex <= headerCount; colIndex += 1) {
+                            headers.push(normalizeExcelJsHeaderForRaw(row.getCell(colIndex).value, colIndex - 1));
+                        }
+                        if (headers.length === 0) {
+                            throw new Error(`No headers were parsed from XLSX sheet "${worksheetName || targetSheetName}".`);
+                        }
+                        continue;
+                    }
+
+                    if (headers.length === 0) continue;
+
+                    const payload: Record<string, unknown> = {};
+                    let hasValue = false;
+                    headers.forEach((header, relativeColIndex) => {
+                        const normalizedValue = normalizeExcelJsCellForRaw(row.getCell(relativeColIndex + 1).value);
+                        if (normalizedValue != null && normalizedValue !== '') hasValue = true;
+                        payload[header] = normalizedValue;
+                        payload[`column_${relativeColIndex + 1}`] = normalizedValue;
+                    });
+                    if (!hasValue) continue;
+
+                    rowCount += 1;
+                    const parsedRow = { rowNumber, payload };
+                    if (sampleRows.length < 10) sampleRows.push(parsedRow);
+
+                    const rawPayload = {
+                        upload_id: params.uploadId,
+                        raw_row_id: `${params.uploadId}_${rowNumber}`,
+                        row_number: rowNumber,
+                        row_payload_json: payload,
+                        validation_status: 'pending',
+                        validation_error_json: [],
+                        sheet_name: worksheetName || targetSheetName || 'XLSX',
+                    };
+
+                    if (!writeStream.write(`${JSON.stringify(rawPayload)}\n`)) {
+                        await once(writeStream, 'drain');
+                    }
+                }
+            }
+
+            const sampleCheck = validateSampleRows(params.moduleCode, sampleRows);
+            if (!sampleCheck.ok) {
+                throw new Error(sampleCheck.message);
+            }
+            sampleRowsChecked = sampleCheck.checked;
+            break;
+        }
+
+        if (!parsedAnySheet) {
+            throw new Error('No sheets/tabs were detected in the XLSX file.');
+        }
+        if (!matchedSheet) {
+            throw new Error(`Sheet "${targetSheetName}" was not found in the XLSX file.`);
+        }
+        if (rowCount === 0) {
+            throw new Error('No rows were parsed from source file. Check selected sheet and header row.');
+        }
+    } catch (error) {
+        writeStream.destroy(error instanceof Error ? error : new Error(String(error)));
+        readStream.destroy(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+    }
+
+    writeStream.end();
+    await new Promise<void>((resolve, reject) => {
+        writeStream.on('finish', () => resolve());
+        writeStream.on('error', (error) => reject(error));
+    });
+
+    return {
+        gcsUri: `gs://${bucketName}/${ndjsonObjectPath}`,
+        bucketName,
+        ndjsonObjectPath,
+        rowCount,
+        sampleRowsChecked,
+    };
+}
+
 async function writeCsvRawRowsNdjsonToGcsFromGcs(params: {
     uploadId: string;
     moduleCode: string;
@@ -2011,13 +2181,21 @@ export async function processUpload(uploadId: string) {
             });
             sampleRowsChecked = tempFile.sampleRowsChecked;
         } else {
-            tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
-                uploadId,
-                moduleCode,
-                storagePath: context.storagePath,
-                sheetNames: [context.selectedSheetName],
-                headerRow: context.selectedHeaderRow,
-            });
+            tempFile = isXlsxPath(context.storagePath)
+                ? await writeStreamingXlsxRawRowsNdjsonToGcsFromGcs({
+                    uploadId,
+                    moduleCode,
+                    storagePath: context.storagePath,
+                    sheetName: context.selectedSheetName,
+                    headerRow: context.selectedHeaderRow,
+                })
+                : await writeExcelRawRowsNdjsonToGcsFromGcs({
+                    uploadId,
+                    moduleCode,
+                    storagePath: context.storagePath,
+                    sheetNames: [context.selectedSheetName],
+                    headerRow: context.selectedHeaderRow,
+                });
             sampleRowsChecked = tempFile.sampleRowsChecked;
         }
 
