@@ -3083,12 +3083,18 @@ export async function BusinessExcellenceView({
   const needsFullPublicMarketData =
     viewMode === 'insights' ||
     viewMode === 'scorecard' ||
-    (viewMode === 'dashboard' && (activeDashboardTab === 'public' || activeDashboardTab === 'market'));
+    (viewMode === 'dashboard' && (
+      activeDashboardTab === 'public' ||
+      (activeDashboardTab === 'market' && activeMarketChannel !== 'private')
+    ));
+  const needsPublicMarketOverview =
+    needsFullPublicMarketData ||
+    (viewMode === 'dashboard' && activeDashboardTab === 'market' && activeMarketChannel !== 'private');
   const needsBusinessUnitChannelRows =
     viewMode === 'insights' ||
     (viewMode === 'dashboard' && activeDashboardTab === 'market');
   const [publicMarketOverview, publicMarketData, businessUnitChannelRows] = await Promise.all([
-    getCachedPublicMarketOverview(selectedReportingVersionId),
+    needsPublicMarketOverview ? getCachedPublicMarketOverview(selectedReportingVersionId) : null,
     needsFullPublicMarketData ? getPublicMarketData(selectedReportingVersionId) : null,
     needsBusinessUnitChannelRows ? getCachedBusinessUnitChannelRows(selectedReportingVersionId) : Promise.resolve([]),
   ]);

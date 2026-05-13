@@ -3,7 +3,9 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { SelectFilter } from '@/components/ui/select-filter';
 import { AdminStatusBadge } from '@/components/ui/admin-status-badge';
 import { AdminSyncActions } from '@/components/admin/admin-sync-actions';
+import { FormResponsiblesManager } from '@/components/admin/form-responsibles-manager';
 import { getAdminHomeStatusData } from '@/lib/data/admin-home-status';
+import { getFormResponsibles } from '@/lib/data/form-responsibles';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 import Link from 'next/link';
 
@@ -40,10 +42,13 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     );
   }
 
-  const statusData = await getAdminHomeStatusData({
-    reportingVersionId: selected.reportingVersionId,
-    periodMonth: selected.periodMonth,
-  });
+  const [statusData, formResponsibles] = await Promise.all([
+    getAdminHomeStatusData({
+      reportingVersionId: selected.reportingVersionId,
+      periodMonth: selected.periodMonth,
+    }),
+    getFormResponsibles(),
+  ]);
 
   return (
     <section className="space-y-6">
@@ -111,6 +116,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
             </div>
           ))}
         </div>
+        <FormResponsiblesManager rows={formResponsibles} periodMonth={selected.periodMonth} />
       </article>
 
       <article className="rounded-[18px] border border-slate-200 bg-white p-4">
@@ -158,6 +164,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">File</th>
                 <th className="px-4 py-3">Uploaded At</th>
+                <th className="px-4 py-3 text-right">Download</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -176,6 +183,18 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                   </td>
                   <td className="px-4 py-3 text-slate-700">{row.sourceFileName ?? 'N/A'}</td>
                   <td className="px-4 py-3 text-slate-700">{row.uploadedAt ?? 'N/A'}</td>
+                  <td className="px-4 py-3 text-right">
+                    {row.uploadId ? (
+                      <Link
+                        href={`/api/prepare/download?uploadId=${encodeURIComponent(row.uploadId)}`}
+                        className="inline-flex items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-700 hover:border-slate-400 hover:bg-slate-50"
+                      >
+                        Download
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-slate-400">N/A</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

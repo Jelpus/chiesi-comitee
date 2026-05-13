@@ -5,10 +5,13 @@ import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import {
+  sendFormRequestInfoEmail,
   sendRequestInfoEmail,
   sendRequestInfoSummaryEmail,
+  type FormRequestInfoRecipient,
   type RequestInfoRecipient,
 } from '@/lib/email/request-info';
+import { getActiveFormResponsibles } from '@/lib/data/form-responsibles';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -265,15 +268,18 @@ export async function requestReportingVersionInfo(input: {
   const today = asDateOnly(new Date());
   const windowEnd = addBusinessDays(today, 3);
   const recipients = await getRequestInfoRecipients();
+  const formResponsibles = await getActiveFormResponsibles();
 
-  if (recipients.length === 0) {
+  if (recipients.length === 0 && formResponsibles.length === 0) {
     return { ok: true as const, sent: 0, failed: 0 };
   }
 
-  const periodLabel = formatPeriodLabel(String(versionRow.period_month ?? periodMonth));
+  const periodMonthValue = String(versionRow.period_month ?? periodMonth);
+  const periodLabel = formatPeriodLabel(periodMonthValue);
   const windowStartLabel = formatSpanishDate(today);
   const windowEndLabel = formatSpanishDate(windowEnd);
   let sent = 0;
+  let formsSent = 0;
   let failed = 0;
   const errors: string[] = [];
 
@@ -292,21 +298,61 @@ export async function requestReportingVersionInfo(input: {
     }
   }
 
+  const formRecipientsByEmail = new Map<string, FormRequestInfoRecipient>();
+  for (const responsible of formResponsibles) {
+    const emailOwner = normalizeEmail(responsible.emailOwner);
+    if (!emailOwner) continue;
+    const current = formRecipientsByEmail.get(emailOwner);
+    const form = {
+      formLabel: responsible.formLabel,
+      formPath: responsible.formPath,
+    };
+    if (current) {
+      current.forms.push(form);
+      if (!current.ownerName && responsible.ownerName) current.ownerName = responsible.ownerName;
+      continue;
+    }
+    formRecipientsByEmail.set(emailOwner, {
+      ownerName: responsible.ownerName ?? '',
+      emailOwner,
+      periodMonth: periodMonthValue,
+      forms: [form],
+    });
+  }
+
+  const formRecipients = [...formRecipientsByEmail.values()];
+  for (const recipient of formRecipients) {
+    try {
+      await sendFormRequestInfoEmail({
+        recipient,
+        periodLabel,
+        windowStart: windowStartLabel,
+        windowEnd: windowEndLabel,
+      });
+      formsSent += 1;
+    } catch (error) {
+      failed += 1;
+      errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
+    }
+  }
+
   revalidatePath('/admin/versions');
 
   if (failed > 0) {
-    throw new Error(`Sent ${sent} emails, but ${failed} failed. ${errors.slice(0, 3).join(' | ')}`);
+    throw new Error(`Sent ${sent + formsSent} emails, but ${failed} failed. ${errors.slice(0, 3).join(' | ')}`);
   }
 
   await sendRequestInfoSummaryEmail({
     recipients,
+    formRecipients,
     periodLabel,
     windowStart: windowStartLabel,
     windowEnd: windowEndLabel,
     sentCount: sent,
+    formSentCount: formsSent,
   });
 
-  return { ok: true as const, sent, failed };
+  return { ok: true as const, sent: sent + formsSent, failed };
 }
 
 export async function deleteReportingVersion(reportingVersionId: string) {

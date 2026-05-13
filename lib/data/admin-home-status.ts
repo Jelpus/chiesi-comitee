@@ -10,6 +10,7 @@ export type AdminHomeModuleStatusRow = {
   moduleCode: string;
   moduleLabel: string;
   area: string;
+  uploadId: string | null;
   status: string;
   sourceFileName: string | null;
   uploadedAt: string | null;
@@ -260,6 +261,7 @@ export async function getAdminHomeStatusData(params: {
     query: `
       WITH latest AS (
         SELECT
+          upload_id,
           module_code,
           status,
           source_file_name,
@@ -273,6 +275,7 @@ export async function getAdminHomeStatusData(params: {
           AND period_month = DATE(@periodMonth)
       )
       SELECT
+        upload_id,
         module_code,
         status,
         source_file_name,
@@ -290,6 +293,7 @@ export async function getAdminHomeStatusData(params: {
     (rows as Array<Record<string, unknown>>).map((row) => [
       String(row.module_code ?? ''),
       {
+        uploadId: row.upload_id == null ? null : String(row.upload_id),
         status: String(row.status ?? 'missing').toLowerCase(),
         sourceFileName: row.source_file_name == null ? null : String(row.source_file_name),
         uploadedAt: row.uploaded_at == null ? null : String(row.uploaded_at),
@@ -304,6 +308,7 @@ export async function getAdminHomeStatusData(params: {
       moduleCode: expected.moduleCode,
       moduleLabel: expected.moduleLabel,
       area: expected.area,
+      uploadId: current?.uploadId ?? null,
       status,
       sourceFileName: current?.sourceFileName ?? null,
       uploadedAt: current?.uploadedAt ?? null,

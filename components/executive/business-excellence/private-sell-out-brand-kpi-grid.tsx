@@ -68,6 +68,7 @@ function eiTone(value: number | null) {
 
 export function PrivateSellOutBrandKpiGrid({ rows }: PrivateSellOutBrandKpiGridProps) {
   const [windowMode, setWindowMode] = useState<'ytd' | 'mth'>('ytd');
+  const hasAnyBudget = rows.some((row) => row.budgetYtdUnits > 0 || row.budgetMthUnits > 0);
   const triplesRows = rows.filter(
     (row) => isTriplesDoseMarketGroup(row.marketGroup) && isTrimbowBrand(row.brandName),
   );
@@ -176,6 +177,11 @@ export function PrivateSellOutBrandKpiGrid({ rows }: PrivateSellOutBrandKpiGridP
           </button>
         </div>
       </div>
+      {!hasAnyBudget ? (
+        <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          No private Budget Sell Out rows are available for this reporting version, so Coverage vs Budget is not calculated.
+        </div>
+      ) : null}
 
       <div className="mt-3 overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">

@@ -1317,13 +1317,18 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
             matchedSheet = true;
             let headers: string[] = [];
             const sampleRows: ParsedUploadRow[] = [];
+            let relativeSheetRowNumber = 0;
 
             for await (const rowOrRows of worksheetReader as AsyncIterable<ExcelJS.Row | ExcelJS.Row[]>) {
                 const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
 
                 for (const row of rows) {
-                    const rowNumber = Number(row.number ?? 0);
-                    if (!Number.isFinite(rowNumber) || rowNumber < headerRow) continue;
+                    const hasAnyCellValue = row.actualCellCount > 0;
+                    if (!hasAnyCellValue) continue;
+
+                    relativeSheetRowNumber += 1;
+                    const rowNumber = relativeSheetRowNumber;
+                    if (rowNumber < headerRow) continue;
 
                     if (rowNumber === headerRow) {
                         const headerCount = Math.max(

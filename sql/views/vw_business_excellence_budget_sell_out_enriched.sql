@@ -40,6 +40,61 @@ product_metadata_dedup AS (
   )
   WHERE rn = 1
 ),
+direct_upload_scope AS (
+  SELECT
+    u.upload_id,
+    u.reporting_version_id,
+    u.period_month AS upload_period_month,
+    u.source_as_of_month,
+    u.uploaded_at,
+    u.source_file_name,
+    u.ddd_source,
+    u.module_code
+  FROM `chiesi-committee.chiesi_committee_raw.uploads` u
+  WHERE LOWER(TRIM(u.module_code)) IN (
+    'business_excellence_budget_sell_out',
+    'business_excellence_sell_out',
+    'sell_out'
+  )
+    AND u.status IN ('normalized', 'published')
+),
+reuse_upload_scope AS (
+  SELECT
+    original.upload_id,
+    reuse.reporting_version_id,
+    reuse.period_month AS upload_period_month,
+    original.source_as_of_month,
+    original.uploaded_at,
+    original.source_file_name,
+    original.ddd_source,
+    original.module_code
+  FROM `chiesi-committee.chiesi_committee_admin.prepare_reuse_confirmations` reuse
+  JOIN `chiesi-committee.chiesi_committee_raw.uploads` original
+    ON original.upload_id = reuse.original_upload_id
+  WHERE LOWER(TRIM(reuse.module_code)) IN (
+    'business_excellence_budget_sell_out',
+    'business_excellence_sell_out',
+    'sell_out'
+  )
+    AND LOWER(TRIM(original.module_code)) IN (
+      'business_excellence_budget_sell_out',
+      'business_excellence_sell_out',
+      'sell_out'
+    )
+    AND original.status IN ('normalized', 'published')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM direct_upload_scope direct
+      WHERE direct.reporting_version_id = reuse.reporting_version_id
+        AND LOWER(TRIM(direct.module_code)) = LOWER(TRIM(reuse.module_code))
+        AND COALESCE(LOWER(TRIM(direct.ddd_source)), '') = COALESCE(LOWER(TRIM(reuse.ddd_source)), '')
+    )
+),
+upload_scope AS (
+  SELECT * FROM direct_upload_scope
+  UNION ALL
+  SELECT * FROM reuse_upload_scope
+),
 budget_resolved AS (
   SELECT
     s.*,
@@ -70,18 +125,12 @@ budget_resolved AS (
       ELSE s.amount_value
     END AS amount_value_adjusted
   FROM `chiesi-committee.chiesi_committee_stg.stg_business_excellence_budget_sell_out` s
-  JOIN `chiesi-committee.chiesi_committee_raw.uploads` u
+  JOIN upload_scope u
     ON u.upload_id = s.upload_id
   LEFT JOIN `chiesi-committee.chiesi_committee_admin.reporting_versions` rv
     ON rv.reporting_version_id = u.reporting_version_id
   LEFT JOIN active_sell_out_mapping map
     ON map.source_product_name_normalized = s.source_product_normalized
-  WHERE LOWER(TRIM(u.module_code)) IN (
-    'business_excellence_budget_sell_out',
-    'business_excellence_sell_out',
-    'sell_out'
-  )
-    AND u.status IN ('normalized', 'published')
 )
 SELECT
   s.upload_id,

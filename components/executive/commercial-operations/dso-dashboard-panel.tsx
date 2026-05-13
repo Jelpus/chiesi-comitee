@@ -172,6 +172,7 @@ function toScopeLabel(scope: StockScope) {
 }
 
 type GovernmentStage = 'ordenado' | 'entregado' | 'facturado';
+type GovernmentOpdScope = 'without_opd' | 'total';
 
 function normalizeGovernmentStage(value: string | null | undefined): GovernmentStage | 'other' {
   const text = (value ?? '').toLowerCase().trim();
@@ -223,6 +224,12 @@ function getGovernmentContractTypeLabel(value: string | null | undefined) {
   return (value ?? '').trim() || 'Unassigned';
 }
 
+function isOpdGovernmentContractRow(row: CommercialOperationsGovernmentContractProgressRow) {
+  const contractType = (row.contractType ?? '').trim().toUpperCase();
+  const centralInstitution = (row.centralInstitution ?? '').trim().toUpperCase();
+  return contractType === 'OPD' || centralInstitution === 'OPD';
+}
+
 type ExplainerRow = {
   label: string;
   current: number | null;
@@ -268,6 +275,7 @@ export function DsoDashboardPanel({
     'product' | 'institution' | 'business_unit'
   >('product');
   const [selectedGovernmentStage, setSelectedGovernmentStage] = useState<GovernmentStage>('ordenado');
+  const [selectedGovernmentOpdScope, setSelectedGovernmentOpdScope] = useState<GovernmentOpdScope>('without_opd');
   const [selectedGovernmentContractType, setSelectedGovernmentContractType] = useState('');
   const [stockBusinessTypeFilter, setStockBusinessTypeFilter] = useState('');
   const [stockClientInstitutionFilter, setStockClientInstitutionFilter] = useState('');
@@ -282,6 +290,14 @@ export function DsoDashboardPanel({
   const reportPeriodDate = toMonthDate(selectedOverview?.reportPeriodMonth ?? null);
   const previousMonthDate = subOneMonth(reportPeriodDate);
   const pyYearLabel = reportPeriodDate ? String(reportPeriodDate.getUTCFullYear() - 1) : 'PY';
+
+  const filteredGovernmentContractRows = useMemo(
+    () =>
+      selectedGovernmentOpdScope === 'without_opd'
+        ? governmentContractRows.filter((row) => !isOpdGovernmentContractRow(row))
+        : governmentContractRows,
+    [governmentContractRows, selectedGovernmentOpdScope],
+  );
 
   const selectedTrendRows = trendRows
     .filter((row) => normalizeLabel(row.groupName) === normalizeLabel(selectedGroup))
@@ -1000,14 +1016,14 @@ export function DsoDashboardPanel({
   );
 
   const governmentMonthlyRows = useMemo(() => {
-    const sourceAsOf = governmentContractRows
+    const sourceAsOf = filteredGovernmentContractRows
       .map((row) => row.sourceAsOfMonth)
       .filter((value): value is string => Boolean(value))
       .sort()
       .at(-1) ?? null;
 
     const byPeriod = new Map<string, { periodMonth: string; delivered: number; isMth: boolean; isYtd: boolean; isYtdPy: boolean }>();
-    for (const row of governmentContractRows) {
+    for (const row of filteredGovernmentContractRows) {
       if (normalizeGovernmentStage(row.category) !== selectedGovernmentStage) continue;
       if (sourceAsOf && row.periodMonth > sourceAsOf) continue;
       const current = byPeriod.get(row.periodMonth) ?? {
@@ -1024,7 +1040,7 @@ export function DsoDashboardPanel({
       byPeriod.set(row.periodMonth, current);
     }
     return [...byPeriod.values()].sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
-  }, [governmentContractRows, selectedGovernmentStage]);
+  }, [filteredGovernmentContractRows, selectedGovernmentStage]);
 
   const governmentSummary = useMemo(() => {
     const current = governmentMonthlyRows.find((row) => row.isMth) ?? governmentMonthlyRows.at(-1) ?? null;
@@ -1035,10 +1051,10 @@ export function DsoDashboardPanel({
     const ytdPyTotal = ytdPyRows.reduce((sum, row) => sum + row.delivered, 0);
     const ytdAvg = ytdRows.length ? ytdTotal / ytdRows.length : null;
     const ytdPyAvg = ytdPyRows.length ? ytdPyTotal / ytdPyRows.length : null;
-    const scopeRows = governmentContractRows.filter(
+    const scopeRows = filteredGovernmentContractRows.filter(
       (row) => normalizeGovernmentStage(row.category) === selectedGovernmentStage,
     );
-    const baselineRows = governmentContractRows.filter(
+    const baselineRows = filteredGovernmentContractRows.filter(
       (row) => normalizeGovernmentStage(row.category) === 'ordenado',
     );
     const denominatorBaseRows = baselineRows.length > 0 ? baselineRows : scopeRows;
@@ -1139,7 +1155,7 @@ export function DsoDashboardPanel({
       projected100Month2026,
       projectedYearEndProgress2026Pct,
     };
-  }, [governmentMonthlyRows, governmentContractRows, selectedGovernmentStage]);
+  }, [governmentMonthlyRows, filteredGovernmentContractRows, selectedGovernmentStage]);
   const selectedGovernmentStageLabel =
     selectedGovernmentStage === 'ordenado'
       ? 'Ordered'
@@ -1178,11 +1194,11 @@ export function DsoDashboardPanel({
   const governmentContractTypeOptions = useMemo(
     () =>
       [...new Set(
-        governmentContractRows
+        filteredGovernmentContractRows
           .filter((row) => normalizeGovernmentStage(row.category) === selectedGovernmentStage)
           .map((row) => getGovernmentContractTypeLabel(row.contractType)),
       )].sort((a, b) => a.localeCompare(b)),
-    [governmentContractRows, selectedGovernmentStage],
+    [filteredGovernmentContractRows, selectedGovernmentStage],
   );
 
   useEffect(() => {
@@ -1192,7 +1208,7 @@ export function DsoDashboardPanel({
   }, [governmentContractTypeOptions, selectedGovernmentContractType]);
 
   const governmentContractGroupRows = useMemo(() => {
-    const stageRows = governmentContractRows.filter(
+    const stageRows = filteredGovernmentContractRows.filter(
       (row) => normalizeGovernmentStage(row.category) === selectedGovernmentStage,
     );
     const denominatorSnapshotMonth =
@@ -1274,7 +1290,7 @@ export function DsoDashboardPanel({
         progressPctCy: total.maxQtyCy > 0 ? (total.delivered2026 / total.maxQtyCy) * 100 : null,
       },
     };
-  }, [governmentContractRows, selectedGovernmentStage]);
+  }, [filteredGovernmentContractRows, selectedGovernmentStage]);
 
   const governmentRankingRows = useMemo(() => {
     const keyFor = (row: CommercialOperationsGovernmentContractProgressRow) => {
@@ -1288,7 +1304,7 @@ export function DsoDashboardPanel({
 
     const byKey = new Map<string, { label: string; mthDelivered: number; ytdDelivered: number; delivered2025: number; delivered2026: number }>();
 
-    const stageRows = governmentContractRows.filter(
+    const stageRows = filteredGovernmentContractRows.filter(
       (row) =>
         normalizeGovernmentStage(row.category) === selectedGovernmentStage &&
         (!selectedGovernmentContractType || getGovernmentContractTypeLabel(row.contractType) === selectedGovernmentContractType),
@@ -1340,7 +1356,7 @@ export function DsoDashboardPanel({
       }))
       .sort((a, b) => b.mthDelivered - a.mthDelivered)
       .slice(0, 12);
-  }, [governmentContractRows, selectedGovernmentContractType, selectedGovernmentDimension, selectedGovernmentStage]);
+  }, [filteredGovernmentContractRows, selectedGovernmentContractType, selectedGovernmentDimension, selectedGovernmentStage]);
 
   return (
     <div className="space-y-4">
@@ -2068,26 +2084,48 @@ export function DsoDashboardPanel({
             Monthly execution and YTD delivery tracking from normalized contract progress rows.
           </p>
 
-          <div className="mt-4 flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
-            {([
-              ['ordenado', 'Ordered'],
-              ['entregado', 'Delivered'],
-              ['facturado', 'Invoiced'],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => {
-                  setSelectedGovernmentStage(key);
-                  setSelectedGovernmentContractType('');
-                }}
-                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
-                  selectedGovernmentStage === key ? 'bg-slate-900 text-white' : 'text-slate-600'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
+              {([
+                ['ordenado', 'Ordered'],
+                ['entregado', 'Delivered'],
+                ['facturado', 'Invoiced'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedGovernmentStage(key);
+                    setSelectedGovernmentContractType('');
+                  }}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                    selectedGovernmentStage === key ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
+              {([
+                ['without_opd', 'w/o OPD'],
+                ['total', 'Total'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedGovernmentOpdScope(key);
+                    setSelectedGovernmentContractType('');
+                  }}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                    selectedGovernmentOpdScope === key ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-4">
