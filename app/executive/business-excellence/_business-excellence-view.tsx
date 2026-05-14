@@ -3125,7 +3125,7 @@ export async function BusinessExcellenceView({
       <SectionHeader
         eyebrow="Executive"
         title="Business Excellence"
-        description={`Private Sell Out control tower sobre ${formatPeriod(latestPeriod)} con vistas para dashboard, insights y scorecard.`}
+        description={`Private & Public Sell Out and Performance Metrics`}
         actions={<ModeTabs active={viewMode} params={searchParams} />}
       />
       <div className="flex flex-wrap gap-2">

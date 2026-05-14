@@ -21,6 +21,14 @@ function normalizeDetailMode(value: string | null): 'territory' | 'district' {
   return value?.toLowerCase() === 'district' ? 'district' : 'territory';
 }
 
+function parseAccountTypes(searchParams: URLSearchParams) {
+  return searchParams
+    .getAll('accountTypes')
+    .flatMap((value) => value.split('|'))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 async function hasExecutiveAccess(request: Request) {
   const cookieStore = await cookies();
   const hasCookie = await verifyExecutiveAccessCookieValue(cookieStore.get(EXECUTIVE_COOKIE)?.value);
@@ -58,6 +66,7 @@ export async function GET(request: Request) {
       detailMode: normalizeDetailMode(searchParams.get('detailMode')),
       potential: searchParams.get('potential') || 'all',
       channel: searchParams.get('channel') || 'all',
+      accountTypes: parseAccountTypes(searchParams),
     });
 
     return NextResponse.json({ ok: true, data });

@@ -133,6 +133,13 @@ type WeeklyTrackingNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type BusinessExcellenceStandardDaysNormalizedRow = {
+  rowNumber: number;
+  periodMonth: string;
+  standardDays: number;
+  payload: Record<string, unknown>;
+};
+
 type BusinessExcellenceSalesforceMedicalFileNormalizedRow = {
   rowNumber: number;
   onekeyId: string;
@@ -3604,6 +3611,154 @@ async function loadWeeklyTrackingStaging(uploadId: string, rows: WeeklyTrackingN
             market_code: row.marketCode ?? '',
             sales_group: row.salesGroup,
             amount_value: String(row.amountValue),
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
+function parseStandardDaysPeriod(value: unknown) {
+  const raw = asNullableString(value);
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  const yearMonth = trimmed.match(/^(\d{4})-(\d{1,2})$/);
+  if (yearMonth) {
+    const year = Number(yearMonth[1]);
+    const month = Number(yearMonth[2]);
+    if (month >= 1 && month <= 12) {
+      return `${yearMonth[1]}-${String(month).padStart(2, '0')}-01`;
+    }
+  }
+  return parseDateFieldMonthFirstNoTimezone(value) ?? parseDateFieldDayFirstNoTimezone(value) ?? parseDateField(value);
+}
+
+function normalizeBusinessExcellenceStandardDays(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: BusinessExcellenceStandardDaysNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+    const errors: string[] = [];
+
+    const periodMonth = parseStandardDaysPeriod(
+      pickValue(index, ['periodo', 'Periodo', 'period', 'Period', 'period_month', 'Period Month']),
+    );
+    const standardDays = asNullableNumber(
+      pickValue(index, ['standard_days', 'Standard Days', 'standard days', 'dias_estandar', 'Dias Estandar']),
+    );
+
+    if (!periodMonth) errors.push('Missing or invalid periodo value (expected YYYY-MM).');
+    if (standardDays == null || standardDays < 0) {
+      errors.push('Missing or invalid standard_days value.');
+    }
+
+    const validationStatus: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus,
+      errors,
+    });
+
+    if (validationStatus === 'error') continue;
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      periodMonth: periodMonth!,
+      standardDays: standardDays!,
+      payload,
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadBusinessExcellenceStandardDaysStaging(
+  uploadId: string,
+  rows: BusinessExcellenceStandardDaysNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days\` (
+        upload_id STRING,
+        row_number INT64,
+        period_month DATE,
+        standard_days NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) = 'business_excellence_standard_days'
+          AND u.upload_id != @uploadId
+      )
+    `,
+    params: { uploadId },
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days\`
+    (
+      upload_id,
+      row_number,
+      period_month,
+      standard_days,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      DATE(row.period_month),
+      SAFE_CAST(row.standard_days AS NUMERIC),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1500);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            period_month: row.periodMonth,
+            standard_days: String(row.standardDays),
             source_payload_json: JSON.stringify(row.payload),
           })),
         },
@@ -7207,6 +7362,13 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = normalizeBusinessExcellenceSalesforceInteractions(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadBusinessExcellenceSalesforceInteractionsStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'business_excellence_standard_days') {
+    const { validations, normalizedRows } = normalizeBusinessExcellenceStandardDays(rows);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadBusinessExcellenceStandardDaysStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 

@@ -89,6 +89,12 @@ export const defaultModules: Array<{
     areaCode: 'business_excellence',
     displayOrder: 190,
   },
+  {
+    moduleCode: 'business_excellence_standard_days',
+    moduleName: 'Business Excellence - Standard Days',
+    areaCode: 'business_excellence',
+    displayOrder: 195,
+  },
   { moduleCode: 'human_resources_turnover', moduleName: 'Human Resources - Turnover', areaCode: 'human_resources', displayOrder: 210 },
   { moduleCode: 'human_resources_training', moduleName: 'Human Resources - Training', areaCode: 'human_resources', displayOrder: 220 },
   { moduleCode: 'human_resources_open_vacancy', moduleName: 'Human Resources - Open Vacancy', areaCode: 'human_resources', displayOrder: 230 },

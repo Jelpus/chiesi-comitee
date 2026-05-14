@@ -72,10 +72,14 @@ const FIELD_FORCE_INTERACTIONS_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions';
 const FIELD_FORCE_TFT_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft';
+const FIELD_FORCE_STANDARD_DAYS_TABLE =
+  'chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days';
 const FIELD_FORCE_SERVING_HCP_MONTH =
   'chiesi-committee.chiesi_committee_serving.business_excellence_ff_hcp_month';
 const FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH =
   'chiesi-committee.chiesi_committee_serving.business_excellence_ff_hcp_channel_month';
+const FIELD_FORCE_SERVING_INTERACTIONS_MATCHED =
+  'chiesi-committee.chiesi_committee_serving.vw_business_excellence_ff_t2_interactions_matched';
 const PRIVATE_SELLOUT_MART_VIEW =
   'chiesi-committee.chiesi_committee_mart.vw_private_sellout';
 const GOB360_PRODUCT_MAPPING_TABLE =
@@ -86,6 +90,11 @@ const REPORTING_VERSIONS_TABLE =
   'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const CUROSURF_STANDARD_PRODUCT_ID = 'PRD_000007';
 const CUROSURF_3ML_PRODUCT_ID = 'PRD_000012';
+const FIELD_FORCE_MAIN_ACCOUNT_TYPES = [
+  'MP (Medical Professional)_BR',
+  'MP (Medical Professional) MX',
+];
+const FIELD_FORCE_MAIN_ACCOUNT_TYPES_SQL = FIELD_FORCE_MAIN_ACCOUNT_TYPES.map((value) => `'${value}'`).join(', ');
 
 function normalizeBusinessExcellenceProductId(productId: string | null | undefined) {
   const id = (productId ?? '').trim();
@@ -2786,6 +2795,18 @@ function fieldForceRawCtes() {
         ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
       ) = 1
     ),
+    latest_standard_days_upload AS (
+      SELECT u.upload_id
+      FROM \`${RAW_UPLOADS}\` u
+      JOIN reporting_context rc ON TRUE
+      WHERE u.reporting_version_id = @reportingVersionId
+        AND u.status IN ('normalized', 'published')
+        AND LOWER(TRIM(u.module_code)) = 'business_excellence_standard_days'
+        AND COALESCE(u.source_as_of_month, u.period_month) <= rc.report_period_month
+      QUALIFY ROW_NUMBER() OVER (
+        ORDER BY COALESCE(u.source_as_of_month, u.period_month) DESC, u.uploaded_at DESC
+      ) = 1
+    ),
     medical_base AS (
       SELECT
         m.period_month,
@@ -2799,7 +2820,8 @@ function fieldForceRawCtes() {
         UPPER(REGEXP_REPLACE(TRIM(COALESCE(NULLIF(m.onekey_id, ''), NULLIF(m.ims_id, ''))), r'[^a-zA-Z0-9]+', '')) AS doctor_key,
         UPPER(REGEXP_REPLACE(TRIM(COALESCE(m.onekey_id, '')), r'[^a-zA-Z0-9]+', '')) AS onekey_key,
         UPPER(REGEXP_REPLACE(TRIM(COALESCE(m.ims_id, '')), r'[^a-zA-Z0-9]+', '')) AS ims_key,
-        SAFE_CAST(m.objetivo AS NUMERIC) AS objetivo
+        SAFE_CAST(m.objetivo AS NUMERIC) AS objetivo,
+        COALESCE(NULLIF(TRIM(JSON_VALUE(m.source_payload_json, '$."Account Type"')), ''), 'N/A') AS account_type
       FROM \`${FIELD_FORCE_MEDICAL_FILE_TABLE}\` m
       JOIN latest_medical_upload lu ON lu.upload_id = m.upload_id
       JOIN reporting_context rc ON TRUE
@@ -2807,10 +2829,6 @@ function fieldForceRawCtes() {
         AND LOWER(TRIM(m.bu)) IN ('air', 'care')
         AND SAFE_CAST(m.objetivo AS NUMERIC) > 0
         AND COALESCE(NULLIF(TRIM(m.onekey_id), ''), NULLIF(TRIM(m.ims_id), '')) IS NOT NULL
-        AND JSON_VALUE(m.source_payload_json, '$."Account Type"') IN (
-          'MP (Medical Professional)_BR',
-          'MP (Medical Professional) MX'
-        )
     ),
     doctor_month AS (
       SELECT
@@ -2841,15 +2859,34 @@ function fieldForceRawCtes() {
       WHERE t.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
       GROUP BY 1, 2
     ),
+    standard_days_month AS (
+      SELECT
+        sd.period_month,
+        MAX(SAFE_CAST(sd.standard_days AS NUMERIC)) AS standard_days
+      FROM \`${FIELD_FORCE_STANDARD_DAYS_TABLE}\` sd
+      JOIN latest_standard_days_upload lu ON lu.upload_id = sd.upload_id
+      JOIN reporting_context rc ON TRUE
+      WHERE sd.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+      GROUP BY 1
+    ),
     doctor_month_adjusted AS (
       SELECT
         dm.*,
         COALESCE(tm.tft_days, 0) AS tft_days,
-        dm.objetivo * GREATEST(0, SAFE_DIVIDE(20 - COALESCE(tm.tft_days, 0), 20)) AS objetivo_ajustado
+        COALESCE(sd.standard_days, 20) AS standard_days,
+        dm.objetivo * GREATEST(
+          0,
+          SAFE_DIVIDE(
+            COALESCE(sd.standard_days, 20) - COALESCE(tm.tft_days, 0),
+            NULLIF(COALESCE(sd.standard_days, 20), 0)
+          )
+        ) AS objetivo_ajustado
       FROM doctor_month dm
       LEFT JOIN tft_month tm
         ON tm.period_month = dm.period_month
        AND tm.territory_normalized = dm.territory_normalized
+      LEFT JOIN standard_days_month sd
+        ON sd.period_month = dm.period_month
     ),
     interactions_base AS (
       SELECT
@@ -2921,13 +2958,14 @@ function fieldForceRawCtes() {
         territory_normalized,
         potencial,
         specialty_consolidated,
+        account_type,
         client_name,
         doctor_key,
         SUM(objetivo) AS objetivo,
         SUM(objetivo_ajustado) AS objetivo_ajustado,
         SUM(interacciones) AS interacciones
       FROM doctor_month_metrics
-      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
       UNION ALL
       SELECT
         'MTH' AS period_scope,
@@ -2937,6 +2975,7 @@ function fieldForceRawCtes() {
         territory_normalized,
         potencial,
         specialty_consolidated,
+        account_type,
         client_name,
         doctor_key,
         SUM(objetivo) AS objetivo,
@@ -2944,7 +2983,7 @@ function fieldForceRawCtes() {
         SUM(interacciones) AS interacciones
       FROM doctor_month_metrics
       WHERE period_month = (SELECT report_period_month FROM reporting_context)
-      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
     ),
     period_scoped_territories AS (
       SELECT DISTINCT 'YTD' AS period_scope, bu, period_month, territory_normalized FROM doctor_month_metrics
@@ -2969,14 +3008,21 @@ function fieldForceRawCtes() {
         pst.period_scope,
         pst.bu,
         pst.territory_normalized,
-        20 * COUNT(DISTINCT pst.period_month) AS working_days,
+        SUM(COALESCE(dm.standard_days, 20)) AS working_days,
         SUM(COALESCE(tm.tft_days, 0)) AS tft_days,
-        GREATEST(0, 20 * COUNT(DISTINCT pst.period_month) - SUM(COALESCE(tm.tft_days, 0))) AS effective_days,
+        GREATEST(0, SUM(COALESCE(dm.standard_days, 20)) - SUM(COALESCE(tm.tft_days, 0))) AS effective_days,
         SAFE_DIVIDE(
-          GREATEST(0, 20 * COUNT(DISTINCT pst.period_month) - SUM(COALESCE(tm.tft_days, 0))),
-          NULLIF(20 * COUNT(DISTINCT pst.period_month), 0)
+          GREATEST(0, SUM(COALESCE(dm.standard_days, 20)) - SUM(COALESCE(tm.tft_days, 0))),
+          NULLIF(SUM(COALESCE(dm.standard_days, 20)), 0)
         ) AS coverage_effective
       FROM period_scoped_territories pst
+      LEFT JOIN (
+        SELECT DISTINCT period_month, bu, territory_normalized, standard_days
+        FROM doctor_month_adjusted
+      ) dm
+        ON dm.period_month = pst.period_month
+       AND dm.bu = pst.bu
+       AND dm.territory_normalized = pst.territory_normalized
       LEFT JOIN tft_month tm
         ON tm.period_month = pst.period_month
        AND tm.territory_normalized = pst.territory_normalized
@@ -3017,6 +3063,7 @@ function fieldForceServingCtes() {
         territory_normalized,
         potencial,
         specialty_consolidated,
+        COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') AS account_type,
         client_name,
         doctor_key,
         objective AS objetivo,
@@ -3033,6 +3080,7 @@ function fieldForceServingCtes() {
       JOIN reporting_context rc ON TRUE
       WHERE reporting_version_id = @reportingVersionId
         AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+        AND COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') IN (${FIELD_FORCE_MAIN_ACCOUNT_TYPES_SQL})
     ),
     period_scoped_doctors_enriched AS (
       SELECT
@@ -3043,6 +3091,7 @@ function fieldForceServingCtes() {
         territory_normalized,
         potencial,
         specialty_consolidated,
+        account_type,
         COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
         doctor_key,
         SUM(objetivo) AS objetivo,
@@ -3055,7 +3104,7 @@ function fieldForceServingCtes() {
         SUM(interacciones) >= SUM(objetivo) AS in_frequency,
         SUM(interacciones) >= SUM(objetivo) * SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS in_frequency_adjusted
       FROM hcp_month
-      GROUP BY 1,2,3,4,5,6,7,9
+      GROUP BY 1,2,3,4,5,6,7,8,10
       UNION ALL
       SELECT
         'MTH' AS period_scope,
@@ -3065,6 +3114,7 @@ function fieldForceServingCtes() {
         territory_normalized,
         potencial,
         specialty_consolidated,
+        account_type,
         COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
         doctor_key,
         SUM(objetivo) AS objetivo,
@@ -3078,7 +3128,7 @@ function fieldForceServingCtes() {
         SUM(interacciones) >= SUM(objetivo) * SAFE_DIVIDE(SUM(effective_days), NULLIF(SUM(working_days), 0)) AS in_frequency_adjusted
       FROM hcp_month
       WHERE period_month = (SELECT report_period_month FROM reporting_context)
-      GROUP BY 1,2,3,4,5,6,7,9
+      GROUP BY 1,2,3,4,5,6,7,8,10
     ),
     period_scoped_territory_days AS (
       SELECT
@@ -3140,6 +3190,7 @@ function fieldForceServingCtes() {
         territory_normalized,
         potencial,
         specialty_consolidated,
+        COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') AS account_type,
         client_name,
         doctor_key,
         channel,
@@ -3149,6 +3200,7 @@ function fieldForceServingCtes() {
       JOIN reporting_context rc ON TRUE
       WHERE reporting_version_id = @reportingVersionId
         AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month
+        AND COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') IN (${FIELD_FORCE_MAIN_ACCOUNT_TYPES_SQL})
     ),
     tft_scoped AS (
       SELECT
@@ -3763,6 +3815,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
   detailMode,
   potential,
   channel,
+  accountTypes,
 }: {
   reportingVersionId: string;
   reportPeriodMonth: string;
@@ -3772,8 +3825,11 @@ export async function getBusinessExcellenceFieldForceDetailData({
   detailMode: 'territory' | 'district';
   potential: string;
   channel: string;
+  accountTypes?: string[];
 }): Promise<BusinessExcellenceFieldForceDetailData> {
   const client = getBigQueryClient();
+  const selectedAccountTypes = Array.from(new Set((accountTypes ?? []).map((value) => value.trim()).filter(Boolean)));
+  const accountTypesFilterEnabled = selectedAccountTypes.length > 0;
   const params = {
     reportingVersionId,
     reportPeriodMonth,
@@ -3783,6 +3839,8 @@ export async function getBusinessExcellenceFieldForceDetailData({
     detailMode,
     potential,
     channel,
+    accountTypesFilterEnabled,
+    accountTypes: accountTypesFilterEnabled ? selectedAccountTypes : ['__ALL_ACCOUNT_TYPES__'],
   };
 
   const detailCtes = `
@@ -3801,9 +3859,11 @@ export async function getBusinessExcellenceFieldForceDetailData({
           OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
         )
         AND (@bu = 'total' OR LOWER(bu) = @bu)
+        AND (NOT @accountTypesFilterEnabled OR COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') IN UNNEST(@accountTypes))
     ),
-    doctor_base AS (
+    doctor_month_base AS (
       SELECT
+        period_month,
         LOWER(bu) AS bu,
         COALESCE(NULLIF(district, ''), 'N/A') AS district,
         COALESCE(NULLIF(territory_name, ''), territory_normalized, 'N/A') AS territory_name,
@@ -3812,36 +3872,74 @@ export async function getBusinessExcellenceFieldForceDetailData({
         specialty_consolidated,
         COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
         doctor_key,
-        SUM(objective) AS objective_base,
-        SUM(adjusted_objective) AS objective_adjusted,
-        SUM(interactions) AS all_interactions
+        MAX(objective) AS objective_base,
+        MAX(adjusted_objective) AS objective_adjusted
       FROM scoped_month
+      GROUP BY 1,2,3,4,5,6,7,9
+    ),
+    doctor_base AS (
+      SELECT
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
+        doctor_key,
+        SUM(objective_base) AS objective_base,
+        SUM(objective_adjusted) AS objective_adjusted
+      FROM doctor_month_base
       GROUP BY 1,2,3,4,5,6,8
+    ),
+    matched_interactions AS (
+      SELECT
+        LOWER(mi.bu) AS bu,
+        mi.territory_normalized,
+        mi.doctor_key,
+        COALESCE(NULLIF(mi.channel, ''), 'Unknown') AS channel,
+        COALESCE(NULLIF(mi.visit_type, ''), 'Unknown') AS visit_type,
+        mi.interaction_id
+      FROM \`${FIELD_FORCE_SERVING_INTERACTIONS_MATCHED}\` mi
+      JOIN reporting_context rc ON TRUE
+      WHERE mi.reporting_version_id = @reportingVersionId
+        AND (
+          (@view = 'MTH' AND mi.period_month = rc.report_period_month)
+          OR (@view = 'YTD' AND mi.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+        )
+        AND (@bu = 'total' OR LOWER(mi.bu) = @bu)
+        AND (NOT @accountTypesFilterEnabled OR COALESCE(NULLIF(TRIM(mi.account_type), ''), 'N/A') IN UNNEST(@accountTypes))
+    ),
+    all_counts AS (
+      SELECT
+        bu,
+        territory_normalized,
+        doctor_key,
+        COUNT(DISTINCT interaction_id) AS all_interactions
+      FROM matched_interactions
+      GROUP BY 1,2,3
     ),
     channel_counts AS (
       SELECT
-        LOWER(bu) AS bu,
+        bu,
         territory_normalized,
         doctor_key,
-        SUM(interactions) AS channel_interactions
-      FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\`
-      JOIN reporting_context rc ON TRUE
-      WHERE reporting_version_id = @reportingVersionId
-        AND (
-          (@view = 'MTH' AND period_month = rc.report_period_month)
-          OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
-        )
-        AND (@bu = 'total' OR LOWER(bu) = @bu)
-        AND @channel != 'all'
+        COUNT(DISTINCT interaction_id) AS channel_interactions
+      FROM matched_interactions
+      WHERE @channel != 'all'
         AND channel = @channel
       GROUP BY 1,2,3
     ),
     doctor_scoped AS (
       SELECT
         db.*,
-        IF(@channel = 'all', db.all_interactions, COALESCE(cc.channel_interactions, 0)) AS interactions,
+        IF(@channel = 'all', COALESCE(ac.all_interactions, 0), COALESCE(cc.channel_interactions, 0)) AS interactions,
         IF(@coverage = 'adjusted', db.objective_adjusted, db.objective_base) AS selected_objective
       FROM doctor_base db
+      LEFT JOIN all_counts ac
+        ON ac.bu = db.bu
+       AND ac.territory_normalized = db.territory_normalized
+       AND ac.doctor_key = db.doctor_key
       LEFT JOIN channel_counts cc
         ON cc.bu = db.bu
        AND cc.territory_normalized = db.territory_normalized
@@ -3931,21 +4029,15 @@ export async function getBusinessExcellenceFieldForceDetailData({
     ${detailCtes},
     interactions_filtered AS (
       SELECT
-        COALESCE(NULLIF(cm.visit_type, ''), 'Unknown') AS visit_type,
+        COALESCE(NULLIF(mi.visit_type, ''), 'Unknown') AS visit_type,
         IF(@channel = 'all', 'All Channels', @channel) AS channel,
-        SUM(cm.interactions) AS interactions
-      FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\` cm
-      JOIN reporting_context rc ON TRUE
+        COUNT(DISTINCT mi.interaction_id) AS interactions
+      FROM matched_interactions mi
       JOIN doctor_filtered df
-        ON df.bu = LOWER(cm.bu)
-       AND df.territory_normalized = cm.territory_normalized
-       AND df.doctor_key = cm.doctor_key
-      WHERE cm.reporting_version_id = @reportingVersionId
-        AND (
-          (@view = 'MTH' AND cm.period_month = rc.report_period_month)
-          OR (@view = 'YTD' AND cm.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
-        )
-        AND (@channel = 'all' OR cm.channel = @channel)
+        ON df.bu = mi.bu
+       AND df.territory_normalized = mi.territory_normalized
+       AND df.doctor_key = mi.doctor_key
+      WHERE (@channel = 'all' OR mi.channel = @channel)
       GROUP BY 1,2
     )
     SELECT visit_type, channel, interactions
@@ -4045,7 +4137,26 @@ export async function getBusinessExcellenceFieldForceDetailData({
       AND (@bu = 'total' OR LOWER(bu) = @bu)
       AND channel IS NOT NULL
       AND TRIM(channel) != ''
+      AND (NOT @accountTypesFilterEnabled OR COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') IN UNNEST(@accountTypes))
     ORDER BY channel
+  `;
+
+  const accountTypeOptionsQuery = `
+    WITH reporting_context AS (
+      SELECT
+        DATE(@reportPeriodMonth) AS report_period_month,
+        DATE_TRUNC(DATE(@reportPeriodMonth), YEAR) AS ytd_start_month
+    )
+    SELECT DISTINCT COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') AS account_type
+    FROM \`${FIELD_FORCE_SERVING_HCP_MONTH}\`
+    JOIN reporting_context rc ON TRUE
+    WHERE reporting_version_id = @reportingVersionId
+      AND (
+        (@view = 'MTH' AND period_month = rc.report_period_month)
+        OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+      )
+      AND (@bu = 'total' OR LOWER(bu) = @bu)
+    ORDER BY account_type
   `;
 
   const [
@@ -4056,6 +4167,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
     subvisitedResult,
     noVisitedResult,
     channelOptionsResult,
+    accountTypeOptionsResult,
   ] = await Promise.all([
     client.query({ query: detailRowsQuery, params }),
     client.query({ query: interactionMixQuery, params }),
@@ -4064,6 +4176,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
     client.query({ query: subvisitedQuery, params }),
     client.query({ query: noVisitedQuery, params }),
     client.query({ query: channelOptionsQuery, params }),
+    client.query({ query: accountTypeOptionsQuery, params }),
   ]);
 
   const [detailRawRows] = detailResult;
@@ -4073,6 +4186,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
   const [subvisitedRawRows] = subvisitedResult;
   const [noVisitedRawRows] = noVisitedResult;
   const [channelOptionRawRows] = channelOptionsResult;
+  const [accountTypeOptionRawRows] = accountTypeOptionsResult;
 
   const toZoomRow = (row: Record<string, unknown>) => ({
     doctorId: String(row.doctor_key ?? ''),
@@ -4133,6 +4247,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
     subvisitedTop: (subvisitedRawRows as Array<Record<string, unknown>>).map(toZoomRow),
     noVisitedRows: (noVisitedRawRows as Array<Record<string, unknown>>).map(toZoomRow),
     channelOptions: (channelOptionRawRows as Array<Record<string, unknown>>).map((row) => String(row.channel)),
+    accountTypeOptions: (accountTypeOptionRawRows as Array<Record<string, unknown>>).map((row) => String(row.account_type)),
   };
 }
 

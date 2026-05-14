@@ -643,6 +643,24 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         return { ok: true, checked: sampleRows.length };
     }
 
+    if (moduleCode === 'business_excellence_standard_days') {
+        const hasPeriodo = hasAnyHeader(sampleRows, ['periodo', 'Periodo', 'period', 'Period', 'period_month']);
+        const hasStandardDays = sampleRows.some((row) =>
+            asNumber(getRowValue(row.payload, ['standard_days', 'Standard Days', 'standard days', 'dias_estandar'])) != null,
+        );
+
+        if (!hasPeriodo || !hasStandardDays) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Standard Days: expected periodo and standard_days columns in first rows.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
     if (moduleCode === 'human_resources_open_vacancy') {
         const hasStatus = hasAnyHeader(sampleRows, ['ESTATUS', 'Estatus', 'Status']);
         const hasArea = hasAnyHeader(sampleRows, ['AREA', 'ÁREA', 'Area']);

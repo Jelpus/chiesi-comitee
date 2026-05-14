@@ -606,6 +606,7 @@ export type BusinessExcellenceFieldForceDetailData = {
   subvisitedTop: BusinessExcellenceFieldForceHcpZoomRow[];
   noVisitedRows: BusinessExcellenceFieldForceHcpZoomRow[];
   channelOptions: string[];
+  accountTypeOptions: string[];
 };
 
 export type BusinessExcellenceFieldForceExcellenceData = {

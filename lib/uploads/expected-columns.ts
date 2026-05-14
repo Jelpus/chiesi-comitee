@@ -130,6 +130,10 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
     { label: 'Cuenta', columns: ['Cuenta: Codigo OneKey', 'Onekey ID'] },
     { label: 'Territorio y fecha', columns: ['Territorio', 'Fecha y Hora'] },
   ],
+  business_excellence_standard_days: [
+    { label: 'Periodo', columns: ['periodo'] },
+    { label: 'Dias estandar', columns: ['standard_days'] },
+  ],
   human_resources_open_vacancy: [
     { label: 'Vacante', columns: ['ESTATUS', 'UBICACION', 'AREA', 'TIPO', 'SUBTIPO'] },
     { label: 'Responsables', columns: ['MANAGER', 'RESP HR', 'AGENCIA', 'ENCARGADA'] },

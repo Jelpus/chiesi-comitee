@@ -9,6 +9,7 @@ const RAW_UPLOADS = '`chiesi-committee.chiesi_committee_raw.uploads`';
 const MEDICAL_FILE = '`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file`';
 const INTERACTIONS = '`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions`';
 const TFT = '`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft`';
+const STANDARD_DAYS = '`chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days`';
 
 function latestUploadCtes() {
   return `
@@ -31,7 +32,8 @@ function latestUploadCtes() {
           'interacciones',
           'business_excellence_salesforce_tft',
           'business_excellence_tft',
-          'tft'
+          'tft',
+          'business_excellence_standard_days'
         )
     ),
     latest_medical_upload AS (
@@ -72,6 +74,15 @@ function latestUploadCtes() {
         PARTITION BY reporting_version_id
         ORDER BY COALESCE(source_as_of_month, period_month) DESC, uploaded_at DESC
       ) = 1
+    ),
+    latest_standard_days_upload AS (
+      SELECT upload_id, reporting_version_id
+      FROM upload_scope
+      WHERE module_code = 'business_excellence_standard_days'
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY reporting_version_id
+        ORDER BY COALESCE(source_as_of_month, period_month) DESC, uploaded_at DESC
+      ) = 1
     )
   `;
 }
@@ -81,6 +92,19 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
     query: `
       CREATE SCHEMA IF NOT EXISTS ${SERVING_SCHEMA}
       OPTIONS(location = 'EU')
+    `,
+  });
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS ${STANDARD_DAYS} (
+        upload_id STRING,
+        row_number INT64,
+        period_month DATE,
+        standard_days NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
     `,
   });
 
@@ -111,10 +135,6 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
       WHERE LOWER(TRIM(m.bu)) IN ('air', 'care')
         AND SAFE_CAST(m.objetivo AS NUMERIC) > 0
         AND COALESCE(NULLIF(TRIM(m.onekey_id), ''), NULLIF(TRIM(m.ims_id), '')) IS NOT NULL
-        AND JSON_VALUE(m.source_payload_json, '$."Account Type"') IN (
-          'MP (Medical Professional)_BR',
-          'MP (Medical Professional) MX'
-        )
     `,
   });
 
@@ -157,6 +177,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
         mf.territory_normalized,
         mf.potencial,
         mf.specialty_consolidated,
+        mf.account_type,
         mf.client_name,
         mf.doctor_key,
         ib.channel,
@@ -195,21 +216,37 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
         JOIN latest_tft_upload lu
           ON lu.upload_id = t.upload_id
         GROUP BY 1, 2, 3
+      ),
+      standard_days_month AS (
+        SELECT
+          lu.reporting_version_id,
+          sd.period_month,
+          MAX(SAFE_CAST(sd.standard_days AS NUMERIC)) AS days_standard
+        FROM ${STANDARD_DAYS} sd
+        JOIN latest_standard_days_upload lu
+          ON lu.upload_id = sd.upload_id
+        GROUP BY 1, 2
       )
       SELECT
         tp.reporting_version_id,
         tp.period_month,
         tp.bu,
         tp.territory_normalized,
-        CAST(20 AS NUMERIC) AS days_standard,
+        COALESCE(sd.days_standard, 20) AS days_standard,
         COALESCE(tm.days_out, 0) AS days_out,
-        GREATEST(0, CAST(20 AS NUMERIC) - COALESCE(tm.days_out, 0)) AS days_adjusted,
-        SAFE_DIVIDE(GREATEST(0, CAST(20 AS NUMERIC) - COALESCE(tm.days_out, 0)), 20) AS coverage_effective
+        GREATEST(0, COALESCE(sd.days_standard, 20) - COALESCE(tm.days_out, 0)) AS days_adjusted,
+        SAFE_DIVIDE(
+          GREATEST(0, COALESCE(sd.days_standard, 20) - COALESCE(tm.days_out, 0)),
+          NULLIF(COALESCE(sd.days_standard, 20), 0)
+        ) AS coverage_effective
       FROM territory_periods tp
       LEFT JOIN tft_month tm
         ON tm.reporting_version_id = tp.reporting_version_id
        AND tm.period_month = tp.period_month
        AND tm.territory_normalized = tp.territory_normalized
+      LEFT JOIN standard_days_month sd
+        ON sd.reporting_version_id = tp.reporting_version_id
+       AND sd.period_month = tp.period_month
     `,
   });
 
@@ -229,6 +266,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
           territory_normalized,
           potencial,
           specialty_consolidated,
+          COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') AS account_type,
           COALESCE(ANY_VALUE(client_name), doctor_key) AS client_name,
           doctor_key,
           ANY_VALUE(onekey_key) AS onekey_key,
@@ -237,7 +275,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
           MAX(normalized_at) AS normalized_at
         FROM ${SERVING_SCHEMA}.vw_business_excellence_ff_t1_medical_universe
         WHERE doctor_key != ''
-        GROUP BY 1,2,3,4,5,6,7,8,10
+        GROUP BY 1,2,3,4,5,6,7,8,9,11
       ),
       interaction_counts AS (
         SELECT
@@ -245,10 +283,11 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
           period_month,
           bu,
           territory_normalized,
+          COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') AS account_type,
           doctor_key,
           COUNT(DISTINCT interaction_id) AS interactions
         FROM ${SERVING_SCHEMA}.vw_business_excellence_ff_t2_interactions_matched
-        GROUP BY 1,2,3,4,5
+        GROUP BY 1,2,3,4,5,6
       )
       SELECT
         dm.reporting_version_id,
@@ -259,6 +298,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
         dm.territory_normalized,
         dm.potencial,
         dm.specialty_consolidated,
+        dm.account_type,
         dm.client_name,
         dm.doctor_key,
         dm.onekey_key,
@@ -279,6 +319,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
        AND ic.period_month = dm.period_month
        AND ic.bu = dm.bu
        AND ic.territory_normalized = dm.territory_normalized
+       AND ic.account_type = dm.account_type
        AND ic.doctor_key = dm.doctor_key
       LEFT JOIN ${SERVING_SCHEMA}.vw_business_excellence_ff_t3_effective_days ed
         ON ed.reporting_version_id = dm.reporting_version_id
@@ -303,13 +344,14 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
         territory_normalized,
         potencial,
         specialty_consolidated,
+        account_type,
         client_name,
         doctor_key,
         channel,
         visit_type,
         COUNT(DISTINCT interaction_id) AS interactions
       FROM ${SERVING_SCHEMA}.vw_business_excellence_ff_t2_interactions_matched
-      GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12
+      GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
     `,
   });
 }

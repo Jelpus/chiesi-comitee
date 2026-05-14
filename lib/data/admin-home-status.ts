@@ -77,6 +77,11 @@ const EXPECTED_MODULES: Array<{ moduleCode: string; moduleLabel: string; area: s
     moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - Interacciones',
     area: 'business_excellence',
   },
+  {
+    moduleCode: 'business_excellence_standard_days',
+    moduleLabel: 'Business Excellence - Standard Days',
+    area: 'business_excellence',
+  },
   { moduleCode: 'human_resources_turnover', moduleLabel: 'Human Resources - Turnover', area: 'human_resources' },
   { moduleCode: 'human_resources_training', moduleLabel: 'Human Resources - Training', area: 'human_resources' },
   { moduleCode: 'commercial_operations_dso', moduleLabel: 'Commercial Operations - DSO', area: 'commercial_operations' },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Info } from 'lucide-react';
+import { Check, ChevronDown, Info, Loader2 } from 'lucide-react';
 import {
   Bar,
   BarChart,
@@ -75,6 +75,8 @@ export function FieldForceExcellencePanelClient({
   const [activeDetailMode, setActiveDetailMode] = useState<'territory' | 'district'>(initialDetailMode);
   const [activePotential, setActivePotential] = useState<string>(initialPotential && initialPotential !== 'all' ? initialPotential : 'all');
   const [activeInteractionChannel, setActiveInteractionChannel] = useState<string>('all');
+  const [activeAccountTypes, setActiveAccountTypes] = useState<string[]>([]);
+  const [accountTypeMenuOpen, setAccountTypeMenuOpen] = useState(false);
   const [detailData, setDetailData] = useState<BusinessExcellenceFieldForceDetailData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -136,6 +138,7 @@ export function FieldForceExcellencePanelClient({
       potential: activePotential,
       channel: activeInteractionChannel,
     });
+    activeAccountTypes.forEach((accountType) => params.append('accountTypes', accountType));
 
     void Promise.resolve().then(() => {
       setDetailLoading(true);
@@ -171,9 +174,25 @@ export function FieldForceExcellencePanelClient({
     activeDetailMode,
     activePotential,
     activeInteractionChannel,
+    activeAccountTypes,
   ]);
 
   const channelOptions = useMemo(() => detailData?.channelOptions ?? [], [detailData?.channelOptions]);
+  const accountTypeOptions = useMemo(() => detailData?.accountTypeOptions ?? [], [detailData?.accountTypeOptions]);
+  const selectedAccountTypeLabel =
+    activeAccountTypes.length === 0
+      ? 'All Account Types'
+      : activeAccountTypes.length === 1
+        ? activeAccountTypes[0]
+        : `${activeAccountTypes.length} Account Types`;
+  const toggleAccountType = (accountType: string) => {
+    setActiveAccountTypes((current) =>
+      current.includes(accountType)
+        ? current.filter((item) => item !== accountType)
+        : [...current, accountType],
+    );
+    setActiveInteractionChannel('all');
+  };
   const selectedInteractionChannel = channelOptions.includes(activeInteractionChannel)
     ? activeInteractionChannel
     : 'all';
@@ -359,9 +378,17 @@ export function FieldForceExcellencePanelClient({
         </div>
       </article>
 
-      <article className="mt-6 rounded-[18px] border border-slate-200 bg-white p-4">
+      <article className="relative mt-6 rounded-[18px] border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">Visit Detail</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">Visit Detail</p>
+            {detailLoading && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                Loading
+              </span>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
               {(['total', 'air', 'care'] as const).map((bu) => (
@@ -376,6 +403,55 @@ export function FieldForceExcellencePanelClient({
               <option value="all">All Potencial</option>
               {potentialOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setAccountTypeMenuOpen((open) => !open)}
+                className="inline-flex min-h-[32px] max-w-[300px] items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 shadow-sm"
+              >
+                <span className="truncate">{selectedAccountTypeLabel}</span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${accountTypeMenuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
+              {accountTypeMenuOpen && (
+                <div className="absolute right-0 z-20 mt-2 w-[320px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Account Type</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveAccountTypes([]);
+                        setActiveInteractionChannel('all');
+                      }}
+                      className="text-xs font-semibold text-slate-700 hover:text-slate-950"
+                    >
+                      All
+                    </button>
+                  </div>
+                  <div className="max-h-[260px] overflow-auto py-1">
+                    {accountTypeOptions.map((accountType) => {
+                      const selected = activeAccountTypes.includes(accountType);
+                      return (
+                        <button
+                          key={accountType}
+                          type="button"
+                          onClick={() => toggleAccountType(accountType)}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${
+                            selected ? 'bg-slate-50 text-slate-950' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                            selected ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-transparent'
+                          }`}>
+                            <Check className="h-3 w-3" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{accountType}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {(detailLoading || detailError) && (
@@ -384,7 +460,12 @@ export function FieldForceExcellencePanelClient({
               ? 'border-red-200 bg-red-50 text-red-700'
               : 'border-slate-200 bg-slate-50 text-slate-600'
           }`}>
-            {detailError ?? 'Loading Field Force detail...'}
+            {detailError ?? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                Loading Field Force detail...
+              </span>
+            )}
           </div>
         )}
         <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
