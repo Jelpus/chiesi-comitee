@@ -113,8 +113,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
         AND COALESCE(NULLIF(TRIM(m.onekey_id), ''), NULLIF(TRIM(m.ims_id), '')) IS NOT NULL
         AND JSON_VALUE(m.source_payload_json, '$."Account Type"') IN (
           'MP (Medical Professional)_BR',
-          'MP (Medical Professional) MX',
-          'Private Practice MX'
+          'MP (Medical Professional) MX'
         )
     `,
   });

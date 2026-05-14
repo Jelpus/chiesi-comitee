@@ -258,8 +258,7 @@ export async function getAirMedicalFileRows(periodMonth: string): Promise<AirMed
         AND (
           JSON_VALUE(source_payload_json, '$."Account Type"') IN (
             'MP (Medical Professional)',
-            'MP (Medical Professional) MX',
-            'Private Practice MX'
+            'MP (Medical Professional) MX'
           )
           OR STARTS_WITH(JSON_VALUE(source_payload_json, '$."Account Type"'), 'MP (Medical Professional)')
         )
