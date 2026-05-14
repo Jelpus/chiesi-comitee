@@ -2,6 +2,11 @@ import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import type {
   HumanResourcesAuditSource,
+  HumanResourcesOpenVacancyBreakdownRow,
+  HumanResourcesOpenVacancyData,
+  HumanResourcesOpenVacancyDetailRow,
+  HumanResourcesOpenVacancyMonthlyTrendRow,
+  HumanResourcesOpenVacancyOverview,
   HumanResourcesTrainingContentRow,
   HumanResourcesTrainingInsights,
   HumanResourcesTrainingMetricMode,
@@ -26,6 +31,7 @@ import type {
 const RAW_UPLOADS = 'chiesi-committee.chiesi_committee_raw.uploads';
 const TURNOVER_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_human_resources_turnover_enriched';
 const TRAINING_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_human_resources_training_enriched';
+const OPEN_VACANCY_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_human_resources_open_vacancy_enriched';
 
 async function resolveReportingVersionId(reportingVersionId?: string) {
   const client = getBigQueryClient();
@@ -205,6 +211,16 @@ export async function getHumanResourcesAuditSources(
           MAX(SAFE_CAST(source_as_of_month AS DATE)) AS source_as_of_month
         FROM \`${TRAINING_VIEW}\`
         WHERE reporting_version_id = @reportingVersionId
+      ),
+      open_vacancy_upload AS (
+        SELECT
+          @reportingVersionId AS reporting_version_id,
+          MAX(period_month) AS report_period_month,
+          MAX(source_as_of_month) AS source_as_of_month
+        FROM \`${RAW_UPLOADS}\`
+        WHERE reporting_version_id = @reportingVersionId
+          AND LOWER(TRIM(module_code)) = 'human_resources_open_vacancy'
+          AND status IN ('normalized', 'published')
       )
       SELECT
         'turnover' AS source_key,
@@ -225,12 +241,20 @@ export async function getHumanResourcesAuditSources(
       FROM training_upload u
       FULL OUTER JOIN training_view v
         ON u.reporting_version_id = v.reporting_version_id
+      UNION ALL
+      SELECT
+        'open_vacancy' AS source_key,
+        'Open Vacancy' AS source_label,
+        reporting_version_id,
+        report_period_month,
+        COALESCE(source_as_of_month, report_period_month) AS source_as_of_month
+      FROM open_vacancy_upload
     `,
     params: { reportingVersionId: resolvedReportingVersionId },
   });
 
   return (rows as Array<Record<string, unknown>>).map((row) => ({
-    sourceKey: String(row.source_key) as 'turnover' | 'training',
+    sourceKey: String(row.source_key) as 'turnover' | 'training' | 'open_vacancy',
     sourceLabel: String(row.source_label ?? ''),
     reportingVersionId: String(row.reporting_version_id ?? resolvedReportingVersionId),
     reportPeriodMonth: toIsoDateString(row.report_period_month),
@@ -331,6 +355,244 @@ export async function getHumanResourcesTrainingOverview(
     ytdCompletionRate: total === 0 ? null : completed / total,
     ytdActiveUsers: Number(row.ytd_active_users ?? 0),
   };
+}
+
+function toOpenVacancyBreakdownRow(row: Record<string, unknown>): HumanResourcesOpenVacancyBreakdownRow {
+  const measured = Number(row.measured_positions ?? 0);
+  const inTarget = Number(row.in_target_positions ?? 0);
+  return {
+    label: String(row.label ?? 'Unassigned'),
+    opened: Number(row.opened ?? 0),
+    covered: Number(row.covered ?? 0),
+    open: Number(row.open ?? 0),
+    paused: Number(row.paused ?? 0),
+    aboutToEnter: Number(row.about_to_enter ?? 0),
+    avgTimeToFillDays: row.avg_time_to_fill_days == null ? null : Number(row.avg_time_to_fill_days),
+    targetHitRate: measured === 0 ? null : inTarget / measured,
+  };
+}
+
+export async function getHumanResourcesOpenVacancyData(
+  reportingVersionId?: string,
+): Promise<HumanResourcesOpenVacancyData> {
+  const resolvedReportingVersionId = await resolveReportingVersionId(reportingVersionId);
+  if (!resolvedReportingVersionId) {
+    return { overview: null, monthlyTrend: [], byArea: [], byType: [], details: [] };
+  }
+  const client = getBigQueryClient();
+  const commonCte = `
+    WITH context AS (
+      SELECT
+        MAX(DATE(report_period_month)) AS report_period_month,
+        EXTRACT(YEAR FROM MAX(DATE(report_period_month))) AS current_year,
+        EXTRACT(MONTH FROM MAX(DATE(report_period_month))) AS current_month
+      FROM \`${OPEN_VACANCY_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+    ),
+    scoped AS (
+      SELECT
+        *,
+        DATE_TRUNC(search_start_date, MONTH) AS search_period_month,
+        CASE
+          WHEN LOWER(COALESCE(JSON_VALUE(source_payload_json, '$.column_7'), '')) LIKE '%exist%' THEN 'existing'
+          WHEN LOWER(COALESCE(JSON_VALUE(source_payload_json, '$.column_7'), '')) LIKE '%new%' OR LOWER(COALESCE(JSON_VALUE(source_payload_json, '$.column_7'), '')) LIKE '%nuev%' THEN 'new'
+          ELSE 'other'
+        END AS opening_bucket,
+        COALESCE(NULLIF(TRIM(JSON_VALUE(source_payload_json, '$.column_7')), ''), 'Unassigned') AS opening_type,
+        CASE
+          WHEN LOWER(COALESCE(status, '')) LIKE '%pausa%' OR LOWER(COALESCE(status, '')) LIKE '%pause%' THEN 'paused'
+          WHEN LOWER(COALESCE(status, '')) LIKE '%por entrar%' OR LOWER(COALESCE(status, '')) LIKE '%about to enter%' THEN 'about_to_enter'
+          WHEN LOWER(COALESCE(status, '')) LIKE '%abiert%' OR LOWER(COALESCE(status, '')) LIKE '%open%' THEN 'open'
+          WHEN LOWER(COALESCE(status, '')) LIKE '%cubiert%' OR LOWER(COALESCE(status, '')) LIKE '%cerrad%' OR LOWER(COALESCE(status, '')) LIKE '%closed%' OR LOWER(COALESCE(status, '')) LIKE '%filled%' THEN 'closed'
+          WHEN hire_date IS NOT NULL OR end_date IS NOT NULL THEN 'closed'
+          ELSE 'other'
+        END AS status_bucket
+      FROM \`${OPEN_VACANCY_VIEW}\`
+      WHERE reporting_version_id = @reportingVersionId
+    )
+  `;
+  const queryParams = { reportingVersionId: resolvedReportingVersionId };
+
+  try {
+    const [[overviewRows], [trendRows], [areaRows], [typeRows], [detailRows]] = await Promise.all([
+      client.query({
+        query: `
+          ${commonCte}
+          SELECT
+            MAX(CAST(scoped.report_period_month AS STRING)) AS report_period_month,
+            MAX(CAST(scoped.source_as_of_month AS STRING)) AS source_as_of_month,
+            COUNTIF(EXTRACT(YEAR FROM search_period_month) = current_year AND EXTRACT(MONTH FROM search_period_month) <= current_month) AS ytd_opened,
+            COUNTIF(search_period_month = context.report_period_month AND status_bucket = 'open') AS open_positions,
+            COUNTIF(search_period_month = context.report_period_month AND status_bucket = 'closed') AS covered_positions,
+            COUNTIF(search_period_month = context.report_period_month AND status_bucket = 'paused') AS paused_positions,
+            COUNTIF(search_period_month = context.report_period_month AND status_bucket = 'about_to_enter') AS about_to_enter_positions,
+            AVG(IF(
+              EXTRACT(YEAR FROM search_period_month) = current_year
+                AND EXTRACT(MONTH FROM search_period_month) <= current_month
+                AND time_to_fill_days IS NOT NULL,
+              CAST(time_to_fill_days AS FLOAT64),
+              NULL
+            )) AS avg_time_to_fill_days,
+            COUNTIF(
+              EXTRACT(YEAR FROM search_period_month) = current_year
+                AND EXTRACT(MONTH FROM search_period_month) <= current_month
+                AND time_to_fill_days IS NOT NULL
+                AND target_days IS NOT NULL
+            ) AS measured_positions,
+            COUNTIF(
+              EXTRACT(YEAR FROM search_period_month) = current_year
+                AND EXTRACT(MONTH FROM search_period_month) <= current_month
+                AND time_to_fill_days IS NOT NULL
+                AND target_days IS NOT NULL
+                AND time_to_fill_days <= target_days
+            ) AS in_target_positions
+          FROM scoped, context
+        `,
+        params: queryParams,
+      }),
+      client.query({
+        query: `
+          ${commonCte}
+          SELECT
+            FORMAT_DATE('%b %Y', search_period_month) AS month_label,
+            UNIX_DATE(search_period_month) AS month_order,
+            COUNT(1) AS opened,
+            COUNTIF(status_bucket = 'closed') AS covered,
+            COUNTIF(status_bucket = 'open') AS open,
+            COUNTIF(status_bucket = 'paused') AS paused,
+            COUNTIF(status_bucket = 'about_to_enter') AS about_to_enter,
+            AVG(IF(time_to_fill_days IS NOT NULL, CAST(time_to_fill_days AS FLOAT64), NULL)) AS avg_time_to_fill_days
+          FROM scoped, context
+          WHERE EXTRACT(YEAR FROM search_period_month) = current_year
+            AND EXTRACT(MONTH FROM search_period_month) <= current_month
+          GROUP BY 1, 2
+          ORDER BY month_order
+        `,
+        params: queryParams,
+      }),
+      client.query({
+        query: `
+          ${commonCte}
+          SELECT
+            COALESCE(NULLIF(TRIM(area), ''), 'Unassigned') AS label,
+            COUNT(1) AS opened,
+            COUNTIF(status_bucket = 'closed') AS covered,
+            COUNTIF(status_bucket = 'open') AS open,
+            COUNTIF(status_bucket = 'paused') AS paused,
+            COUNTIF(status_bucket = 'about_to_enter') AS about_to_enter,
+            AVG(IF(time_to_fill_days IS NOT NULL, CAST(time_to_fill_days AS FLOAT64), NULL)) AS avg_time_to_fill_days,
+            COUNTIF(time_to_fill_days IS NOT NULL AND target_days IS NOT NULL) AS measured_positions,
+            COUNTIF(time_to_fill_days IS NOT NULL AND target_days IS NOT NULL AND time_to_fill_days <= target_days) AS in_target_positions
+          FROM scoped, context
+          WHERE EXTRACT(YEAR FROM search_period_month) = current_year
+            AND EXTRACT(MONTH FROM search_period_month) <= current_month
+          GROUP BY 1
+          ORDER BY opened DESC
+          LIMIT 12
+        `,
+        params: queryParams,
+      }),
+      client.query({
+        query: `
+          ${commonCte}
+          SELECT
+            COALESCE(NULLIF(TRIM(vacancy_type), ''), 'Unassigned') AS label,
+            COUNT(1) AS opened,
+            COUNTIF(status_bucket = 'closed') AS covered,
+            COUNTIF(status_bucket = 'open') AS open,
+            COUNTIF(status_bucket = 'paused') AS paused,
+            COUNTIF(status_bucket = 'about_to_enter') AS about_to_enter,
+            AVG(IF(time_to_fill_days IS NOT NULL, CAST(time_to_fill_days AS FLOAT64), NULL)) AS avg_time_to_fill_days,
+            COUNTIF(time_to_fill_days IS NOT NULL AND target_days IS NOT NULL) AS measured_positions,
+            COUNTIF(time_to_fill_days IS NOT NULL AND target_days IS NOT NULL AND time_to_fill_days <= target_days) AS in_target_positions
+          FROM scoped, context
+          WHERE EXTRACT(YEAR FROM search_period_month) = current_year
+            AND EXTRACT(MONTH FROM search_period_month) <= current_month
+          GROUP BY 1
+          ORDER BY opened DESC
+        `,
+        params: queryParams,
+      }),
+      client.query({
+        query: `
+          ${commonCte}
+          SELECT
+            status,
+            area,
+            opening_type,
+            vacancy_type,
+            subtype,
+            manager,
+            resp_hr,
+            agency,
+            assigned_recruiter,
+            CAST(search_start_date AS STRING) AS search_start_date,
+            CAST(end_date AS STRING) AS end_date,
+            CAST(hire_date AS STRING) AS hire_date,
+            time_to_fill_days,
+            target_days,
+            within_target
+          FROM scoped, context
+          WHERE EXTRACT(YEAR FROM search_period_month) = current_year
+            AND EXTRACT(MONTH FROM search_period_month) <= current_month
+          ORDER BY DATE(search_start_date) DESC, row_number DESC
+        `,
+        params: queryParams,
+      }),
+    ]);
+
+    const overviewRaw = (overviewRows as Array<Record<string, unknown>>)[0];
+    const measured = Number(overviewRaw?.measured_positions ?? 0);
+    const inTarget = Number(overviewRaw?.in_target_positions ?? 0);
+    const overview: HumanResourcesOpenVacancyOverview | null = overviewRaw
+      ? {
+          reportPeriodMonth: toIsoDateString(overviewRaw.report_period_month),
+          sourceAsOfMonth: toIsoDateString(overviewRaw.source_as_of_month),
+          ytdOpened: Number(overviewRaw.ytd_opened ?? 0),
+          openPositions: Number(overviewRaw.open_positions ?? 0),
+          coveredPositions: Number(overviewRaw.covered_positions ?? 0),
+          pausedPositions: Number(overviewRaw.paused_positions ?? 0),
+          aboutToEnterPositions: Number(overviewRaw.about_to_enter_positions ?? 0),
+          avgTimeToFillDays: overviewRaw.avg_time_to_fill_days == null ? null : Number(overviewRaw.avg_time_to_fill_days),
+          targetHitRate: measured === 0 ? null : inTarget / measured,
+        }
+      : null;
+
+    return {
+      overview,
+      monthlyTrend: (trendRows as Array<Record<string, unknown>>).map((row): HumanResourcesOpenVacancyMonthlyTrendRow => ({
+        monthLabel: String(row.month_label ?? ''),
+        monthOrder: Number(row.month_order ?? 0),
+        opened: Number(row.opened ?? 0),
+        covered: Number(row.covered ?? 0),
+        open: Number(row.open ?? 0),
+        paused: Number(row.paused ?? 0),
+        aboutToEnter: Number(row.about_to_enter ?? 0),
+        avgTimeToFillDays: row.avg_time_to_fill_days == null ? null : Number(row.avg_time_to_fill_days),
+      })),
+      byArea: (areaRows as Array<Record<string, unknown>>).map(toOpenVacancyBreakdownRow),
+      byType: (typeRows as Array<Record<string, unknown>>).map(toOpenVacancyBreakdownRow),
+      details: (detailRows as Array<Record<string, unknown>>).map((row): HumanResourcesOpenVacancyDetailRow => ({
+        status: row.status == null ? null : String(row.status),
+        area: row.area == null ? null : String(row.area),
+        openingType: row.opening_type == null ? null : String(row.opening_type),
+        vacancyType: row.vacancy_type == null ? null : String(row.vacancy_type),
+        subtype: row.subtype == null ? null : String(row.subtype),
+        manager: row.manager == null ? null : String(row.manager),
+        respHr: row.resp_hr == null ? null : String(row.resp_hr),
+        agency: row.agency == null ? null : String(row.agency),
+        assignedRecruiter: row.assigned_recruiter == null ? null : String(row.assigned_recruiter),
+        searchStartDate: toIsoDateString(row.search_start_date),
+        endDate: toIsoDateString(row.end_date),
+        hireDate: toIsoDateString(row.hire_date),
+        timeToFillDays: row.time_to_fill_days == null ? null : Number(row.time_to_fill_days),
+        targetDays: row.target_days == null ? null : Number(row.target_days),
+        withinTarget: row.within_target == null ? null : Boolean(row.within_target),
+      })),
+    };
+  } catch {
+    return { overview: null, monthlyTrend: [], byArea: [], byType: [], details: [] };
+  }
 }
 
 export async function getHumanResourcesTurnoverDepartments(

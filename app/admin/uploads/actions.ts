@@ -303,7 +303,11 @@ function extractPmmPackDesFromPayload(payload: Record<string, unknown>) {
 }
 
 function normalizeRowKey(value: string) {
-    return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
 }
 
 function getRowValue(payload: Record<string, unknown>, aliases: string[]) {
@@ -325,6 +329,18 @@ function hasAnyHeader(rows: ParsedUploadRow[], aliases: string[]) {
         for (const key of Object.keys(row.payload)) {
             if (key.startsWith('column_')) continue;
             if (aliasSet.has(normalizeRowKey(key))) return true;
+        }
+    }
+    return false;
+}
+
+function hasHeaderContaining(rows: ParsedUploadRow[], tokens: string[]) {
+    const normalizedTokens = tokens.map((token) => normalizeRowKey(token));
+    for (const row of rows) {
+        for (const key of Object.keys(row.payload)) {
+            if (key.startsWith('column_')) continue;
+            const normalizedKey = normalizeRowKey(key);
+            if (normalizedTokens.every((token) => normalizedKey.includes(token))) return true;
         }
     }
     return false;
@@ -621,6 +637,28 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
                 checked: sampleRows.length,
                 message:
                     'Sample check failed for Interacciones: expected Interaction Id, Cuenta: Código OneKey, Territorio and Fecha y Hora columns in first rows.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (moduleCode === 'human_resources_open_vacancy') {
+        const hasStatus = hasAnyHeader(sampleRows, ['ESTATUS', 'Estatus', 'Status']);
+        const hasArea = hasAnyHeader(sampleRows, ['AREA', 'ÁREA', 'Area']);
+        const hasStartDate =
+            hasAnyHeader(sampleRows, ['Fecha inicio búsqueda', 'Fecha inicio busqueda', 'Fecha inicio de busqueda']) ||
+            hasHeaderContaining(sampleRows, ['fecha', 'inicio', 'busqueda']);
+        const hasTimeToFill =
+            hasAnyHeader(sampleRows, ['Time to fill FF- 35 días háb Staff- 45 días háb', 'Time to fill', 'Time To Fill']) ||
+            hasHeaderContaining(sampleRows, ['time', 'fill']);
+
+        if (!hasStatus || !hasArea || !hasStartDate || !hasTimeToFill) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Open Vacancy: expected ESTATUS, AREA, Fecha inicio busqueda and Time to fill columns in first rows.',
             };
         }
 
@@ -2034,7 +2072,7 @@ export async function inspectUploadWorkbook(formData: FormData) {
   }
 
   let suggestedSheetName = sheetNames[0] ?? '';
-  let suggestedHeaderRow = 1;
+  let suggestedHeaderRow = moduleCode === 'human_resources_open_vacancy' ? 2 : 1;
 
   if (moduleCode) {
     try {
@@ -2063,7 +2101,7 @@ export async function inspectUploadWorkbook(formData: FormData) {
         suggestedHeaderRow =
           Number.isFinite(lastHeaderRow) && lastHeaderRow > 0
             ? Math.trunc(lastHeaderRow)
-            : 1;
+            : suggestedHeaderRow;
       }
     } catch (error) {
       console.warn('[inspectUploadWorkbook] unable to fetch latest sheet/header defaults', {

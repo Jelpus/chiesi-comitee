@@ -475,12 +475,12 @@ function FieldForceCoverageCard({ kpis }: { kpis: BusinessExcellenceFieldForceTo
   const coverage = kpis?.coverageYtdTftPct;
   const activeTime = kpis?.activeTimeYtdPct;
   return (
-    <article title="Field Force YTD in-frequency rate adjusted by approved TFT and effective active time." className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('slate')}`}>
+    <article title="Field Force YTD global coverage with approved TFT and effective active time." className={`rounded-[20px] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)] ${cardTone('slate')}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Field Force Coverage</p>
       <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
         {coverage == null ? 'N/A' : `${coverage.toFixed(1)}%`}
       </p>
-      <p className="mt-1 text-sm font-medium text-slate-700">YTD Coverage (TFT)</p>
+      <p className="mt-1 text-sm font-medium text-slate-700">YTD Global Coverage (TFT)</p>
       <p className="mt-2 text-sm text-slate-600">
         Active Time: {activeTime == null ? 'N/A' : `${activeTime.toFixed(0)}%`}
       </p>

@@ -1,5 +1,5 @@
 export type HumanResourcesAuditSource = {
-  sourceKey: 'turnover' | 'training';
+  sourceKey: 'turnover' | 'training' | 'open_vacancy';
   sourceLabel: string;
   reportingVersionId: string;
   reportPeriodMonth: string | null;
@@ -22,6 +22,66 @@ export type HumanResourcesTrainingOverview = {
   ytdTotalRecords: number;
   ytdCompletionRate: number | null;
   ytdActiveUsers: number;
+};
+
+export type HumanResourcesOpenVacancyOverview = {
+  reportPeriodMonth: string | null;
+  sourceAsOfMonth: string | null;
+  ytdOpened: number;
+  openPositions: number;
+  coveredPositions: number;
+  pausedPositions: number;
+  aboutToEnterPositions: number;
+  avgTimeToFillDays: number | null;
+  targetHitRate: number | null;
+};
+
+export type HumanResourcesOpenVacancyMonthlyTrendRow = {
+  monthLabel: string;
+  monthOrder: number;
+  opened: number;
+  covered: number;
+  open: number;
+  paused: number;
+  aboutToEnter: number;
+  avgTimeToFillDays: number | null;
+};
+
+export type HumanResourcesOpenVacancyBreakdownRow = {
+  label: string;
+  opened: number;
+  covered: number;
+  open: number;
+  paused: number;
+  aboutToEnter: number;
+  avgTimeToFillDays: number | null;
+  targetHitRate: number | null;
+};
+
+export type HumanResourcesOpenVacancyDetailRow = {
+  status: string | null;
+  area: string | null;
+  openingType: string | null;
+  vacancyType: string | null;
+  subtype: string | null;
+  manager: string | null;
+  respHr: string | null;
+  agency: string | null;
+  assignedRecruiter: string | null;
+  searchStartDate: string | null;
+  endDate: string | null;
+  hireDate: string | null;
+  timeToFillDays: number | null;
+  targetDays: number | null;
+  withinTarget: boolean | null;
+};
+
+export type HumanResourcesOpenVacancyData = {
+  overview: HumanResourcesOpenVacancyOverview | null;
+  monthlyTrend: HumanResourcesOpenVacancyMonthlyTrendRow[];
+  byArea: HumanResourcesOpenVacancyBreakdownRow[];
+  byType: HumanResourcesOpenVacancyBreakdownRow[];
+  details: HumanResourcesOpenVacancyDetailRow[];
 };
 
 export type HumanResourcesTurnoverDepartmentRow = {

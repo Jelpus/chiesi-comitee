@@ -1263,6 +1263,126 @@ async function publishHumanResourcesTrainingUpload(context: UploadPublishContext
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
+async function ensureHumanResourcesOpenVacancyView() {
+  const client = getBigQueryClient();
+  await client.query({
+    query: `
+      CREATE OR REPLACE VIEW \`chiesi-committee.chiesi_committee_stg.vw_human_resources_open_vacancy_enriched\` AS
+      SELECT
+        v.upload_id,
+        v.row_number,
+        u.reporting_version_id,
+        rv.period_month AS report_period_month,
+        u.source_as_of_month,
+        u.uploaded_at AS source_uploaded_at,
+        v.period_month,
+        v.status,
+        v.location,
+        v.employer,
+        v.area,
+        v.vacancy_type,
+        v.subtype,
+        v.covering_for,
+        v.manager,
+        v.comments_initial,
+        v.resp_hr,
+        v.agency_type,
+        v.agency,
+        v.assigned_recruiter,
+        v.levantamiento_date,
+        v.search_start_date,
+        v.end_date,
+        v.time_to_fill_days,
+        v.hire_date,
+        v.comments_final,
+        v.target_days,
+        SAFE_CAST(v.time_to_fill_days <= v.target_days AS BOOL) AS within_target,
+        v.source_payload_json,
+        v.normalized_at
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_open_vacancy\` v
+      JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        ON u.upload_id = v.upload_id
+      LEFT JOIN \`chiesi-committee.chiesi_committee_admin.reporting_versions\` rv
+        ON rv.reporting_version_id = u.reporting_version_id
+      WHERE LOWER(TRIM(u.module_code)) = 'human_resources_open_vacancy'
+        AND u.status IN ('normalized', 'published')
+    `,
+  });
+}
+
+async function publishHumanResourcesOpenVacancyUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+  await ensureHumanResourcesOpenVacancyView();
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      WHERE reporting_version_id = @reportingVersionId
+        AND module_code = @moduleCode
+        AND period_month = DATE(@periodMonth)
+    `,
+    params: {
+      reportingVersionId: context.reportingVersionId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+    },
+  });
+
+  await client.query({
+    query: `
+      INSERT INTO \`chiesi-committee.chiesi_committee_mart.mart_executive_module_summary\`
+      (
+        period_month, reporting_version_id, module_code, module_name,
+        kpi_code, kpi_name, actual_value, target_value, budget_value, ly_value,
+        variance_vs_target, variance_vs_budget, growth_vs_ly, coverage_value,
+        status_color, alert_flag, last_update_at, owner_name
+      )
+      SELECT
+        DATE(@periodMonth),
+        @reportingVersionId,
+        @moduleCode,
+        COALESCE(dm.module_name, @moduleCode),
+        CONCAT('open_vacancy_', LOWER(REPLACE(COALESCE(NULLIF(area, ''), 'unassigned'), ' ', '_'))),
+        CONCAT('Open Vacancy - ', COALESCE(NULLIF(area, ''), 'Unassigned')),
+        CAST(COUNT(1) AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC),
+        CAST(
+          SAFE_DIVIDE(
+            COUNTIF(time_to_fill_days <= target_days),
+            NULLIF(COUNTIF(time_to_fill_days IS NOT NULL AND target_days IS NOT NULL), 0)
+          ) AS NUMERIC
+        ),
+        'neutral',
+        FALSE,
+        CURRENT_TIMESTAMP(),
+        NULL
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_open_vacancy\` hr
+      LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
+        ON dm.module_code = @moduleCode
+      WHERE hr.upload_id = @uploadId
+      GROUP BY dm.module_name, area
+    `,
+    params: {
+      uploadId: context.uploadId,
+      moduleCode: context.moduleCode,
+      periodMonth: context.periodMonth,
+      reportingVersionId: context.reportingVersionId,
+    },
+  });
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_open_vacancy\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
 async function publishCommercialOperationsDsoUpload(context: UploadPublishContext) {
   const client = getBigQueryClient();
   const summaryModuleCode = 'commercial_operations_dso';
@@ -1695,6 +1815,9 @@ export async function publishUploadToMart(uploadId: string) {
     context.moduleCode === 'human_resources_entrenamiento'
   ) {
     return publishHumanResourcesTrainingUpload(context);
+  }
+  if (context.moduleCode === 'human_resources_open_vacancy') {
+    return publishHumanResourcesOpenVacancyUpload(context);
   }
   if (
     context.moduleCode === 'commercial_operations_dso' ||

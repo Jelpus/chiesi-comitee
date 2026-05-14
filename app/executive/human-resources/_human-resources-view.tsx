@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { unstable_cache } from 'next/cache';
 import type { ReactNode } from 'react';
 import { SectionHeader } from '@/components/ui/section-header';
+import { OpenVacancyPanelClient } from '@/components/executive/human-resources/open-vacancy-panel-client';
 import { TrainingRankingTable } from '@/components/executive/human-resources/training-ranking-table';
 import {
   DepartmentContributionChart,
@@ -17,6 +18,7 @@ import {
 } from '@/components/executive/human-resources/hr-dashboard-charts';
 import {
   getHumanResourcesAuditSources,
+  getHumanResourcesOpenVacancyData,
   getHumanResourcesTrainingRanking,
   getHumanResourcesTrainingOverview,
   getHumanResourcesTrainingThemeData,
@@ -29,6 +31,8 @@ import type { OpexRow } from '@/lib/data/opex';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 import type {
   HumanResourcesTrainingUserRow,
+  HumanResourcesOpenVacancyBreakdownRow,
+  HumanResourcesOpenVacancyData,
   HumanResourcesTrainingRankingDimension,
   HumanResourcesTrainingRankingRow,
   HumanResourcesTrainingScope,
@@ -39,13 +43,15 @@ import type {
 } from '@/types/human-resources';
 
 export type HumanResourcesViewMode = 'insights' | 'scorecard' | 'dashboard';
-type HumanResourcesDashboardTab = 'turnover' | 'training' | 'payroll';
+type HumanResourcesDashboardTab = 'turnover' | 'training' | 'payroll' | 'open_vacancy';
 
 type SearchParams = {
   version?: string;
   hrTab?: string;
   turnoverScope?: string;
   trainingScope?: string;
+  vacancyStatus?: string;
+  vacancyOpening?: string;
 };
 
 function modeHref(mode: HumanResourcesViewMode, params: SearchParams) {
@@ -301,17 +307,18 @@ function TopCards({
   turnoverVoluntary,
   trainingHours,
   trainingCompletionRate,
-  activeUsers,
   payrollAchievement,
+  openVacancyData,
 }: {
   turnoverExits: number;
   turnoverVoluntary: number;
   trainingHours: number;
   trainingCompletionRate: number | null;
-  activeUsers: number;
   payrollAchievement: PayrollAchievementData | null;
+  openVacancyData: HumanResourcesOpenVacancyData;
 }) {
   const payrollStatusInfo = payrollStatus(payrollAchievement?.ytd.achievementPct ?? null);
+  const vacancyOverview = openVacancyData.overview;
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
@@ -333,12 +340,13 @@ function TopCards({
         <p className="mt-2 text-sm text-slate-600">Completion: {formatPercent(trainingCompletionRate)}</p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <KpiLabel help="Distinct employees with training activity in the current year-to-date cut.">
-          Active Learners YTD
+        <KpiLabel help="Average Time to Fill year to date, read directly from the Open Vacancy Excel file.">
+          Avg Time to Fill YTD
         </KpiLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          {new Intl.NumberFormat('en-US').format(activeUsers)}
+          {formatDays(vacancyOverview?.avgTimeToFillDays ?? null)}
         </p>
+        <p className="mt-2 text-sm text-slate-600">In target: {formatPercent(vacancyOverview?.targetHitRate ?? null)}</p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
         <KpiLabel help="Actual Base Salaries divided by budget for the current year-to-date payroll cut.">
@@ -367,6 +375,7 @@ function DashboardPanel({
   turnoverThemeData,
   trainingThemeData,
   payrollAchievement,
+  openVacancyData,
   activeTab,
   turnoverScope,
   trainingScope,
@@ -380,6 +389,7 @@ function DashboardPanel({
   turnoverThemeData: HumanResourcesTurnoverThemeData | null;
   trainingThemeData: HumanResourcesTrainingThemeData | null;
   payrollAchievement: PayrollAchievementData | null;
+  openVacancyData: HumanResourcesOpenVacancyData;
   activeTab: HumanResourcesDashboardTab;
   turnoverScope: HumanResourcesTurnoverScope;
   trainingScope: HumanResourcesTrainingScope;
@@ -390,6 +400,8 @@ function DashboardPanel({
     if (params.version) query.set('version', params.version);
     if (params.turnoverScope) query.set('turnoverScope', params.turnoverScope);
     if (params.trainingScope) query.set('trainingScope', params.trainingScope);
+    if (params.vacancyStatus) query.set('vacancyStatus', params.vacancyStatus);
+    if (params.vacancyOpening) query.set('vacancyOpening', params.vacancyOpening);
     query.set('hrTab', tab);
     const queryText = query.toString();
     return `/executive/human-resources/dashboard${queryText ? `?${queryText}` : ''}`;
@@ -416,7 +428,7 @@ function DashboardPanel({
   return (
     <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
       <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Human Resources Dashboard</p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Turnover, Training & Payroll Achievement</h2>
+      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Turnover, Training, Payroll Achievement & Open Vacancy</h2>
       <div className="mt-4 flex flex-wrap gap-2">
         <Link
           href={buildTabHref('turnover')}
@@ -447,6 +459,16 @@ function DashboardPanel({
           }`}
         >
           Payroll Achievement
+        </Link>
+        <Link
+          href={buildTabHref('open_vacancy')}
+          className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+            activeTab === 'open_vacancy'
+              ? 'bg-slate-900 text-white shadow-[0_8px_22px_rgba(15,23,42,0.35)]'
+              : 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+          }`}
+        >
+          Open Vacancy
         </Link>
       </div>
 
@@ -569,8 +591,10 @@ function DashboardPanel({
               }}
             />
           </div>
-        ) : (
+        ) : activeTab === 'payroll' ? (
           <PayrollAchievementPanel data={payrollAchievement} />
+        ) : (
+          <OpenVacancyPanelClient data={openVacancyData} />
         )}
       </div>
     </article>
@@ -584,6 +608,299 @@ function payrollStatus(achievementPct: number | null) {
   if (deviation <= 7) return { label: 'Near Plan', className: 'border-amber-200 bg-amber-50 text-amber-800' };
   if (achievementPct > 107) return { label: 'Over Budget', className: 'border-rose-200 bg-rose-50 text-rose-800' };
   return { label: 'Below Budget', className: 'border-sky-200 bg-sky-50 text-sky-800' };
+}
+
+function formatDays(value: number | null) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return `${value.toFixed(1)} days`;
+}
+
+function formatShortDate(value: string | null | undefined) {
+  if (!value) return 'N/A';
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).format(date);
+}
+
+function parseDateOnly(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function businessDaysBetween(startValue: string | null | undefined, endDate = new Date()) {
+  const startDate = parseDateOnly(startValue);
+  if (!startDate) return null;
+  const endUtc = new Date(Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate()));
+  if (startDate > endUtc) return 0;
+
+  let count = 0;
+  const cursor = new Date(startDate);
+  while (cursor <= endUtc) {
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return count;
+}
+
+const vacancyStatusOptions = [
+  { value: 'all', label: 'All Status' },
+  { value: 'open', label: 'Open' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'about_to_enter', label: 'About to enter' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'other', label: 'Other' },
+] as const;
+
+const vacancyOpeningOptions = [
+  { value: 'all', label: 'All' },
+  { value: 'existing', label: 'Existent' },
+  { value: 'new', label: 'New' },
+] as const;
+
+function normalizeVacancyStatusFilter(value: string | null | undefined): string {
+  if (typeof value !== 'string') return 'all';
+  return vacancyStatusOptions.some((option) => option.value === value) ? value : 'all';
+}
+
+function normalizeVacancyOpeningFilter(value: string | null | undefined): string {
+  if (typeof value !== 'string') return 'all';
+  return vacancyOpeningOptions.some((option) => option.value === value) ? value : 'all';
+}
+
+function StatusLegend() {
+  const items = [
+    { label: 'Open', className: 'bg-emerald-500' },
+    { label: 'Closed', className: 'bg-slate-500' },
+    { label: 'About to enter', className: 'bg-cyan-500' },
+    { label: 'Paused', className: 'bg-amber-500' },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+      {items.map((item) => (
+        <span key={item.label} className="inline-flex items-center gap-1.5">
+          <span className={`h-2.5 w-2.5 rounded-full ${item.className}`} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function OpenVacancyBreakdownTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: HumanResourcesOpenVacancyBreakdownRow[];
+}) {
+  const maxOpened = Math.max(1, ...rows.map((row) => row.opened));
+  return (
+    <article className="rounded-[16px] border border-slate-200 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">{title}</p>
+      <div className="mt-3 space-y-2">
+        {rows.length === 0 ? <p className="text-sm text-slate-500">No open vacancy data available.</p> : null}
+        {rows.map((row) => (
+          <div key={`${title}-${row.label}`} className="rounded-[12px] border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-slate-900">{row.label}</p>
+              <p className="text-xs text-slate-600">
+                {formatInt(row.opened)} total
+              </p>
+            </div>
+            <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-slate-200" style={{ width: `${Math.max(8, (row.opened / maxOpened) * 100)}%` }}>
+              <div className="h-full bg-emerald-500" style={{ width: `${row.opened > 0 ? (row.open / row.opened) * 100 : 0}%` }} />
+              <div className="h-full bg-slate-500" style={{ width: `${row.opened > 0 ? (row.covered / row.opened) * 100 : 0}%` }} />
+              <div className="h-full bg-cyan-500" style={{ width: `${row.opened > 0 ? (row.aboutToEnter / row.opened) * 100 : 0}%` }} />
+              <div className="h-full bg-amber-500" style={{ width: `${row.opened > 0 ? (row.paused / row.opened) * 100 : 0}%` }} />
+            </div>
+            <p className="mt-2 text-xs text-slate-600">
+              Open {formatInt(row.open)} | Closed {formatInt(row.covered)} | About to enter {formatInt(row.aboutToEnter)} | Paused {formatInt(row.paused)}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Avg TTF {formatDays(row.avgTimeToFillDays)} | In target {formatPercent(row.targetHitRate)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+// Legacy server-rendered vacancy panel kept temporarily while the client-side filter version stabilizes.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function OpenVacancyPanel({ data, params }: { data: HumanResourcesOpenVacancyData; params: SearchParams }) {
+  const overview = data.overview;
+  const activeStatus = normalizeVacancyStatusFilter(params.vacancyStatus);
+  const activeOpening = normalizeVacancyOpeningFilter(params.vacancyOpening);
+  const buildOpeningHref = (opening: string) => {
+    const query = new URLSearchParams();
+    if (params.version) query.set('version', params.version);
+    query.set('hrTab', 'open_vacancy');
+    if (params.vacancyStatus) query.set('vacancyStatus', params.vacancyStatus);
+    query.set('vacancyOpening', opening);
+    return `/executive/human-resources/dashboard?${query.toString()}`;
+  };
+  return (
+    <div className="space-y-4">
+      <article className="rounded-[16px] border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Open Vacancy Scorecard</p>
+          <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+            {vacancyOpeningOptions.map((option) => (
+              <Link
+                key={option.value}
+                href={buildOpeningHref(option.value)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  activeOpening === option.value ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {option.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Positions opened year to date using Fecha inicio busqueda as period month.">
+              YTD Opened
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(overview?.ytdOpened ?? 0)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Positions with status Open in the current report month.">
+              Open MTH
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(overview?.openPositions ?? 0)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Positions with status Closed in the current report month.">
+              Closed MTH
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(overview?.coveredPositions ?? 0)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Positions temporarily paused in the current report month.">
+              Paused MTH
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(overview?.pausedPositions ?? 0)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Average Time to Fill read directly from the Excel column.">
+              Avg Time to Fill
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatDays(overview?.avgTimeToFillDays ?? null)}</p>
+          </div>
+          <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+            <KpiLabel help="Share of measured vacancies at or below target: FF 35 days, Staff 45 days.">
+              In Target
+            </KpiLabel>
+            <p className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(overview?.targetHitRate ?? null)}</p>
+          </div>
+        </div>
+      </article>
+
+      <article className="rounded-[16px] border border-slate-200 bg-white p-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Monthly Flow</p>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {data.monthlyTrend.map((row) => (
+            <div key={row.monthOrder} className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{row.monthLabel}</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{formatInt(row.opened)} opened</p>
+              <p className="text-xs text-slate-600">
+                Open {formatInt(row.open)} | Closed {formatInt(row.covered)} | About {formatInt(row.aboutToEnter)} | Paused {formatInt(row.paused)}
+              </p>
+              <p className="mt-1 text-xs text-slate-600">{formatDays(row.avgTimeToFillDays)}</p>
+            </div>
+          ))}
+          {data.monthlyTrend.length === 0 ? <p className="text-sm text-slate-500">No monthly vacancy trend available.</p> : null}
+        </div>
+      </article>
+
+      <div className="rounded-[16px] border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Status Composition</p>
+          <StatusLegend />
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <OpenVacancyBreakdownTable title="By Area" rows={data.byArea} />
+        <OpenVacancyBreakdownTable title="By Type" rows={data.byType} />
+      </div>
+
+      <article className="overflow-hidden rounded-[16px] border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Latest Vacancy Detail</p>
+          <form action="/executive/human-resources/dashboard" className="flex items-center gap-2">
+            {params.version ? <input type="hidden" name="version" value={params.version} /> : null}
+            <input type="hidden" name="hrTab" value="open_vacancy" />
+            <input type="hidden" name="vacancyOpening" value={activeOpening} />
+            <select
+              name="vacancyStatus"
+              defaultValue={activeStatus}
+              className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+            >
+              {vacancyStatusOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <button type="submit" className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+              Apply
+            </button>
+          </form>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-white">
+              <tr className="text-left text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Area</th>
+                <th className="px-3 py-2">View</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">Manager</th>
+                <th className="px-3 py-2">Resp HR</th>
+                <th className="px-3 py-2 text-right">TTF</th>
+                <th className="px-3 py-2 text-right">Target</th>
+                <th className="px-3 py-2">Start</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {data.details.map((row, index) => {
+                const elapsedBusinessDays = row.timeToFillDays == null ? businessDaysBetween(row.searchStartDate) : null;
+                return (
+                  <tr key={`${row.area}-${row.manager}-${row.searchStartDate}-${index}`}>
+                    <td className="px-3 py-2 font-medium text-slate-900">{row.status ?? 'N/A'}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.area ?? 'N/A'}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.openingType ?? 'N/A'}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.vacancyType ?? 'N/A'}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.manager ?? 'N/A'}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.respHr ?? 'N/A'}</td>
+                    <td className={`px-3 py-2 text-right font-semibold ${row.withinTarget === false ? 'text-rose-700' : row.timeToFillDays == null ? 'text-amber-700' : 'text-slate-900'}`}>
+                      {row.timeToFillDays == null
+                        ? (elapsedBusinessDays == null ? 'N/A' : `${elapsedBusinessDays}*`)
+                        : row.timeToFillDays.toFixed(1)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-700">{row.targetDays == null ? 'N/A' : row.targetDays.toFixed(0)}</td>
+                    <td className="px-3 py-2 text-slate-700">{formatShortDate(row.searchStartDate)}</td>
+                  </tr>
+                );
+              })}
+              {data.details.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-slate-500" colSpan={9}>No open vacancy records available.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+          * Provisional business days elapsed from Start to today for vacancies without final Time to Fill in the source file.
+        </p>
+      </article>
+    </div>
+  );
 }
 
 function PayrollBreakdownTable({
@@ -1551,6 +1868,7 @@ const getCachedData = unstable_cache(
       trainingThemeTotal,
       trainingThemeOnline,
       trainingThemeFaceToFace,
+      openVacancyData,
       opexRows,
     ] = await Promise.all([
       getHumanResourcesAuditSources(reportingVersionId || undefined),
@@ -1563,6 +1881,7 @@ const getCachedData = unstable_cache(
       getHumanResourcesTrainingThemeData(reportingVersionId || undefined, 'total'),
       getHumanResourcesTrainingThemeData(reportingVersionId || undefined, 'online'),
       getHumanResourcesTrainingThemeData(reportingVersionId || undefined, 'face_to_face'),
+      getHumanResourcesOpenVacancyData(reportingVersionId || undefined),
       getOpexRows(reportingVersionId || undefined),
     ]);
     const payrollAchievement = buildPayrollAchievementData(opexRows);
@@ -1578,10 +1897,11 @@ const getCachedData = unstable_cache(
       trainingThemeTotal,
       trainingThemeOnline,
       trainingThemeFaceToFace,
+      openVacancyData,
       payrollAchievement,
     };
   },
-  ['human-resources-v7'],
+  ['human-resources-v16'],
   { revalidate: 90 },
 );
 
@@ -1609,7 +1929,7 @@ export async function HumanResourcesView({
     versions.find((version) => version.reportingVersionId === searchParams.version) ?? versions[0];
   const selectedReportingVersionId = selectedVersion?.reportingVersionId ?? searchParams.version ?? '';
   const activeDashboardTab: HumanResourcesDashboardTab =
-    searchParams.hrTab === 'training' || searchParams.hrTab === 'payroll'
+    searchParams.hrTab === 'training' || searchParams.hrTab === 'payroll' || searchParams.hrTab === 'open_vacancy'
       ? searchParams.hrTab
       : 'turnover';
   const turnoverScope: HumanResourcesTurnoverScope =
@@ -1660,10 +1980,12 @@ export async function HumanResourcesView({
   const headerReportPeriod =
     turnoverOverview?.reportPeriodMonth ??
     trainingOverview?.reportPeriodMonth ??
+    data.openVacancyData.overview?.reportPeriodMonth ??
     auditHeader.reportPeriodMonth;
   const headerSourceAsOf =
     turnoverOverview?.sourceAsOfMonth ??
     trainingOverview?.sourceAsOfMonth ??
+    data.openVacancyData.overview?.sourceAsOfMonth ??
     auditHeader.sourceAsOfMonth;
 
   return (
@@ -1690,8 +2012,8 @@ export async function HumanResourcesView({
         turnoverVoluntary={turnoverOverview?.ytdVoluntaryExits ?? 0}
         trainingHours={trainingOverview?.ytdTotalHours ?? 0}
         trainingCompletionRate={trainingOverview?.ytdCompletionRate ?? null}
-        activeUsers={trainingOverview?.ytdActiveUsers ?? 0}
         payrollAchievement={data.payrollAchievement}
+        openVacancyData={data.openVacancyData}
       />
 
       {viewMode === 'dashboard' ? (
@@ -1704,6 +2026,7 @@ export async function HumanResourcesView({
           turnoverThemeData={turnoverThemeData}
           trainingThemeData={trainingThemeData}
           payrollAchievement={data.payrollAchievement}
+          openVacancyData={data.openVacancyData}
           activeTab={activeDashboardTab}
           turnoverScope={turnoverScope}
           trainingScope={trainingScope}

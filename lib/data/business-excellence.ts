@@ -4153,7 +4153,7 @@ export async function getBusinessExcellenceFieldForceTopCardKpis(
     WITH ${fieldForceServingCtes()},
     ytd_summary AS (
       SELECT
-        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.in_frequency_adjusted, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura_ajustada,
+        SAFE_DIVIDE(COUNT(DISTINCT IF(psd.interacciones > 0, psd.doctor_key, NULL)), NULLIF(COUNT(DISTINCT psd.doctor_key), 0)) AS cobertura_ajustada,
         MAX(d.working_days) AS working_days,
         MAX(d.effective_days) AS effective_days
       FROM period_scoped_doctors_enriched psd

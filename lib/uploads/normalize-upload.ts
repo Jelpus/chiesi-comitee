@@ -253,6 +253,32 @@ type HumanResourcesTrainingNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type HumanResourcesOpenVacancyNormalizedRow = {
+  rowNumber: number;
+  periodMonth: string;
+  status: string | null;
+  location: string | null;
+  employer: string | null;
+  area: string | null;
+  vacancyType: string | null;
+  subtype: string | null;
+  coveringFor: string | null;
+  manager: string | null;
+  commentsInitial: string | null;
+  respHr: string | null;
+  agencyType: string | null;
+  agency: string | null;
+  assignedRecruiter: string | null;
+  levantamientoDate: string | null;
+  searchStartDate: string | null;
+  endDate: string | null;
+  timeToFillDays: number | null;
+  hireDate: string | null;
+  commentsFinal: string | null;
+  targetDays: number | null;
+  payload: Record<string, unknown>;
+};
+
 type CommercialOperationsDsoNormalizedRow = {
   rowNumber: number;
   groupName: string;
@@ -1112,6 +1138,37 @@ function parseDateValueMonthFirst(value: unknown): Date | null {
 function diffDays(later: Date | null, earlier: Date | null) {
   if (!later || !earlier) return null;
   return Math.round((later.getTime() - earlier.getTime()) / 86400000);
+}
+
+function toDateOnlyString(date: Date | null) {
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateOnlyField(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return toDateOnlyString(new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate())));
+  }
+  if (typeof value === 'number') {
+    return toDateOnlyString(parseExcelSerialDateValue(value));
+  }
+  const raw = String(value).trim();
+  const token = raw.replace(',', ' ').trim().split(/\s+/)[0] ?? '';
+  const match = token.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = parseYearToken(match[3]);
+    if (year != null && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return toDateOnlyString(new Date(Date.UTC(year, month - 1, day)));
+    }
+  }
+  const parsed = parseDateValueMonthFirst(value);
+  return toDateOnlyString(parsed);
 }
 
 function parseDateFieldMonthFirst(value: unknown): string | null {
@@ -6604,6 +6661,249 @@ async function loadHumanResourcesTrainingStaging(
   );
 }
 
+function pickPayloadValueByNormalizedIncludes(
+  payload: Record<string, unknown>,
+  includes: string[],
+) {
+  const normalizedIncludes = includes.map((value) => normalizeText(value));
+  for (const [key, value] of Object.entries(payload)) {
+    if (key.startsWith('column_')) continue;
+    const normalizedKey = normalizeText(key);
+    if (normalizedIncludes.every((token) => normalizedKey.includes(token))) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function normalizeVacancyType(value: string | null) {
+  const normalized = normalizeText(value ?? '');
+  if (!normalized) return null;
+  if (normalized === 'ff' || normalized.includes('field force')) return 'FF';
+  if (normalized.includes('staff')) return 'Staff';
+  return value;
+}
+
+function openVacancyTargetDays(vacancyType: string | null) {
+  const normalized = normalizeText(vacancyType ?? '');
+  if (!normalized) return null;
+  if (normalized === 'ff' || normalized.includes('field force')) return 35;
+  if (normalized.includes('staff')) return 45;
+  return null;
+}
+
+function normalizeHumanResourcesOpenVacancy(
+  rows: RawUploadRow[],
+  asOfMonth: string | null,
+) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: HumanResourcesOpenVacancyNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+
+    if (!hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const searchStartRaw = pickValue(index, ['Fecha inicio búsqueda', 'Fecha inicio busqueda', 'Fecha inicio de busqueda']);
+    const searchStartPeriodMonth = parseDateField(searchStartRaw);
+    const searchStartDate = parseDateOnlyField(searchStartRaw);
+    const periodMonth = searchStartPeriodMonth;
+    const status = asNullableString(pickValue(index, ['ESTATUS', 'Estatus', 'Status']));
+    const area = asNullableString(pickValue(index, ['ÁREA', 'AREA', 'Area']));
+    const vacancyTypeRaw = asNullableString(pickPayloadValue(payload, index, ['column_13', 'TIPO', 'Tipo']));
+    const vacancyType = normalizeVacancyType(vacancyTypeRaw);
+    const timeToFillDays = asNullableNumber(
+      pickPayloadValueByNormalizedIncludes(payload, ['time', 'fill']) ??
+      pickValue(index, ['Time to fill', 'Time To Fill']),
+    );
+
+    if (!periodMonth) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: period not detected from Fecha inicio busqueda.'],
+      });
+      continue;
+    }
+
+    if (!status && !area && !vacancyType && timeToFillDays == null) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: no open vacancy business columns detected.'],
+      });
+      continue;
+    }
+
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus: 'valid',
+      errors: [],
+    });
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      periodMonth,
+      status,
+      location: asNullableString(pickValue(index, ['UBICACIÓN', 'UBICACION', 'Ubicacion', 'Location'])),
+      employer: asNullableString(pickValue(index, ['PATRÓN', 'PATRON', 'Patron', 'Employer'])),
+      area,
+      vacancyType,
+      subtype: asNullableString(pickValue(index, ['SUBTIPO', 'Subtipo', 'Subtype'])),
+      coveringFor: asNullableString(pickValue(index, ['A QUIEN CUBRE', 'A quien cubre'])),
+      manager: asNullableString(pickValue(index, ['MANAGER', 'Manager'])),
+      commentsInitial: asNullableString(pickPayloadValue(payload, index, ['column_9', 'COMENTARIOS', 'Comentarios'])),
+      respHr: asNullableString(pickValue(index, ['RESP HR', 'Resp HR', 'Responsable HR'])),
+      agencyType: asNullableString(pickPayloadValue(payload, index, ['column_11'])),
+      agency: asNullableString(pickValue(index, ['AGENCIA', 'Agencia'])),
+      assignedRecruiter: asNullableString(pickValue(index, ['ENCARGADA', 'Encargada'])),
+      levantamientoDate: parseDateOnlyField(pickValue(index, ['LEVANTAMIENTO', 'Levantamiento'])),
+      searchStartDate,
+      endDate: parseDateOnlyField(pickValue(index, ['Fecha fin', 'Fecha final', 'End Date'])),
+      timeToFillDays,
+      hireDate: parseDateOnlyField(pickValue(index, ['Fecha ingreso', 'Fecha de ingreso', 'Hire Date'])),
+      commentsFinal: asNullableString(pickPayloadValue(payload, index, ['column_19'])),
+      targetDays: openVacancyTargetDays(vacancyType),
+      payload,
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadHumanResourcesOpenVacancyStaging(
+  uploadId: string,
+  rows: HumanResourcesOpenVacancyNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_human_resources_open_vacancy\` (
+        upload_id STRING,
+        row_number INT64,
+        period_month DATE,
+        status STRING,
+        location STRING,
+        employer STRING,
+        area STRING,
+        vacancy_type STRING,
+        subtype STRING,
+        covering_for STRING,
+        manager STRING,
+        comments_initial STRING,
+        resp_hr STRING,
+        agency_type STRING,
+        agency STRING,
+        assigned_recruiter STRING,
+        levantamiento_date DATE,
+        search_start_date DATE,
+        end_date DATE,
+        time_to_fill_days NUMERIC,
+        hire_date DATE,
+        comments_final STRING,
+        target_days NUMERIC,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_human_resources_open_vacancy\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_human_resources_open_vacancy\`
+    (
+      upload_id, row_number, period_month, status, location, employer, area, vacancy_type, subtype,
+      covering_for, manager, comments_initial, resp_hr, agency_type, agency, assigned_recruiter,
+      levantamiento_date, search_start_date, end_date, time_to_fill_days, hire_date, comments_final,
+      target_days, source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      DATE(row.period_month),
+      NULLIF(row.status, ''),
+      NULLIF(row.location, ''),
+      NULLIF(row.employer, ''),
+      NULLIF(row.area, ''),
+      NULLIF(row.vacancy_type, ''),
+      NULLIF(row.subtype, ''),
+      NULLIF(row.covering_for, ''),
+      NULLIF(row.manager, ''),
+      NULLIF(row.comments_initial, ''),
+      NULLIF(row.resp_hr, ''),
+      NULLIF(row.agency_type, ''),
+      NULLIF(row.agency, ''),
+      NULLIF(row.assigned_recruiter, ''),
+      IF(row.levantamiento_date = '', NULL, DATE(row.levantamiento_date)),
+      IF(row.search_start_date = '', NULL, DATE(row.search_start_date)),
+      IF(row.end_date = '', NULL, DATE(row.end_date)),
+      SAFE_CAST(row.time_to_fill_days AS NUMERIC),
+      IF(row.hire_date = '', NULL, DATE(row.hire_date)),
+      NULLIF(row.comments_final, ''),
+      SAFE_CAST(row.target_days AS NUMERIC),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(rows, 1500);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            period_month: row.periodMonth,
+            status: row.status ?? '',
+            location: row.location ?? '',
+            employer: row.employer ?? '',
+            area: row.area ?? '',
+            vacancy_type: row.vacancyType ?? '',
+            subtype: row.subtype ?? '',
+            covering_for: row.coveringFor ?? '',
+            manager: row.manager ?? '',
+            comments_initial: row.commentsInitial ?? '',
+            resp_hr: row.respHr ?? '',
+            agency_type: row.agencyType ?? '',
+            agency: row.agency ?? '',
+            assigned_recruiter: row.assignedRecruiter ?? '',
+            levantamiento_date: row.levantamientoDate ?? '',
+            search_start_date: row.searchStartDate ?? '',
+            end_date: row.endDate ?? '',
+            time_to_fill_days: row.timeToFillDays == null ? '' : String(row.timeToFillDays),
+            hire_date: row.hireDate ?? '',
+            comments_final: row.commentsFinal ?? '',
+            target_days: row.targetDays == null ? '' : String(row.targetDays),
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
 async function loadOpexMasterCatalogStaging(
   uploadId: string,
   rows: OpexMasterCatalogNormalizedRow[],
@@ -6923,6 +7223,14 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = normalizeHumanResourcesTraining(rows, asOfMonth);
     await updateRawValidationStatus(uploadId, validations);
     await loadHumanResourcesTrainingStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'human_resources_open_vacancy') {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    const { validations, normalizedRows } = normalizeHumanResourcesOpenVacancy(rows, asOfMonth);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadHumanResourcesOpenVacancyStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 
