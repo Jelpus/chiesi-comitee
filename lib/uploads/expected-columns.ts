@@ -134,6 +134,11 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
     { label: 'Periodo', columns: ['periodo'] },
     { label: 'Dias estandar', columns: ['standard_days'] },
   ],
+  business_excellence_recompra_lexicomp: [
+    { label: 'Fecha y periodo', columns: ['Fecha', 'AÑO', 'MES'] },
+    { label: 'Cliente y ruta', columns: ['DISTRIBUIDOR', 'Cliente', 'AGRUPADOR', 'CORPORATIVO', 'RUTA'] },
+    { label: 'Metricas y equipo', columns: ['Piezas Vendidas', 'Médico', 'EJECUTIVO', 'GERENTE'] },
+  ],
   human_resources_open_vacancy: [
     { label: 'Vacante', columns: ['ESTATUS', 'UBICACION', 'AREA', 'TIPO', 'SUBTIPO'] },
     { label: 'Responsables', columns: ['MANAGER', 'RESP HR', 'AGENCIA', 'ENCARGADA'] },

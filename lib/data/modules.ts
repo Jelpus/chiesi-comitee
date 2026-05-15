@@ -95,6 +95,12 @@ export const defaultModules: Array<{
     areaCode: 'business_excellence',
     displayOrder: 195,
   },
+  {
+    moduleCode: 'business_excellence_recompra_lexicomp',
+    moduleName: 'Business Excellence - Recompra Lexicomp',
+    areaCode: 'business_excellence',
+    displayOrder: 200,
+  },
   { moduleCode: 'human_resources_turnover', moduleName: 'Human Resources - Turnover', areaCode: 'human_resources', displayOrder: 210 },
   { moduleCode: 'human_resources_training', moduleName: 'Human Resources - Training', areaCode: 'human_resources', displayOrder: 220 },
   { moduleCode: 'human_resources_open_vacancy', moduleName: 'Human Resources - Open Vacancy', areaCode: 'human_resources', displayOrder: 230 },

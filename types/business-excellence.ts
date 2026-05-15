@@ -557,6 +557,7 @@ export type BusinessExcellenceFieldForceDetailRow = {
   label: string;
   clients: number;
   interacciones: number;
+  effectiveDays: number;
   visitCoveragePct: number | null;
   inFrequencyRatePct: number | null;
   cpd: number | null;

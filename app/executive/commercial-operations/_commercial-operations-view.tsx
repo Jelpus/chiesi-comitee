@@ -514,7 +514,9 @@ function getSanitizedGovernmentDenominators(row: Awaited<ReturnType<typeof getCo
 function buildGovernmentContractsSummary(
   rows: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>,
 ): GovernmentContractsSummary {
-  const scopedRows = rows.filter((row) => normalizeGovernmentStage(row.category) === 'ordenado');
+  const scopedRows = rows.filter(
+    (row) => normalizeGovernmentStage(row.category) === 'ordenado' && !isOpdGovernmentContractRow(row),
+  );
   if (scopedRows.length === 0) {
     return { progress2526Pct: null, deliveredFrom2025: 0, total2526: 0 };
   }
@@ -544,6 +546,12 @@ function buildGovernmentContractsSummary(
 
 function getGovernmentContractTypeLabel(value: string | null | undefined) {
   return (value ?? '').trim() || 'Unassigned';
+}
+
+function isOpdGovernmentContractRow(row: Awaited<ReturnType<typeof getCommercialOperationsGovernmentContractProgressRows>>[number]) {
+  const contractType = (row.contractType ?? '').trim().toUpperCase();
+  const centralInstitution = (row.centralInstitution ?? '').trim().toUpperCase();
+  return contractType === 'OPD' || centralInstitution === 'OPD';
 }
 
 function buildGovernmentContractGroupSummaries(
@@ -740,7 +748,7 @@ function DsoGlobalCards({
             : `${governmentContractsSummary.progress2526Pct.toFixed(1)}%`}
         </p>
         <p className="mt-2 text-sm text-slate-600">
-          Ordered | Progress 2025-2026
+          Ordered W/O OPD | Progress 2025-2026
         </p>
         <p className="text-xs text-slate-600">
           Qty {formatCompactNumber(governmentContractsSummary.deliveredFrom2025)} /{' '}
@@ -1909,7 +1917,7 @@ export async function CommercialOperationsView({
       <SectionHeader
         eyebrow="Executive"
         title="Commercial Operations"
-        description="DSO monitoring with target alignment and month trend analytics."
+        description="Opportunity monitoring with target alignment and month trend analytics."
         actions={<ModeTabs active={viewMode} params={params} />}
       />
 

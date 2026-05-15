@@ -94,6 +94,36 @@ function isCsvFileName(fileName: string) {
   return /\.csv$/i.test(fileName.trim());
 }
 
+function normalizeHeaderCandidate(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function detectLexicompHeaderRowFromSheet(xlsx: typeof import('xlsx'), sheet: import('xlsx').WorkSheet) {
+  if (!sheet['!ref']) return null;
+  const requiredHeaders = ['DISTRIBUIDOR', 'ANO', 'MES', 'Piezas Vendidas'].map(normalizeHeaderCandidate);
+  const range = xlsx.utils.decode_range(sheet['!ref']);
+  const lastRowToScan = Math.min(range.e.r, range.s.r + 24);
+
+  for (let rowIndex = range.s.r; rowIndex <= lastRowToScan; rowIndex += 1) {
+    const normalizedCells = new Set<string>();
+    for (let colIndex = range.s.c; colIndex <= range.e.c; colIndex += 1) {
+      const address = xlsx.utils.encode_cell({ r: rowIndex, c: colIndex });
+      const normalizedValue = normalizeHeaderCandidate(sheet[address]?.v);
+      if (normalizedValue) normalizedCells.add(normalizedValue);
+    }
+    if (requiredHeaders.every((header) => normalizedCells.has(header))) {
+      return rowIndex + 1;
+    }
+  }
+
+  return null;
+}
+
 function getResumeWorkflowStep(status?: string): UploadWorkflowStep | null {
   if (!status) return null;
   if (['uploaded', 'error', 'parsing', 'loading_raw'].includes(status)) return 'process';
@@ -329,11 +359,19 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     startInspectTransition(async () => {
       try {
         updateProgressStep(1, 'Detectando hojas del libro.');
+        let detectedLexicompHeaderRow: number | null = null;
         const sheetNames = isCsvFileName(file.name)
           ? ['CSV']
           : await file.arrayBuffer().then(async (buffer) => {
               const xlsx = await import('xlsx');
-              const workbook = xlsx.read(buffer, { type: 'array', bookSheets: true });
+              const workbook = xlsx.read(buffer, { type: 'array' });
+              if (requirement.module.moduleCode === 'business_excellence_recompra_lexicomp') {
+                const detailSheetName = workbook.SheetNames.find((sheetName) => sheetName.trim().toUpperCase() === 'DETALLE DESPLAZAMIENTO');
+                const sheet = detailSheetName ? workbook.Sheets[detailSheetName] : null;
+                if (sheet) {
+                  detectedLexicompHeaderRow = detectLexicompHeaderRowFromSheet(xlsx, sheet);
+                }
+              }
               return workbook.SheetNames;
             });
 
@@ -342,11 +380,19 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         }
 
         updateProgressStep(2, 'Aplicando sugerencia de hoja y fila de encabezados.');
+        const lexicompSheetName = sheetNames.find((sheetName) => sheetName.trim().toUpperCase() === 'DETALLE DESPLAZAMIENTO');
         const suggestedSheetName =
           defaults.selectedSheetName && sheetNames.includes(defaults.selectedSheetName)
             ? defaults.selectedSheetName
-            : sheetNames[0] ?? '';
-        const suggestedHeaderRow = defaults.selectedHeaderRow || 1;
+            : requirement.module.moduleCode === 'business_excellence_recompra_lexicomp' && lexicompSheetName
+              ? lexicompSheetName
+              : sheetNames[0] ?? '';
+        const suggestedHeaderRow =
+          requirement.module.moduleCode === 'business_excellence_recompra_lexicomp'
+            ? detectedLexicompHeaderRow ?? (defaults.selectedHeaderRow || 3)
+            : defaults.selectedHeaderRow && defaults.selectedHeaderRow !== 1
+              ? defaults.selectedHeaderRow
+              : defaults.selectedHeaderRow || 1;
 
         setDetectedSheetNames(sheetNames);
         setSheetOptions(sheetNames);

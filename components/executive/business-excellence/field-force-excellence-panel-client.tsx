@@ -508,13 +508,24 @@ export function FieldForceExcellencePanelClient({
         <div className="mt-4 overflow-hidden rounded-[14px] border border-slate-200">
           <div className="max-h-[420px] overflow-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50"><tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500"><th className="px-3 py-2">{activeDetailMode === 'territory' ? 'Territory' : 'District'}</th><th className="px-3 py-2 text-right">Unique Clients</th><th className="px-3 py-2 text-right"># Interactions</th><th className="px-3 py-2 text-right">Visit Coverage</th><th className="px-3 py-2 text-right">In Frequency</th><th className="px-3 py-2 text-right">CPD</th></tr></thead>
+            <thead className="bg-slate-50">
+              <tr className="text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2">{activeDetailMode === 'territory' ? 'Territory' : 'District'}</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right">Unique Clients</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right"># Interactions</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right">Effective Days</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right">Visit Coverage</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right">In Frequency</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-3 py-2 text-right">CPD</th>
+              </tr>
+            </thead>
             <tbody className="divide-y divide-slate-100">
               {detailRows.map((row) => (
                 <tr key={row.label}>
                   <td className="px-3 py-2 font-semibold text-slate-900">{row.label}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.clients)}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.interacciones)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.effectiveDays, 1)}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{showPct(row.visitCoveragePct)}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{showPct(row.inFrequencyRatePct)}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{showNumber(row.cpd, 2)}</td>

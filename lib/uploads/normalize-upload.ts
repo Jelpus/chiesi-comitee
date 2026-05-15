@@ -1,5 +1,6 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
+import { ensureBusinessExcellenceTftEffectiveView } from '@/lib/serving/refresh-business-excellence-field-force';
 
 type RawUploadRow = {
   row_number: number;
@@ -137,6 +138,26 @@ type BusinessExcellenceStandardDaysNormalizedRow = {
   rowNumber: number;
   periodMonth: string;
   standardDays: number;
+  payload: Record<string, unknown>;
+};
+
+type BusinessExcellenceRecompraLexicompNormalizedRow = {
+  rowNumber: number;
+  periodMonth: string;
+  fecha: string;
+  distribuidor: string | null;
+  anio: number | null;
+  mes: string | null;
+  ciudadEntrega: string | null;
+  estadoEntrega: string | null;
+  cliente: string | null;
+  agrupador: string | null;
+  corporativo: string | null;
+  units: number | null;
+  medico: string | null;
+  ruta: string | null;
+  ejecutivo: string | null;
+  gerente: string | null;
   payload: Record<string, unknown>;
 };
 
@@ -713,7 +734,11 @@ const MONTHS: Record<string, string> = {
 };
 
 function normalizeKey(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 }
 
 function asNullableString(value: unknown) {
@@ -874,6 +899,20 @@ function pickValue(index: Map<string, unknown>, aliases: string[]) {
     if (found !== undefined) return found;
   }
   return null;
+}
+
+function pickParsedValue<T>(
+  index: Map<string, unknown>,
+  aliases: string[],
+  parser: (value: unknown) => T | null,
+) {
+  for (const alias of aliases) {
+    const found = index.get(normalizeKey(alias));
+    if (found === undefined) continue;
+    const parsed = parser(found);
+    if (parsed != null) return { raw: found, parsed };
+  }
+  return { raw: null, parsed: null };
 }
 
 function pickPayloadValueByExactNormalizedHeader(
@@ -3768,6 +3807,237 @@ async function loadBusinessExcellenceStandardDaysStaging(
   );
 }
 
+function normalizeBusinessExcellenceRecompraLexicomp(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: BusinessExcellenceRecompraLexicompNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    const index = buildPayloadIndex(payload);
+    const errors: string[] = [];
+
+    const fecha = parseDateOnlyField(pickValue(index, ['Fecha', 'Fecha ', 'column_4', 'column_5']));
+    const yearValue = pickParsedValue(
+      index,
+      ['AÑO', 'ANO', 'AÃ‘O', 'AÃƒâ€˜O', 'Anio', 'Año', 'column_2', 'column_3'],
+      parseYearToken,
+    );
+    const monthValue = pickParsedValue(index, ['MES', 'Mes', 'column_3', 'column_4'], parseMonthToken);
+    const unitsValue = pickParsedValue(
+      index,
+      ['Piezas Vendidas', 'Piezas Vendidas ', 'Units', 'Unidades', 'column_10', 'column_11'],
+      asNullableQuantityNumber,
+    );
+    const anio = yearValue.parsed;
+    const mesRaw = monthValue.raw;
+    const month = monthValue.parsed;
+    const periodMonth = anio != null && month ? `${anio}-${month}-01` : null;
+    const units = unitsValue.parsed;
+
+    if (!periodMonth) errors.push('Missing or invalid AÑO/MES values.');
+    if (units == null) errors.push('Missing or invalid Piezas Vendidas value.');
+
+    const validationStatus: RowValidationResult['validationStatus'] = errors.length > 0 ? 'error' : 'valid';
+    validations.push({
+      rowNumber: row.row_number,
+      validationStatus,
+      errors,
+    });
+
+    if (validationStatus === 'error') continue;
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      periodMonth: periodMonth!,
+      fecha: fecha ?? periodMonth!,
+      distribuidor: asNullableString(pickValue(index, ['DISTRIBUIDOR', 'Distribuidor'])),
+      anio,
+      mes: asNullableString(mesRaw),
+      ciudadEntrega: asNullableString(pickValue(index, ['Ciudad Entrega', 'Ciudad Entrega '])),
+      estadoEntrega: asNullableString(pickValue(index, ['Estado Entrega', 'Estado Entrega '])),
+      cliente: asNullableString(pickValue(index, ['Cliente', 'CLIENTE'])),
+      agrupador: asNullableString(pickValue(index, ['AGRUPADOR', 'Agrupador'])),
+      corporativo: asNullableString(pickValue(index, ['CORPORATIVO', 'Corporativo'])),
+      units,
+      medico: asNullableString(pickValue(index, ['Médico', 'Medico', 'MEDICO'])),
+      ruta: asNullableString(pickValue(index, ['RUTA', 'Ruta'])),
+      ejecutivo: asNullableString(pickValue(index, ['EJECUTIVO', 'Ejecutivo'])),
+      gerente: asNullableString(pickValue(index, ['GERENTE', 'Gerente'])),
+      payload,
+    });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadBusinessExcellenceRecompraLexicomp(
+  uploadId: string,
+  rows: BusinessExcellenceRecompraLexicompNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  await client.query({
+    query: `
+      CREATE SCHEMA IF NOT EXISTS \`chiesi-committee.performance\`
+      OPTIONS(location = 'EU')
+    `,
+  });
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.performance.recompra_lexicomp\` (
+        upload_id STRING,
+        reporting_version_id STRING,
+        upload_period_month DATE,
+        source_as_of_month DATE,
+        row_number INT64,
+        period_month DATE,
+        fecha DATE,
+        distribuidor STRING,
+        anio INT64,
+        mes STRING,
+        ciudad_entrega STRING,
+        estado_entrega STRING,
+        cliente STRING,
+        agrupador STRING,
+        corporativo STRING,
+        units NUMERIC,
+        medico STRING,
+        ruta STRING,
+        ejecutivo STRING,
+        gerente STRING,
+        source_payload_json JSON,
+        normalized_at TIMESTAMP
+      )
+      PARTITION BY period_month
+      CLUSTER BY reporting_version_id, cliente, ejecutivo
+    `,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.performance.recompra_lexicomp\`
+      WHERE upload_id IN (
+        WITH current_upload AS (
+          SELECT reporting_version_id, period_month
+          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+          WHERE upload_id = @uploadId
+          LIMIT 1
+        )
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN current_upload c
+          ON u.reporting_version_id = c.reporting_version_id
+         AND u.period_month = c.period_month
+        WHERE LOWER(TRIM(u.module_code)) = 'business_excellence_recompra_lexicomp'
+          AND u.upload_id != @uploadId
+      )
+    `,
+    params: { uploadId },
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.performance.recompra_lexicomp\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.performance.recompra_lexicomp\`
+    (
+      upload_id,
+      reporting_version_id,
+      upload_period_month,
+      source_as_of_month,
+      row_number,
+      period_month,
+      fecha,
+      distribuidor,
+      anio,
+      mes,
+      ciudad_entrega,
+      estado_entrega,
+      cliente,
+      agrupador,
+      corporativo,
+      units,
+      medico,
+      ruta,
+      ejecutivo,
+      gerente,
+      source_payload_json,
+      normalized_at
+    )
+    SELECT
+      @uploadId,
+      u.reporting_version_id,
+      u.period_month,
+      u.source_as_of_month,
+      row.row_number,
+      DATE(row.period_month),
+      DATE(row.fecha),
+      NULLIF(row.distribuidor, ''),
+      SAFE_CAST(row.anio AS INT64),
+      NULLIF(row.mes, ''),
+      NULLIF(row.ciudad_entrega, ''),
+      NULLIF(row.estado_entrega, ''),
+      NULLIF(row.cliente, ''),
+      NULLIF(row.agrupador, ''),
+      NULLIF(row.corporativo, ''),
+      SAFE_CAST(row.units AS NUMERIC),
+      NULLIF(row.medico, ''),
+      NULLIF(row.ruta, ''),
+      NULLIF(row.ejecutivo, ''),
+      NULLIF(row.gerente, ''),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+    CROSS JOIN (
+      SELECT reporting_version_id, period_month, source_as_of_month
+      FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+      WHERE upload_id = @uploadId
+      LIMIT 1
+    ) u
+  `;
+
+  const chunks = chunkItems(rows, 1500);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await client.query({
+        query,
+        params: {
+          uploadId,
+          rows: chunk.map((row) => ({
+            row_number: row.rowNumber,
+            period_month: row.periodMonth,
+            fecha: row.fecha,
+            distribuidor: row.distribuidor ?? '',
+            anio: row.anio == null ? '' : String(row.anio),
+            mes: row.mes ?? '',
+            ciudad_entrega: row.ciudadEntrega ?? '',
+            estado_entrega: row.estadoEntrega ?? '',
+            cliente: row.cliente ?? '',
+            agrupador: row.agrupador ?? '',
+            corporativo: row.corporativo ?? '',
+            units: row.units == null ? '' : String(row.units),
+            medico: row.medico ?? '',
+            ruta: row.ruta ?? '',
+            ejecutivo: row.ejecutivo ?? '',
+            gerente: row.gerente ?? '',
+            source_payload_json: JSON.stringify(row.payload),
+          })),
+        },
+      });
+    },
+    4,
+  );
+}
+
 function normalizeBusinessExcellenceSalesforceMedicalFile(rows: RawUploadRow[]) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: BusinessExcellenceSalesforceMedicalFileNormalizedRow[] = [];
@@ -4080,6 +4350,8 @@ async function loadBusinessExcellenceSalesforceTftStaging(
       ADD COLUMN IF NOT EXISTS territory_normalized STRING
     `,
   });
+
+  await ensureBusinessExcellenceTftEffectiveView(client);
 
   await client.query({
     query: `
@@ -7369,6 +7641,13 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = normalizeBusinessExcellenceStandardDays(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadBusinessExcellenceStandardDaysStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'business_excellence_recompra_lexicomp') {
+    const { validations, normalizedRows } = normalizeBusinessExcellenceRecompraLexicomp(rows);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadBusinessExcellenceRecompraLexicomp(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 

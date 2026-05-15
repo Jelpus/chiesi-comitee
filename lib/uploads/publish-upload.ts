@@ -1,7 +1,10 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { refreshSalesInternalServingArtifacts } from '@/lib/serving/refresh-sales-internal-serving';
-import { refreshBusinessExcellenceFieldForceServingArtifacts } from '@/lib/serving/refresh-business-excellence-field-force';
+import {
+  ensureBusinessExcellenceTftEffectiveView,
+  refreshBusinessExcellenceFieldForceServingArtifacts,
+} from '@/lib/serving/refresh-business-excellence-field-force';
 
 type UploadPublishContext = {
   uploadId: string;
@@ -912,6 +915,7 @@ async function publishBusinessExcellenceSalesforceMedicalFileUpload(context: Upl
 
 async function publishBusinessExcellenceSalesforceTftUpload(context: UploadPublishContext) {
   const client = getBigQueryClient();
+  await ensureBusinessExcellenceTftEffectiveView(client);
 
   await client.query({
     query: `
@@ -950,7 +954,7 @@ async function publishBusinessExcellenceSalesforceTftUpload(context: UploadPubli
         FALSE,
         CURRENT_TIMESTAMP(),
         CAST(NULL AS STRING)
-      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft\` s
+      FROM \`chiesi-committee.chiesi_committee_stg.vw_business_excellence_salesforce_tft_effective\` s
       LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` dm
         ON dm.module_code = @moduleCode
       WHERE s.upload_id = @uploadId
@@ -1114,6 +1118,21 @@ async function publishBusinessExcellenceStandardDaysUpload(context: UploadPublis
   });
 
   await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
+async function publishBusinessExcellenceRecompraLexicompUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT COUNT(1) AS total
+      FROM \`chiesi-committee.performance.recompra_lexicomp\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId: context.uploadId },
+  });
 
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
@@ -1883,6 +1902,9 @@ export async function publishUploadToMart(uploadId: string) {
   }
   if (context.moduleCode === 'business_excellence_standard_days') {
     return publishBusinessExcellenceStandardDaysUpload(context);
+  }
+  if (context.moduleCode === 'business_excellence_recompra_lexicomp') {
+    return publishBusinessExcellenceRecompraLexicompUpload(context);
   }
   if (context.moduleCode === 'human_resources_turnover') {
     return publishHumanResourcesTurnoverUpload(context);

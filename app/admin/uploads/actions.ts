@@ -8,7 +8,7 @@ import { createInterface } from 'readline';
 import ExcelJS from 'exceljs';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
-import { inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
+import { detectExcelHeaderRow, inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
 import { normalizeUpload } from '@/lib/uploads/normalize-upload';
 import { publishUploadToMart } from '@/lib/uploads/publish-upload';
 
@@ -125,6 +125,14 @@ function normalizeWorkbookSheetName(value: string) {
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '');
+}
+
+const LEXICOMP_MODULE_CODE = 'business_excellence_recompra_lexicomp';
+const LEXICOMP_REQUIRED_HEADERS = ['DISTRIBUIDOR', 'ANO', 'MES', 'Piezas Vendidas'];
+const LEXICOMP_DETAIL_SHEET = 'DETALLE DESPLAZAMIENTO';
+
+function findLexicompDetailSheet(sheetNames: string[]) {
+    return sheetNames.find((sheetName) => sheetName.trim().toUpperCase() === LEXICOMP_DETAIL_SHEET) ?? null;
 }
 
 function resolveOpexRequiredSheets(sheetNames: string[]) {
@@ -348,7 +356,33 @@ function hasHeaderContaining(rows: ParsedUploadRow[], tokens: string[]) {
 
 function asNumber(value: unknown) {
     if (value == null || value === '') return null;
-    const normalized = String(value).replace(/\s/g, '').replace(',', '.');
+    const compact = String(value)
+        .trim()
+        .replace(/\s/g, '')
+        .replace(/[^\d,.\-]/g, '');
+    if (!compact) return null;
+
+    const commaCount = (compact.match(/,/g) ?? []).length;
+    const dotCount = (compact.match(/\./g) ?? []).length;
+    const lastComma = compact.lastIndexOf(',');
+    const lastDot = compact.lastIndexOf('.');
+    let normalized = compact;
+
+    if (commaCount > 0 && dotCount > 0) {
+        normalized =
+            lastComma > lastDot
+                ? compact.replace(/\./g, '').replace(/,/g, '.')
+                : compact.replace(/,/g, '');
+    } else if (/^-?\d{1,3}(\.\d{3})+$/.test(compact)) {
+        normalized = compact.replace(/\./g, '');
+    } else if (/^-?\d{1,3}(,\d{3})+$/.test(compact)) {
+        normalized = compact.replace(/,/g, '');
+    } else if (commaCount > 0) {
+        normalized = commaCount === 1 && compact.slice(lastComma + 1).length <= 2
+            ? compact.replace(/,/g, '.')
+            : compact.replace(/,/g, '');
+    }
+
     const numeric = Number(normalized);
     return Number.isFinite(numeric) ? numeric : null;
 }
@@ -655,6 +689,26 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
                 checked: sampleRows.length,
                 message:
                     'Sample check failed for Standard Days: expected periodo and standard_days columns in first rows.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (moduleCode === 'business_excellence_recompra_lexicomp') {
+        const hasYear = hasAnyHeader(sampleRows, ['AÑO', 'ANO', 'AÃ‘O', 'AÃƒâ€˜O', 'Anio', 'Año']);
+        const hasMonth = hasAnyHeader(sampleRows, ['MES', 'Mes']);
+        const hasCliente = hasAnyHeader(sampleRows, ['Cliente', 'CLIENTE']);
+        const hasUnits = sampleRows.some((row) =>
+            asNumber(getRowValue(row.payload, ['Piezas Vendidas', 'Piezas Vendidas ', 'Units', 'Unidades'])) != null,
+        );
+
+        if (!hasYear || !hasMonth || !hasCliente || !hasUnits) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Recompra Lexicomp: expected AÑO, MES, Cliente and numeric Piezas Vendidas columns in first rows.',
             };
         }
 
@@ -1373,8 +1427,6 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
             matchedSheet = true;
             let headers: string[] = [];
             const sampleRows: ParsedUploadRow[] = [];
-            let relativeSheetRowNumber = 0;
-
             for await (const rowOrRows of worksheetReader as AsyncIterable<ExcelJS.Row | ExcelJS.Row[]>) {
                 const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
 
@@ -1382,8 +1434,8 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
                     const hasAnyCellValue = row.actualCellCount > 0;
                     if (!hasAnyCellValue) continue;
 
-                    relativeSheetRowNumber += 1;
-                    const rowNumber = relativeSheetRowNumber;
+                    const rowNumber = Number.isFinite(row.number) && row.number > 0 ? row.number : 0;
+                    if (rowNumber <= 0) continue;
                     if (rowNumber < headerRow) continue;
 
                     if (rowNumber === headerRow) {
@@ -1847,6 +1899,34 @@ function parseGcsPath(storagePath: string) {
     return { bucketName, objectPath };
 }
 
+async function resolveEffectiveHeaderRow(context: UploadProcessContext) {
+    if (context.moduleCode !== LEXICOMP_MODULE_CODE || context.selectedSheetName.toUpperCase() === 'CSV') {
+        return context.selectedHeaderRow;
+    }
+
+    const storageClient = getStorageClient();
+    const { bucketName, objectPath } = parseGcsPath(context.storagePath);
+    const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
+    const detectedHeaderRow = detectExcelHeaderRow(fileBuffer, {
+        sheetName: context.selectedSheetName,
+        requiredHeaders: LEXICOMP_REQUIRED_HEADERS,
+    });
+
+    return detectedHeaderRow ?? context.selectedHeaderRow;
+}
+
+async function resolveEffectiveSheetName(context: UploadProcessContext) {
+    if (context.moduleCode !== LEXICOMP_MODULE_CODE || context.selectedSheetName.toUpperCase() === 'CSV') {
+        return context.selectedSheetName;
+    }
+
+    const storageClient = getStorageClient();
+    const { bucketName, objectPath } = parseGcsPath(context.storagePath);
+    const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
+    const sheetNames = inspectExcelWorkbook(fileBuffer);
+    return findLexicompDetailSheet(sheetNames) ?? context.selectedSheetName;
+}
+
 export async function createUploadRecord(formData: FormData) {
   const file = formData.get('file');
   const moduleCode = String(formData.get('moduleCode') ?? '');
@@ -2091,6 +2171,15 @@ export async function inspectUploadWorkbook(formData: FormData) {
 
   let suggestedSheetName = sheetNames[0] ?? '';
   let suggestedHeaderRow = moduleCode === 'human_resources_open_vacancy' ? 2 : 1;
+  if (moduleCode === LEXICOMP_MODULE_CODE) {
+    const detailSheetName = findLexicompDetailSheet(sheetNames);
+    suggestedSheetName = detailSheetName ?? suggestedSheetName;
+    suggestedHeaderRow =
+      detectExcelHeaderRow(fileBuffer, {
+        sheetName: suggestedSheetName,
+        requiredHeaders: LEXICOMP_REQUIRED_HEADERS,
+      }) ?? 3;
+  }
 
   if (moduleCode) {
     try {
@@ -2120,6 +2209,14 @@ export async function inspectUploadWorkbook(formData: FormData) {
           Number.isFinite(lastHeaderRow) && lastHeaderRow > 0
             ? Math.trunc(lastHeaderRow)
             : suggestedHeaderRow;
+
+        if (moduleCode === LEXICOMP_MODULE_CODE) {
+          suggestedHeaderRow =
+            detectExcelHeaderRow(fileBuffer, {
+              sheetName: suggestedSheetName,
+              requiredHeaders: LEXICOMP_REQUIRED_HEADERS,
+            }) ?? suggestedHeaderRow;
+        }
       }
     } catch (error) {
       console.warn('[inspectUploadWorkbook] unable to fetch latest sheet/header defaults', {
@@ -2198,6 +2295,11 @@ export async function processUpload(uploadId: string) {
 
         await setUploadStatus(uploadId, 'loading_raw');
         await clearUploadRawRows(uploadId);
+        const effectiveSheetName = await resolveEffectiveSheetName(context);
+        const effectiveHeaderRow = await resolveEffectiveHeaderRow({
+            ...context,
+            selectedSheetName: effectiveSheetName,
+        });
 
         let tempFile: {
             gcsUri: string;
@@ -2218,7 +2320,7 @@ export async function processUpload(uploadId: string) {
                 moduleCode,
                 storagePath: context.storagePath,
                 sheetNames: [antSheetName, budgetSheetName, currentSheetName],
-                headerRow: context.selectedHeaderRow,
+                headerRow: effectiveHeaderRow,
                 validateSamples: false,
             });
             sampleRowsChecked = Math.min(tempFile.rowCount, 30);
@@ -2238,24 +2340,26 @@ export async function processUpload(uploadId: string) {
                 moduleCode,
                 storagePath: context.storagePath,
                 sheetNames: requiredSheets.map((requiredSheet) => sheetLookup.get(requiredSheet)!),
-                headerRow: context.selectedHeaderRow,
+                headerRow: effectiveHeaderRow,
             });
             sampleRowsChecked = tempFile.sampleRowsChecked;
         } else {
-            tempFile = isXlsxPath(context.storagePath)
+            const shouldValidateSamples = moduleCode !== LEXICOMP_MODULE_CODE;
+            tempFile = isXlsxPath(context.storagePath) && moduleCode !== LEXICOMP_MODULE_CODE
                 ? await writeStreamingXlsxRawRowsNdjsonToGcsFromGcs({
                     uploadId,
                     moduleCode,
                     storagePath: context.storagePath,
-                    sheetName: context.selectedSheetName,
-                    headerRow: context.selectedHeaderRow,
+                    sheetName: effectiveSheetName,
+                    headerRow: effectiveHeaderRow,
                 })
                 : await writeExcelRawRowsNdjsonToGcsFromGcs({
                     uploadId,
                     moduleCode,
                     storagePath: context.storagePath,
-                    sheetNames: [context.selectedSheetName],
-                    headerRow: context.selectedHeaderRow,
+                    sheetNames: [effectiveSheetName],
+                    headerRow: effectiveHeaderRow,
+                    validateSamples: shouldValidateSamples,
                 });
             sampleRowsChecked = tempFile.sampleRowsChecked;
         }

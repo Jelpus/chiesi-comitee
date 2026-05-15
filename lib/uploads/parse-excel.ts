@@ -194,6 +194,51 @@ function getTargetSheetName(workbook: XLSX.WorkBook, preferredSheetName?: string
   return firstSheetName;
 }
 
+function normalizeHeaderCandidate(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+export function detectExcelHeaderRow(
+  buffer: Buffer,
+  options: {
+    sheetName?: string | null;
+    requiredHeaders: string[];
+    maxRowsToScan?: number;
+  },
+) {
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const targetSheetName = getTargetSheetName(workbook, options.sheetName);
+  const sheet = workbook.Sheets[targetSheetName];
+  if (!sheet?.['!ref']) return null;
+
+  const requiredHeaders = options.requiredHeaders.map(normalizeHeaderCandidate).filter(Boolean);
+  if (requiredHeaders.length === 0) return null;
+
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+  const maxRowsToScan = Math.max(1, options.maxRowsToScan ?? 25);
+  const lastRowToScan = Math.min(range.e.r, range.s.r + maxRowsToScan - 1);
+
+  for (let rowIndex = range.s.r; rowIndex <= lastRowToScan; rowIndex += 1) {
+    const normalizedCells = new Set<string>();
+    for (let colIndex = range.s.c; colIndex <= range.e.c; colIndex += 1) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+      const normalizedValue = normalizeHeaderCandidate(getCellRawValue(sheet[address]));
+      if (normalizedValue) normalizedCells.add(normalizedValue);
+    }
+    const hasRequiredHeaders = requiredHeaders.every((header) => normalizedCells.has(header));
+    if (hasRequiredHeaders) {
+      return rowIndex + 1;
+    }
+  }
+
+  return null;
+}
+
 export function inspectExcelWorkbook(buffer: Buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   return workbook.SheetNames;

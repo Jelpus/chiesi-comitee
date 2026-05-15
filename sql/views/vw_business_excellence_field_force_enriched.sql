@@ -171,13 +171,8 @@ tft AS (
     CAST(NULL AS FLOAT64) AS target_visits,
     CAST(NULL AS STRING) AS interaction_id,
     CAST(NULL AS BOOL) AS is_sent,
-    CASE
-      WHEN LOWER(TRIM(COALESCE(s.absence_type, ''))) LIKE '%hora%'
-        OR LOWER(TRIM(COALESCE(s.absence_name, ''))) LIKE '%hora%'
-        THEN COALESCE(SAFE_CAST(s.days_value AS FLOAT64), 0) / 8.0
-      ELSE COALESCE(SAFE_CAST(s.days_value AS FLOAT64), 0)
-    END AS tft_days_equivalent
-  FROM `chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft` s
+    COALESCE(SAFE_CAST(s.days_value AS FLOAT64), 0) AS tft_days_equivalent
+  FROM `chiesi-committee.chiesi_committee_stg.vw_business_excellence_salesforce_tft_effective` s
   JOIN `chiesi-committee.chiesi_committee_raw.uploads` u
     ON u.upload_id = s.upload_id
   LEFT JOIN `chiesi-committee.chiesi_committee_admin.reporting_versions` rv

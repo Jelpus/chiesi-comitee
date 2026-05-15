@@ -183,13 +183,8 @@ ausencias_base AS (
     lt.reporting_version_id,
     UPPER(COALESCE(NULLIF(TRIM(t.territory_normalized), ''), REGEXP_REPLACE(TRIM(COALESCE(t.territorio, '')), r'[^a-zA-Z0-9]+', ''))) AS territory_normalized,
     t.period_month AS event_month,
-    CASE
-      WHEN LOWER(TRIM(COALESCE(t.absence_type, ''))) LIKE '%hora%'
-        OR LOWER(TRIM(COALESCE(t.absence_name, ''))) LIKE '%hora%'
-        THEN COALESCE(SAFE_CAST(t.days_value AS FLOAT64), 0.0) / 8.0
-      ELSE COALESCE(SAFE_CAST(t.days_value AS FLOAT64), 0.0)
-    END AS dias_fuera_equivalentes
-  FROM `chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft` t
+    COALESCE(SAFE_CAST(t.days_value AS FLOAT64), 0.0) AS dias_fuera_equivalentes
+  FROM `chiesi-committee.chiesi_committee_stg.vw_business_excellence_salesforce_tft_effective` t
   JOIN latest_tft_upload lt
     ON lt.upload_id = t.upload_id
   WHERE t.period_month IS NOT NULL

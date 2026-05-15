@@ -71,7 +71,7 @@ const FIELD_FORCE_MEDICAL_FILE_TABLE =
 const FIELD_FORCE_INTERACTIONS_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_interactions';
 const FIELD_FORCE_TFT_TABLE =
-  'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_tft';
+  'chiesi-committee.chiesi_committee_stg.vw_business_excellence_salesforce_tft_effective';
 const FIELD_FORCE_STANDARD_DAYS_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days';
 const FIELD_FORCE_SERVING_HCP_MONTH =
@@ -4019,6 +4019,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
         dr.interacciones,
         NULLIF(IF(@coverage = 'adjusted', gd.effective_days, gd.working_days), 0)
       ) AS cpd,
+      COALESCE(gd.effective_days, 0) AS effective_days,
       dr.objetivo
     FROM detail_rows dr
     LEFT JOIN group_days gd ON gd.label = dr.label
@@ -4206,6 +4207,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
     label: String(row.label ?? 'N/A'),
     clients: Number(row.clients ?? 0),
     interacciones: Number(row.interacciones ?? 0),
+    effectiveDays: Number(row.effective_days ?? 0),
     visitCoveragePct: row.visit_coverage == null ? null : Number(row.visit_coverage) * 100,
     inFrequencyRatePct: row.in_frequency_rate == null ? null : Number(row.in_frequency_rate) * 100,
     cpd: row.cpd == null ? null : Number(row.cpd),

@@ -44,6 +44,7 @@ USING (
   SELECT 'business_excellence_salesforce_tft', 'Business Excellence - Efectividad Fuerza de Ventas - TFT', 'business_excellence', 180 UNION ALL
   SELECT 'business_excellence_salesforce_interacciones', 'Business Excellence - Efectividad Fuerza de Ventas - Interacciones', 'business_excellence', 190 UNION ALL
   SELECT 'business_excellence_standard_days', 'Business Excellence - Standard Days', 'business_excellence', 195 UNION ALL
+  SELECT 'business_excellence_recompra_lexicomp', 'Business Excellence - Recompra Lexicomp', 'business_excellence', 200 UNION ALL
   SELECT 'human_resources_turnover', 'Human Resources - Turnover', 'human_resources', 210 UNION ALL
   SELECT 'human_resources_training', 'Human Resources - Training', 'human_resources', 220 UNION ALL
   SELECT 'human_resources_open_vacancy', 'Human Resources - Open Vacancy', 'human_resources', 230 UNION ALL
