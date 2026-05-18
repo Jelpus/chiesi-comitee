@@ -8,6 +8,8 @@ import {
   getCommercialOperationsDsoOverview,
   getCommercialOperationsDsoTrend,
   getCommercialOperationsGovernmentContractProgressRows,
+  getCommercialOperationsOtifRows,
+  getCommercialOperationsSanctionRows,
   getCommercialOperationsStocksRows,
 } from '@/lib/data/commercial-operations';
 import { getAdminTargets } from '@/lib/data/targets';
@@ -1841,12 +1843,14 @@ export async function CommercialOperationsView({
   const sourceAsOfMonth = sources.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
   const publishedCount = sources.filter((row) => row.status === 'published').length;
 
-  const [dsoOverviewRows, targetRows, stockRows, governmentContractRows, deliveryOrderRows] = await Promise.all([
+  const [dsoOverviewRows, targetRows, stockRows, governmentContractRows, deliveryOrderRows, otifRows, sanctionRows] = await Promise.all([
     getCommercialOperationsDsoOverview(selectedReportingVersionId || undefined),
     getAdminTargets('commercial_operations', selectedReportingVersionId || undefined, selectedPeriodMonth || undefined),
     getCommercialOperationsStocksRows(selectedReportingVersionId || undefined),
     getCommercialOperationsGovernmentContractProgressRows(selectedReportingVersionId || undefined),
     getCommercialOperationsDeliveryOrderRows(selectedReportingVersionId || undefined),
+    getCommercialOperationsOtifRows(selectedReportingVersionId || undefined),
+    getCommercialOperationsSanctionRows(selectedReportingVersionId || undefined),
   ]);
   const stockTargets = getCommercialOperationsStockTargets(targetRows);
   const deliveryTargets = getCommercialOperationsDeliveryTargets(targetRows);
@@ -1949,6 +1953,8 @@ export async function CommercialOperationsView({
               stockRows={stockRows}
               governmentContractRows={governmentContractRows}
               deliveryOrderRows={deliveryOrderRows}
+              otifRows={otifRows}
+              sanctionRows={sanctionRows}
               stockTargets={stockTargets}
               deliveryTargets={deliveryTargets}
               contractsSourceAsOfMonth={

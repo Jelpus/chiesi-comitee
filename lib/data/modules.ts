@@ -124,6 +124,7 @@ export const defaultModules: Array<{
     displayOrder: 340,
   },
   { moduleCode: 'commercial_operations_stocks', moduleName: 'Commercial Operations - Stocks', areaCode: 'commercial_operations', displayOrder: 350 },
+  { moduleCode: 'commercial_operations_incidencias', moduleName: 'Commercial Operations - Incidencias', areaCode: 'commercial_operations', displayOrder: 355 },
   { moduleCode: 'commercial_operations_sanctions', moduleName: 'Commercial Operations - Sanctions', areaCode: 'commercial_operations', displayOrder: 360 },
   { moduleCode: 'opex_by_cc', moduleName: 'OPEX by CC', areaCode: 'opex', displayOrder: 410 },
 ];

@@ -129,6 +129,67 @@ export type CommercialOperationsDeliveryOrderRow = {
   isMthPy: boolean;
 };
 
+export type CommercialOperationsOtifRow = {
+  reportingVersionId: string;
+  reportPeriodMonth: string | null;
+  sourceAsOfMonth: string | null;
+  latestPeriodMonth: string | null;
+  periodMonth: string;
+  orden: string | null;
+  referenciaCliente: string | null;
+  solicitante: string | null;
+  customerDescription: string | null;
+  shipToCity: string | null;
+  region: string | null;
+  canal: string | null;
+  channelGroup: string;
+  status: string | null;
+  falseOtifReason: string | null;
+  observacion: string | null;
+  returnedPieces: number | null;
+  onTimeDelivery: boolean | null;
+  deliveredPieces: number | null;
+  otif: boolean;
+  isYtd: boolean;
+  isMth: boolean;
+};
+
+export type CommercialOperationsSanctionRow = {
+  reportingVersionId: string;
+  reportPeriodMonth: string | null;
+  sourceAsOfMonth: string | null;
+  latestPeriodMonth: string | null;
+  periodMonth: string;
+  provisionYear: number | null;
+  estimatedMonthRaw: string | null;
+  sanctionDate: string | null;
+  orderNumber: string | null;
+  documentNumber: string | null;
+  contractNumber: string | null;
+  clientInstitution: string | null;
+  businessUnit: string | null;
+  sanctionResponsible: string | null;
+  channelRaw: string | null;
+  channelGroup: string;
+  sourceProductRaw: string | null;
+  sku: string | null;
+  canonicalProductName: string | null;
+  marketGroup: string | null;
+  brandName: string | null;
+  productBusinessUnitName: string | null;
+  sanctionType: string | null;
+  sanctionReason: string | null;
+  sanctionStatus: string | null;
+  sanctionAmount: number | null;
+  invoicedAmount: number | null;
+  daysCount: number | null;
+  observations: string | null;
+  isYtd: boolean;
+  isMth: boolean;
+  isYtdPy: boolean;
+  isMthPy: boolean;
+};
+
 const SOURCE_MODULES: Array<{ moduleCode: string; moduleLabel: string }> = [
   { moduleCode: 'commercial_operations_dso', moduleLabel: 'DSO' },
   { moduleCode: 'commercial_operations_government_orders', moduleLabel: 'Pedidos Gobierno' },
@@ -138,6 +199,7 @@ const SOURCE_MODULES: Array<{ moduleCode: string; moduleLabel: string }> = [
     moduleLabel: 'Avances de contrato Gobierno',
   },
   { moduleCode: 'commercial_operations_stocks', moduleLabel: 'Stocks' },
+  { moduleCode: 'commercial_operations_incidencias', moduleLabel: 'OTIF' },
   { moduleCode: 'commercial_operations_sanctions', moduleLabel: 'Sansiones' },
 ];
 
@@ -147,6 +209,8 @@ const GOVERNMENT_CONTRACT_PROGRESS_ENRICHED_VIEW =
   'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_government_contract_progress_enriched';
 const DELIVERY_ORDERS_ENRICHED_VIEW =
   'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_delivery_orders_enriched';
+const OTIF_ENRICHED_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_otif_enriched';
+const SANCTIONS_ENRICHED_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_sanctions_enriched';
 
 export async function getCommercialOperationsAuditSources(
   reportingVersionId?: string,
@@ -660,6 +724,172 @@ export async function getCommercialOperationsDeliveryOrderRows(
     isYtd: Boolean(row.is_ytd),
     isYtdPy: Boolean(row.is_ytd_py),
     isMth: Boolean(row.is_mth),
+    isMthPy: Boolean(row.is_mth_py),
+  }));
+}
+
+export async function getCommercialOperationsOtifRows(
+  reportingVersionId?: string,
+): Promise<CommercialOperationsOtifRow[]> {
+  const client = getBigQueryClient();
+  let rows;
+  try {
+    [rows] = await client.query({
+      query: `
+        SELECT
+          reporting_version_id,
+          CAST(report_period_month AS STRING) AS report_period_month,
+          CAST(source_as_of_month AS STRING) AS source_as_of_month,
+          CAST(latest_period_month AS STRING) AS latest_period_month,
+          CAST(period_month AS STRING) AS period_month,
+          orden,
+          referencia_cliente,
+          solicitante,
+          customer_description,
+          ship_to_city,
+          region,
+          canal,
+          COALESCE(NULLIF(channel_group, ''), 'Other') AS channel_group,
+          status,
+          false_otif_reason,
+          observacion,
+          CAST(returned_pieces AS FLOAT64) AS returned_pieces,
+          on_time_delivery,
+          CAST(delivered_pieces AS FLOAT64) AS delivered_pieces,
+          otif,
+          is_ytd,
+          is_mth
+        FROM \`${OTIF_ENRICHED_VIEW}\`
+        WHERE (@reportingVersionId = '' OR reporting_version_id = @reportingVersionId)
+        ORDER BY period_month, orden
+      `,
+      params: {
+        reportingVersionId: reportingVersionId ?? '',
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (message.includes('not found') || message.includes('not found: table')) return [];
+    throw error;
+  }
+
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    reportingVersionId: String(row.reporting_version_id ?? ''),
+    reportPeriodMonth: row.report_period_month == null ? null : String(row.report_period_month),
+    sourceAsOfMonth: row.source_as_of_month == null ? null : String(row.source_as_of_month),
+    latestPeriodMonth: row.latest_period_month == null ? null : String(row.latest_period_month),
+    periodMonth: String(row.period_month ?? ''),
+    orden: row.orden == null ? null : String(row.orden),
+    referenciaCliente: row.referencia_cliente == null ? null : String(row.referencia_cliente),
+    solicitante: row.solicitante == null ? null : String(row.solicitante),
+    customerDescription: row.customer_description == null ? null : String(row.customer_description),
+    shipToCity: row.ship_to_city == null ? null : String(row.ship_to_city),
+    region: row.region == null ? null : String(row.region),
+    canal: row.canal == null ? null : String(row.canal),
+    channelGroup: String(row.channel_group ?? 'Other'),
+    status: row.status == null ? null : String(row.status),
+    falseOtifReason: row.false_otif_reason == null ? null : String(row.false_otif_reason),
+    observacion: row.observacion == null ? null : String(row.observacion),
+    returnedPieces: row.returned_pieces == null ? null : Number(row.returned_pieces),
+    onTimeDelivery: row.on_time_delivery == null ? null : Boolean(row.on_time_delivery),
+    deliveredPieces: row.delivered_pieces == null ? null : Number(row.delivered_pieces),
+    otif: Boolean(row.otif),
+    isYtd: Boolean(row.is_ytd),
+    isMth: Boolean(row.is_mth),
+  }));
+}
+
+export async function getCommercialOperationsSanctionRows(
+  reportingVersionId?: string,
+): Promise<CommercialOperationsSanctionRow[]> {
+  const client = getBigQueryClient();
+  let rows;
+  try {
+    [rows] = await client.query({
+      query: `
+        SELECT
+          reporting_version_id,
+          CAST(report_period_month AS STRING) AS report_period_month,
+          CAST(source_as_of_month AS STRING) AS source_as_of_month,
+          CAST(latest_period_month AS STRING) AS latest_period_month,
+          CAST(period_month AS STRING) AS period_month,
+          provision_year,
+          estimated_month_raw,
+          CAST(sanction_date AS STRING) AS sanction_date,
+          order_number,
+          document_number,
+          contract_number,
+          client_institution,
+          business_unit,
+          sanction_responsible,
+          channel_raw,
+          COALESCE(NULLIF(channel_group, ''), 'Other') AS channel_group,
+          source_product_raw,
+          sku,
+          canonical_product_name,
+          market_group,
+          brand_name,
+          product_business_unit_name,
+          sanction_type,
+          sanction_reason,
+          sanction_status,
+          CAST(sanction_amount AS FLOAT64) AS sanction_amount,
+          CAST(invoiced_amount AS FLOAT64) AS invoiced_amount,
+          CAST(days_count AS FLOAT64) AS days_count,
+          observations,
+          is_ytd,
+          is_mth,
+          is_ytd_py,
+          is_mth_py
+        FROM \`${SANCTIONS_ENRICHED_VIEW}\`
+        WHERE (@reportingVersionId = '' OR reporting_version_id = @reportingVersionId) AND
+        estimated_month_raw IS NOT NULL AND sanction_amount IS NOT NULL AND sanction_amount > 0 AND
+        estimated_month_raw != ''
+        ORDER BY period_month, sanction_amount DESC
+      `,
+      params: {
+        reportingVersionId: reportingVersionId ?? '',
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (message.includes('not found') || message.includes('not found: table')) return [];
+    throw error;
+  }
+
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    reportingVersionId: String(row.reporting_version_id ?? ''),
+    reportPeriodMonth: row.report_period_month == null ? null : String(row.report_period_month),
+    sourceAsOfMonth: row.source_as_of_month == null ? null : String(row.source_as_of_month),
+    latestPeriodMonth: row.latest_period_month == null ? null : String(row.latest_period_month),
+    periodMonth: String(row.period_month ?? ''),
+    provisionYear: row.provision_year == null ? null : Number(row.provision_year),
+    estimatedMonthRaw: row.estimated_month_raw == null ? null : String(row.estimated_month_raw),
+    sanctionDate: row.sanction_date == null ? null : String(row.sanction_date),
+    orderNumber: row.order_number == null ? null : String(row.order_number),
+    documentNumber: row.document_number == null ? null : String(row.document_number),
+    contractNumber: row.contract_number == null ? null : String(row.contract_number),
+    clientInstitution: row.client_institution == null ? null : String(row.client_institution),
+    businessUnit: row.business_unit == null ? null : String(row.business_unit),
+    sanctionResponsible: row.sanction_responsible == null ? null : String(row.sanction_responsible),
+    channelRaw: row.channel_raw == null ? null : String(row.channel_raw),
+    channelGroup: String(row.channel_group ?? 'Other'),
+    sourceProductRaw: row.source_product_raw == null ? null : String(row.source_product_raw),
+    sku: row.sku == null ? null : String(row.sku),
+    canonicalProductName: row.canonical_product_name == null ? null : String(row.canonical_product_name),
+    marketGroup: row.market_group == null ? null : String(row.market_group),
+    brandName: row.brand_name == null ? null : String(row.brand_name),
+    productBusinessUnitName: row.product_business_unit_name == null ? null : String(row.product_business_unit_name),
+    sanctionType: row.sanction_type == null ? null : String(row.sanction_type),
+    sanctionReason: row.sanction_reason == null ? null : String(row.sanction_reason),
+    sanctionStatus: row.sanction_status == null ? null : String(row.sanction_status),
+    sanctionAmount: row.sanction_amount == null ? null : Number(row.sanction_amount),
+    invoicedAmount: row.invoiced_amount == null ? null : Number(row.invoiced_amount),
+    daysCount: row.days_count == null ? null : Number(row.days_count),
+    observations: row.observations == null ? null : String(row.observations),
+    isYtd: Boolean(row.is_ytd),
+    isMth: Boolean(row.is_mth),
+    isYtdPy: Boolean(row.is_ytd_py),
     isMthPy: Boolean(row.is_mth_py),
   }));
 }

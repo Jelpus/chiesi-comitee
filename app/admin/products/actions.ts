@@ -6,6 +6,7 @@ import {
   testGob360Connection,
   upsertSellOutProductMapping,
   upsertCuotasProductMapping,
+  upsertSanctionsProductMapping,
   upsertGob360ProductMapping,
   reorderProductMetadata,
   upsertPmmProductMapping,
@@ -179,6 +180,31 @@ export async function saveCuotasProductMapping(formData: FormData) {
   revalidatePath('/admin/products');
   revalidatePath('/admin/uploads');
   revalidatePath('/admin/uploads/logs');
+
+  return result;
+}
+
+export async function saveSanctionsProductMapping(formData: FormData) {
+  const sourceProductName = String(formData.get('sourceProductName') ?? '');
+  const productId = String(formData.get('productId') ?? '');
+  const marketGroup = String(formData.get('marketGroup') ?? '');
+  const isActive = String(formData.get('isActive') ?? 'true') === 'true';
+  const createdBy = String(formData.get('createdBy') ?? 'system');
+  const updatedBy = String(formData.get('updatedBy') ?? 'system');
+
+  const result = await upsertSanctionsProductMapping({
+    sourceProductName,
+    productId,
+    marketGroup,
+    isActive,
+    createdBy,
+    updatedBy,
+  });
+
+  revalidatePath('/admin/products');
+  revalidatePath('/admin/uploads');
+  revalidatePath('/admin/uploads/logs');
+  revalidatePath('/executive/commercial-operations/dashboard');
 
   return result;
 }

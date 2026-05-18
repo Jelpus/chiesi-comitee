@@ -7,7 +7,9 @@ import {
   createReportingVersion,
   deleteReportingVersion,
   markReportingVersionReady,
+  notifyReportingVersionReadyValidation,
   requestReportingVersionInfo,
+  sendReadyValidationTestEmail,
 } from '@/app/admin/versions/actions';
 import { AdminStatusBadge } from '@/components/ui/admin-status-badge';
 import type { VersionRow } from '@/lib/data/versions/get-versions-page-data';
@@ -37,6 +39,9 @@ function formatCreatedAt(value: string) {
 export function VersionsTable({ rows }: VersionsTableProps) {
   const [isPending, startTransition] = useTransition();
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [readyCandidate, setReadyCandidate] = useState<VersionRow | null>(null);
+  const [readyNotifyStep, setReadyNotifyStep] = useState(false);
+  const [committeeMeetingDate, setCommitteeMeetingDate] = useState('');
   const [periodMonth, setPeriodMonth] = useState('');
   const [versionName, setVersionName] = useState('');
   const [createdBy, setCreatedBy] = useState('admin_panel');
@@ -49,6 +54,68 @@ export function VersionsTable({ rows }: VersionsTableProps) {
     if (b.versionNumber !== a.versionNumber) return b.versionNumber - a.versionNumber;
     return b.createdAt.localeCompare(a.createdAt);
   });
+
+  const closeReadyModal = () => {
+    setReadyCandidate(null);
+    setReadyNotifyStep(false);
+    setCommitteeMeetingDate('');
+  };
+
+  const confirmReady = (notify: boolean) => {
+    if (!readyCandidate) return;
+    const row = readyCandidate;
+    const meetingDate = committeeMeetingDate;
+    if (notify && !meetingDate) {
+      setMessage('Indica la fecha prevista de la proxima reunion de Committee.');
+      return;
+    }
+    setMessage('');
+    closeReadyModal();
+    setBusyKey(row.reportingVersionId);
+    startTransition(async () => {
+      try {
+        if (row.status !== 'ready_to_show') {
+          await markReportingVersionReady({ reportingVersionId: row.reportingVersionId });
+        }
+        if (notify) {
+          const result = await notifyReportingVersionReadyValidation({
+            reportingVersionId: row.reportingVersionId,
+            periodMonth: row.periodMonth,
+            committeeMeetingDate: meetingDate,
+          });
+          setMessage(`Version ${row.versionName} marked ready to show. Validation emails sent to ${result.sent} owner(s).`);
+        } else {
+          setMessage(`Version ${row.versionName} marked ready to show.`);
+        }
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'Failed to update version status.');
+      } finally {
+        setBusyKey(null);
+      }
+    });
+  };
+
+  const sendReadyTest = () => {
+    if (!readyCandidate || !committeeMeetingDate) return;
+    const row = readyCandidate;
+    const meetingDate = committeeMeetingDate;
+    setMessage('');
+    setBusyKey(`${row.reportingVersionId}:test`);
+    startTransition(async () => {
+      try {
+        await sendReadyValidationTestEmail({
+          reportingVersionId: row.reportingVersionId,
+          periodMonth: row.periodMonth,
+          committeeMeetingDate: meetingDate,
+        });
+        setMessage('Test email sent to guillermo@jelpus.com.');
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'Failed to send test email.');
+      } finally {
+        setBusyKey(null);
+      }
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -189,24 +256,13 @@ export function VersionsTable({ rows }: VersionsTableProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          disabled={rowBusy || !isDraft}
+                          disabled={rowBusy || (!isDraft && !isReady)}
                           className="rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-emerald-700 transition hover:border-emerald-400 disabled:opacity-50"
                           onClick={() => {
-                            if (!isDraft) return;
-                            const confirmed = window.confirm(`Mark ${row.versionName} as ready to show in Executive?`);
-                            if (!confirmed) return;
-                            setMessage('');
-                            setBusyKey(row.reportingVersionId);
-                            startTransition(async () => {
-                              try {
-                                await markReportingVersionReady({ reportingVersionId: row.reportingVersionId });
-                                setMessage(`Version ${row.versionName} marked ready to show.`);
-                              } catch (error) {
-                                setMessage(error instanceof Error ? error.message : 'Failed to update version status.');
-                              } finally {
-                                setBusyKey(null);
-                              }
-                            });
+                            if (!isDraft && !isReady) return;
+                            setReadyCandidate(row);
+                            setReadyNotifyStep(false);
+                            setCommitteeMeetingDate('');
                           }}
                         >
                           {rowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Ready'}
@@ -297,6 +353,96 @@ export function VersionsTable({ rows }: VersionsTableProps) {
           </table>
         </div>
       </div>
+
+      {readyCandidate ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4">
+          <div className="w-full max-w-[520px] rounded-[22px] border border-slate-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+              {readyNotifyStep ? 'Ready + validacion' : 'Confirm Ready'}
+            </p>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
+              {readyNotifyStep
+                ? 'Cuando esta prevista la proxima reunion de Committee?'
+                : readyCandidate.status === 'ready_to_show'
+                  ? 'Esta version ya esta Ready. Deseas notificar a los responsables?'
+                  : 'Estas seguro que deseas pasar a Ready esta version?'}
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {readyNotifyStep
+                ? 'Usaremos esta fecha en el correo para pedir validacion de la informacion procesada.'
+                : `${readyCandidate.versionName} quedara disponible como ready_to_show para Executive.`}
+            </p>
+            {readyNotifyStep ? (
+              <div className="mt-5">
+                <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  Fecha de reunion
+                </label>
+                <input
+                  type="date"
+                  value={committeeMeetingDate}
+                  onChange={(event) => setCommitteeMeetingDate(event.target.value)}
+                  className="mt-2 w-full rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950"
+                />
+              </div>
+            ) : null}
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (readyNotifyStep) {
+                    setReadyNotifyStep(false);
+                    return;
+                  }
+                  closeReadyModal();
+                }}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {readyNotifyStep ? 'Volver' : 'Cancelar'}
+              </button>
+              {!readyNotifyStep ? (
+                <>
+                  {readyCandidate.status !== 'ready_to_show' ? (
+                    <button
+                      type="button"
+                      onClick={() => confirmReady(false)}
+                      className="rounded-full border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:border-emerald-400"
+                    >
+                      Confirmar
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setReadyNotifyStep(true)}
+                    className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                  >
+                    Confirmar y Notificar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={!committeeMeetingDate || (isPending && busyKey === `${readyCandidate.reportingVersionId}:test`)}
+                    onClick={sendReadyTest}
+                    className="inline-flex items-center gap-2 rounded-full border border-blue-300 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:border-blue-400 disabled:opacity-50"
+                  >
+                    {isPending && busyKey === `${readyCandidate.reportingVersionId}:test` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    Enviar prueba
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!committeeMeetingDate}
+                    onClick={() => confirmReady(true)}
+                    className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    Continuar y Enviar
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

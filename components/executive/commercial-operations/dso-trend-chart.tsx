@@ -21,7 +21,7 @@ type DsoTrendPoint = {
 type DsoTrendChartProps = {
   rows: DsoTrendPoint[];
   metricLabel?: string;
-  valueFormat?: 'decimal' | 'quantity';
+  valueFormat?: 'decimal' | 'quantity' | 'currencyCompact';
 };
 
 function formatMonthShort(value: string) {
@@ -41,8 +41,23 @@ function formatWholeNumber(value: number | null | undefined) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 }
 
+function formatCompactCurrency(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+    style: 'currency',
+    currency: 'USD',
+  }).format(value);
+}
+
 export function DsoTrendChart({ rows, metricLabel = 'DSO', valueFormat = 'decimal' }: DsoTrendChartProps) {
-  const formatPrimaryValue = valueFormat === 'quantity' ? formatWholeNumber : formatNumber;
+  const formatPrimaryValue =
+    valueFormat === 'currencyCompact'
+      ? formatCompactCurrency
+      : valueFormat === 'quantity'
+        ? formatWholeNumber
+        : formatNumber;
 
   if (rows.length === 0) {
     return (
@@ -53,9 +68,9 @@ export function DsoTrendChart({ rows, metricLabel = 'DSO', valueFormat = 'decima
   }
 
   return (
-    <div className="h-[320px] w-full rounded-[16px] border border-slate-200 bg-white p-3">
+    <div className="h-[320px] w-full min-w-0 rounded-[16px] border border-slate-200 bg-white p-3">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={rows}>
+        <LineChart data={rows} margin={{ top: 12, right: valueFormat === 'currencyCompact' ? 8 : 12, bottom: 12, left: 6 }}>
           <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" />
           <XAxis
             dataKey="periodMonth"
@@ -71,7 +86,7 @@ export function DsoTrendChart({ rows, metricLabel = 'DSO', valueFormat = 'decima
             fontSize={11}
             tickLine={false}
             axisLine={false}
-            width={48}
+            width={valueFormat === 'currencyCompact' ? 88 : 48}
             tickFormatter={(value) => (typeof value === 'number' ? formatPrimaryValue(value) : String(value))}
           />
           <YAxis

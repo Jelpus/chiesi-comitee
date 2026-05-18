@@ -182,6 +182,16 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
     { label: 'Clasificacion', columns: ['Tipo Negocio', 'Mercado', 'Cliente'] },
     { label: 'Valores mensuales', columns: ['January 2026', 'February 2026', '...'] },
   ],
+  commercial_operations_incidencias: [
+    { label: 'Periodo y orden', columns: ['Mes', 'Order date', 'Orden', 'Referencia cliente'] },
+    { label: 'Cliente y canal', columns: ['Solicitante', 'Goods consignee', 'ShipTo City', 'Region', 'Canal'] },
+    { label: 'OTIF', columns: ['OTIF', 'TIPO', 'OBSERVACION', 'NO. PIEZAS ENTREGADAS'] },
+  ],
+  commercial_operations_sanctions: [
+    { label: 'Periodo', columns: ['AÑO', 'MES DE PROVISION'] },
+    { label: 'Responsable y cliente', columns: ['RESPONSABLE DE SANCION', 'GRUPO CLIENTE'] },
+    { label: 'Producto y sancion', columns: ['MEDICAMENTO', 'SANCION ESTIMADA', 'MOTIVO DE SANCION'] },
+  ],
   stocks: [
     { label: 'Producto', columns: ['Producto', 'MEDICAMENTO'] },
     { label: 'Clasificacion', columns: ['Tipo Negocio', 'Mercado', 'Cliente'] },

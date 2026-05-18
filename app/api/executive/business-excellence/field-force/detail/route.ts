@@ -29,6 +29,13 @@ function parseAccountTypes(searchParams: URLSearchParams) {
     .filter(Boolean);
 }
 
+function parseChannels(searchParams: URLSearchParams) {
+  return [...searchParams.getAll('channels'), ...searchParams.getAll('channel')]
+    .flatMap((value) => value.split('|'))
+    .map((value) => value.trim())
+    .filter((value) => value && value.toLowerCase() !== 'all');
+}
+
 async function hasExecutiveAccess(request: Request) {
   const cookieStore = await cookies();
   const hasCookie = await verifyExecutiveAccessCookieValue(cookieStore.get(EXECUTIVE_COOKIE)?.value);
@@ -65,7 +72,7 @@ export async function GET(request: Request) {
       bu: normalizeBu(searchParams.get('bu')),
       detailMode: normalizeDetailMode(searchParams.get('detailMode')),
       potential: searchParams.get('potential') || 'all',
-      channel: searchParams.get('channel') || 'all',
+      channels: parseChannels(searchParams),
       accountTypes: parseAccountTypes(searchParams),
     });
 

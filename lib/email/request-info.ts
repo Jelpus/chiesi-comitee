@@ -37,9 +37,16 @@ export type RequestInfoSummaryEmailInput = {
   formSentCount?: number;
 };
 
+export type ReadyValidationRecipient = {
+  ownerName: string;
+  emailOwner: string;
+};
+
 const ALWAYS_CC = 'j.arevalo@chiesi.com';
 const SUMMARY_TO = 'j.arevalo@chiesi.com';
 const SUMMARY_CC = 'guillermo@jelpus.com';
+const POWER_BI_VALIDATION_URL =
+  'https://app.powerbi.com/reportEmbed?reportId=6fb0a335-e28d-4ce7-b119-99aa067a2912&autoAuth=true&ctid=80d1b489-5ad6-45c2-b757-0ef89ea02c5b';
 
 function escapeHtml(value: string) {
   return value
@@ -121,6 +128,81 @@ export async function sendRequestInfoEmail(input: RequestInfoEmailInput) {
     to: input.recipient.emailOwner,
     cc: [ALWAYS_CC],
     subject: `Solicitud de informacion - ${input.periodLabel}`,
+    html,
+  });
+}
+
+export async function sendReadyValidationEmail(input: {
+  recipient: ReadyValidationRecipient;
+  periodLabel: string;
+  committeeMeetingDate: string;
+}) {
+  const ownerName = input.recipient.ownerName || 'Equipo';
+  const html = `
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Validación de información para Committee</title>
+      </head>
+      <body style="margin:0;background:#f6f8fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f8fb;padding:28px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:720px;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden;">
+                <tr>
+                  <td style="background:#0f172a;color:#ffffff;padding:24px 28px;">
+                    <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#cbd5e1;">Chiesi Operational Committee</p>
+                    <h1 style="margin:10px 0 0;font-size:22px;line-height:1.25;">Validación de información procesada</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:28px;">
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Hola ${escapeHtml(ownerName)},</p>
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      Gracias por el apoyo incorporando los archivos clave de preparación para la reunión de Committee.
+                      Ahora es momento de confirmar y validar la información procesada para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
+                    </p>
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      La próxima reunión de Committee está prevista para el <strong>${escapeHtml(input.committeeMeetingDate)}</strong>.
+                    </p>
+                    <p style="margin:0 0 18px;font-size:15px;line-height:1.6;">
+                      Te invitamos a validar la información en el siguiente enlace:
+                    </p>
+                    <p style="margin:0 0 22px;">
+                      <a href="${POWER_BI_VALIDATION_URL}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:999px;padding:12px 18px;font-size:14px;font-weight:700;">
+                        Abrir dashboard de validacion
+                      </a>
+                    </p>
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      Si encuentras alguna desviación en la información, o consideras que algún dato debe ser revalidado, por favor contacta a
+                      <a href="mailto:contacto@jelpus.com" style="color:#0f172a;font-weight:700;text-decoration:underline;">contacto@jelpus.com</a>
+                      indicando el módulo que debe revisarse y explicando el origen de la diferencia. Entre más detalle puedas proporcionar,
+                      más fácil será realizar la corrección de forma oportuna.
+                    </p>
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      Si tienes algún problema para abrir el enlace, o si tu usuario no cuenta con acceso, por favor notifícalo a
+                      <a href="mailto:c.zapata@chiesi.com" style="color:#0f172a;font-weight:700;text-decoration:underline;">c.zapata@chiesi.com</a>.
+                    </p>
+                    <p style="margin:24px 0 0;font-size:15px;line-height:1.6;">
+                      Muchas gracias,<br />
+                      <strong>Chiesi Operational Committee</strong>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  await sendSendGridEmail({
+    to: input.recipient.emailOwner,
+    cc: [ALWAYS_CC],
+    subject: `Validación de información para Committee - ${input.periodLabel}`,
     html,
   });
 }

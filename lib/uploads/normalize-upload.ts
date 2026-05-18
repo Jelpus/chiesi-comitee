@@ -385,6 +385,62 @@ type CommercialOperationsDeliveryOrdersNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type CommercialOperationsIncidenciasNormalizedRow = {
+  rowNumber: number;
+  noValue: string | null;
+  mesRaw: string | null;
+  tipoRaw: string | null;
+  orden: string | null;
+  referenciaCliente: string | null;
+  orderDate: string | null;
+  delivery: string | null;
+  solicitante: string | null;
+  description: string | null;
+  goodsConsignee: string | null;
+  customerDescription: string | null;
+  shipToCity: string | null;
+  region: string | null;
+  facturasNc: string | null;
+  canal: string | null;
+  channelGroup: 'Private' | 'Public' | 'Other';
+  status: string | null;
+  falseOtifReason: string | null;
+  observacion: string | null;
+  returnedPieces: number | null;
+  onTimeDelivery: boolean | null;
+  deliveredPieces: number | null;
+  otif: boolean;
+  periodMonth: string;
+  payload: Record<string, unknown>;
+};
+
+type CommercialOperationsSanctionsNormalizedRow = {
+  rowNumber: number;
+  periodMonth: string;
+  provisionYear: number | null;
+  estimatedMonthRaw: string | null;
+  sanctionDate: string | null;
+  orderNumber: string | null;
+  documentNumber: string | null;
+  contractNumber: string | null;
+  clientInstitution: string | null;
+  businessUnit: string | null;
+  sanctionResponsible: string | null;
+  channelRaw: string | null;
+  channelGroup: 'Private' | 'Public' | 'Other';
+  sourceProductRaw: string | null;
+  sourceProductNormalized: string | null;
+  sku: string | null;
+  sanctionType: string | null;
+  sanctionReason: string | null;
+  sanctionStatus: string | null;
+  sanctionAmount: number | null;
+  invoicedAmount: number | null;
+  daysCount: number | null;
+  observations: string | null;
+  payload: Record<string, unknown>;
+};
+
 type CommercialOperationsGovernmentContractProgressNormalizedRow = {
   rowNumber: number;
   contractKey: string | null;
@@ -1213,6 +1269,31 @@ function parseDateOnlyField(value: unknown): string | null {
       return toDateOnlyString(new Date(Date.UTC(year, month - 1, day)));
     }
   }
+  const parsed = parseDateValueMonthFirst(value);
+  return toDateOnlyString(parsed);
+}
+
+function parseDateOnlyFieldMonthFirst(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return toDateOnlyString(new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate())));
+  }
+  if (typeof value === 'number') {
+    return toDateOnlyString(parseExcelSerialDateValue(value));
+  }
+
+  const raw = String(value).trim();
+  const token = raw.replace(',', ' ').trim().split(/\s+/)[0] ?? '';
+  const match = token.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (match) {
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    const year = parseYearToken(match[3]);
+    if (year != null && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return toDateOnlyString(new Date(Date.UTC(year, month - 1, day)));
+    }
+  }
+
   const parsed = parseDateValueMonthFirst(value);
   return toDateOnlyString(parsed);
 }
@@ -6019,6 +6100,456 @@ async function loadCommercialOperationsDeliveryOrdersStaging(
   );
 }
 
+function parseYesNoBoolean(value: unknown): boolean | null {
+  const raw = asNullableString(value);
+  if (!raw) return null;
+  const normalized = normalizeText(raw);
+  if (['si', 's', 'yes', 'y', 'true', '1', 'ok'].includes(normalized)) return true;
+  if (['no', 'n', 'false', '0'].includes(normalized)) return false;
+  return null;
+}
+
+function normalizeCommercialOperationsChannelGroup(value: string | null): 'Private' | 'Public' | 'Other' {
+  const normalized = normalizeText(value ?? '');
+  if (normalized.includes('privado') || normalized.includes('private')) return 'Private';
+  if (normalized.includes('gobierno') || normalized.includes('government') || normalized.includes('vanguardia') || normalized.includes('public')) return 'Public';
+  return 'Other';
+}
+
+function getOtifPeriodMonth(payload: Record<string, unknown>, index: Map<string, unknown>) {
+  const orderDateValue = payload.column_6 ?? pickValue(index, ['Order date', 'Order Date', 'Fecha de pedido']);
+  const fromOrderDate = parseDateFieldMonthFirstNoTimezone(orderDateValue) ?? parseDateFieldDayFirstNoTimezone(orderDateValue) ?? parseDateField(orderDateValue);
+  if (fromOrderDate) return fromOrderDate;
+  const mesValue = payload.column_2 ?? pickValue(index, ['Mes', 'Month']);
+  return parseDateFieldMonthFirstNoTimezone(mesValue) ?? parseDateFieldDayFirstNoTimezone(mesValue) ?? parseDateField(mesValue);
+}
+
+function normalizeCommercialOperationsIncidencias(rows: RawUploadRow[]) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsIncidenciasNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({ rowNumber: row.row_number, validationStatus: 'skipped', errors: ['Skipped: empty row payload.'] });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+    const periodMonth = getOtifPeriodMonth(payload, index);
+    const orden = asNullableString(payload.column_4) ?? asNullableString(pickValue(index, ['Orden', 'Order']));
+    const otif = parseYesNoBoolean(payload.column_22 ?? pickValue(index, ['OTIF']));
+    const canal = asNullableString(payload.column_15) ?? asNullableString(pickValue(index, ['Canal', 'Channel']));
+    const errors: string[] = [];
+
+    if (!periodMonth) errors.push('Missing or invalid Order date / Mes period.');
+    if (!orden) errors.push('Missing Orden.');
+    if (otif == null) errors.push('Missing or invalid OTIF value.');
+
+    if (errors.length > 0) {
+      validations.push({ rowNumber: row.row_number, validationStatus: 'error', errors });
+      continue;
+    }
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      noValue: asNullableString(payload.column_1) ?? asNullableString(pickValue(index, ['No.', 'No'])),
+      mesRaw: asNullableString(payload.column_2) ?? asNullableString(pickValue(index, ['Mes', 'Month'])),
+      tipoRaw: asNullableString(payload.column_3) ?? asNullableString(pickValue(index, ['Tipo'])),
+      orden,
+      referenciaCliente: asNullableString(payload.column_5) ?? asNullableString(pickValue(index, ['Referencia cliente', 'Referencia Cliente'])),
+      orderDate: parseDateOnlyFieldMonthFirst(payload.column_6 ?? pickValue(index, ['Order date', 'Order Date', 'Fecha de pedido'])),
+      delivery: asNullableString(payload.column_7) ?? asNullableString(pickValue(index, ['Delivery'])),
+      solicitante: asNullableString(payload.column_8) ?? asNullableString(pickValue(index, ['Solicitante'])),
+      description: asNullableString(payload.column_9) ?? asNullableString(pickValue(index, ['Description'])),
+      goodsConsignee: asNullableString(payload.column_10) ?? asNullableString(pickValue(index, ['Goods consignee', 'Goods Consignee'])),
+      customerDescription: asNullableString(payload.column_11) ?? asNullableString(pickValue(index, ['Description'])),
+      shipToCity: asNullableString(payload.column_12) ?? asNullableString(pickValue(index, ['ShipTo City', 'Ship To City'])),
+      region: asNullableString(payload.column_13) ?? asNullableString(pickValue(index, ['Region'])),
+      facturasNc: asNullableString(payload.column_14) ?? asNullableString(pickValue(index, ['FACTURAS Y NC', 'Facturas y NC'])),
+      canal,
+      channelGroup: normalizeCommercialOperationsChannelGroup(canal),
+      status: asNullableString(payload.column_16) ?? asNullableString(pickValue(index, ['status', 'Status'])),
+      falseOtifReason: asNullableString(payload.column_17) ?? asNullableString(pickValue(index, ['TIPO', 'Tipo'])),
+      observacion: asNullableString(payload.column_18) ?? asNullableString(pickValue(index, ['OBSERVACION', 'Observacion'])),
+      returnedPieces: asNullableQuantityNumber(payload.column_19 ?? pickValue(index, ['NO.PZAS DEVUELTAS', 'NO. PZAS DEVUELTAS'])),
+      onTimeDelivery: parseYesNoBoolean(payload.column_20 ?? pickValue(index, ['ENTREGA A TIEMPO'])),
+      deliveredPieces: asNullableQuantityNumber(payload.column_21 ?? pickValue(index, ['NO. PIEZAS ENTREGADAS'])),
+      otif: otif!,
+      periodMonth: periodMonth!,
+      payload,
+    });
+
+    validations.push({ rowNumber: row.row_number, validationStatus: 'valid', errors: [] });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadCommercialOperationsIncidenciasStaging(uploadId: string, rows: CommercialOperationsIncidenciasNormalizedRow[]) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+    CREATE TABLE IF NOT EXISTS ` + '`' + `chiesi-committee.chiesi_committee_stg.stg_commercial_operations_incidencias` + '`' + ` (
+      upload_id STRING, row_number INT64, no_value STRING, mes_raw STRING, tipo_raw STRING,
+      orden STRING, referencia_cliente STRING, order_date DATE, delivery STRING, solicitante STRING,
+      description STRING, goods_consignee STRING, customer_description STRING, ship_to_city STRING,
+      region STRING, facturas_nc STRING, canal STRING, channel_group STRING, status STRING,
+      false_otif_reason STRING, observacion STRING, returned_pieces NUMERIC, on_time_delivery BOOL,
+      delivered_pieces NUMERIC, otif BOOL, period_month DATE, source_payload_json JSON, normalized_at TIMESTAMP
+    )` }));
+
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({
+    query: `DELETE FROM ` + '`' + `chiesi-committee.chiesi_committee_stg.stg_commercial_operations_incidencias` + '`' + ` WHERE upload_id = @uploadId`,
+    params: { uploadId },
+  }));
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO ` + '`' + `chiesi-committee.chiesi_committee_stg.stg_commercial_operations_incidencias` + '`' + `
+    (upload_id, row_number, no_value, mes_raw, tipo_raw, orden, referencia_cliente, order_date,
+      delivery, solicitante, description, goods_consignee, customer_description, ship_to_city,
+      region, facturas_nc, canal, channel_group, status, false_otif_reason, observacion,
+      returned_pieces, on_time_delivery, delivered_pieces, otif, period_month, source_payload_json, normalized_at)
+    SELECT @uploadId, row.row_number, NULLIF(row.no_value, ''), NULLIF(row.mes_raw, ''), NULLIF(row.tipo_raw, ''),
+      NULLIF(row.orden, ''), NULLIF(row.referencia_cliente, ''), IF(row.order_date = '', NULL, DATE(row.order_date)),
+      NULLIF(row.delivery, ''), NULLIF(row.solicitante, ''), NULLIF(row.description, ''), NULLIF(row.goods_consignee, ''),
+      NULLIF(row.customer_description, ''), NULLIF(row.ship_to_city, ''), NULLIF(row.region, ''), NULLIF(row.facturas_nc, ''),
+      NULLIF(row.canal, ''), row.channel_group, NULLIF(row.status, ''), NULLIF(row.false_otif_reason, ''), NULLIF(row.observacion, ''),
+      SAFE_CAST(row.returned_pieces AS NUMERIC), SAFE_CAST(NULLIF(row.on_time_delivery, '') AS BOOL),
+      SAFE_CAST(row.delivered_pieces AS NUMERIC), row.otif, DATE(row.period_month),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'), CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row`;
+
+  const chunks = chunkItemsByApproxBytes(rows, { maxBytesPerChunk: 2_000_000, maxItemsPerChunk: 1500, estimateBytes: (row) => JSON.stringify(row.payload ?? {}).length + 512 });
+
+  await runChunksInParallel(chunks, async (chunk) => {
+    await runQueryWithRetryOnConcurrentUpdate(() => client.query({
+      query,
+      params: {
+        uploadId,
+        rows: chunk.map((row) => ({
+          row_number: row.rowNumber, no_value: row.noValue ?? '', mes_raw: row.mesRaw ?? '', tipo_raw: row.tipoRaw ?? '',
+          orden: row.orden ?? '', referencia_cliente: row.referenciaCliente ?? '', order_date: row.orderDate ?? '',
+          delivery: row.delivery ?? '', solicitante: row.solicitante ?? '', description: row.description ?? '',
+          goods_consignee: row.goodsConsignee ?? '', customer_description: row.customerDescription ?? '', ship_to_city: row.shipToCity ?? '',
+          region: row.region ?? '', facturas_nc: row.facturasNc ?? '', canal: row.canal ?? '', channel_group: row.channelGroup,
+          status: row.status ?? '', false_otif_reason: row.falseOtifReason ?? '', observacion: row.observacion ?? '',
+          returned_pieces: row.returnedPieces == null ? '' : String(row.returnedPieces),
+          on_time_delivery: row.onTimeDelivery == null ? '' : String(row.onTimeDelivery),
+          delivered_pieces: row.deliveredPieces == null ? '' : String(row.deliveredPieces),
+          otif: row.otif, period_month: row.periodMonth, source_payload_json: JSON.stringify(row.payload),
+        })),
+      },
+    }));
+  }, 1);
+}
+
+function getSanctionsPeriodMonth(payload: Record<string, unknown>, index: Map<string, unknown>, asOfMonth: string | null) {
+  const provisionMonthValue = pickValue(index, [
+    'MES DE PROVISION',
+    'MES DE PROVISIÓN',
+    'Mes de Provision',
+    'Mes de Provisión',
+    'Provision Month',
+  ]);
+  const provisionYearValue = pickValue(index, [
+    'AÑO DE PROVISION',
+    'AÑO DE PROVISIÓN',
+    'ANO DE PROVISION',
+    'ANO DE PROVISIÓN',
+    'AÑO',
+    'ANO',
+    'Year',
+  ]);
+  const provisionMonth = parseSanctionsProvisionMonthToken(provisionMonthValue);
+  const provisionYear = parseYearToken(provisionYearValue);
+  if (provisionMonth && provisionYear) return `${provisionYear}-${provisionMonth}-01`;
+
+  const dateValue = pickValue(index, [
+    'Fecha',
+    'Fecha sancion',
+    'Fecha sanción',
+    'Fecha de sancion',
+    'Fecha de sanción',
+    'Fecha documento',
+    'Document date',
+    'Posting date',
+    'Mes',
+    'Month',
+    'Periodo',
+    'Period',
+  ]);
+  return (
+    parseDateFieldMonthFirstNoTimezone(dateValue) ??
+    parseDateFieldDayFirstNoTimezone(dateValue) ??
+    parseDateField(dateValue) ??
+    asOfMonth
+  );
+}
+
+function parseSanctionsProvisionMonthToken(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return parseMonthToken(value);
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const numericPrefix = raw.match(/^(\d{1,2})(?:\s*[.)-]|\s+)/);
+  if (numericPrefix) {
+    const monthNumber = Number(numericPrefix[1]);
+    if (monthNumber >= 1 && monthNumber <= 12) {
+      return String(monthNumber).padStart(2, '0');
+    }
+  }
+
+  const firstMonthText = raw
+    .replace(/^\d{1,2}\s*[.)-]\s*/, '')
+    .split(/[-/]/)[0]
+    .trim();
+  return parseMonthToken(firstMonthText) ?? parseMonthToken(raw);
+}
+
+function isInvalidSanctionsProvisionMonth(value: string | null) {
+  if (!value) return true;
+  const normalized = normalizeText(value);
+  return normalized === 'en revisionp por cita' || normalized === 'en revision por cita';
+}
+
+function normalizeCommercialOperationsSanctions(rows: RawUploadRow[], asOfMonth: string | null) {
+  const validations: RowValidationResult[] = [];
+  const normalizedRows: CommercialOperationsSanctionsNormalizedRow[] = [];
+
+  for (const row of rows) {
+    const payload = toPayloadObject(row.row_payload_json);
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({ rowNumber: row.row_number, validationStatus: 'skipped', errors: ['Skipped: empty row payload.'] });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+    const estimatedMonthRaw = asNullableString(
+      pickValue(index, ['MES DE PROVISION', 'MES DE PROVISIÓN', 'Mes de Provision', 'Mes de Provisión', 'Provision Month']),
+    );
+    const provisionMonth = parseSanctionsProvisionMonthToken(estimatedMonthRaw);
+    const periodMonth = isInvalidSanctionsProvisionMonth(estimatedMonthRaw)
+      ? null
+      : getSanctionsPeriodMonth(payload, index, asOfMonth);
+    const provisionYear = parseYearToken(
+      pickValue(index, ['AÑO DE PROVISION', 'AÑO DE PROVISIÓN', 'ANO DE PROVISION', 'ANO DE PROVISIÓN', 'AÑO', 'ANO', 'Year']),
+    );
+    const sanctionDate = parseDateOnlyFieldMonthFirst(
+      pickValue(index, ['Fecha', 'Fecha sancion', 'Fecha sanción', 'Fecha de sancion', 'Fecha de sanción', 'Fecha documento', 'Document date', 'Posting date']),
+    );
+    const orderNumber = asNullableString(pickValue(index, ['Orden', 'Order', 'Pedido', 'Pedido Cliente', 'Customer order']));
+    const documentNumber = asNullableString(pickValue(index, ['DOCUMENTO', 'Documento', 'Document', 'Factura', 'Invoice', 'Delivery']));
+    const contractNumber = asNullableString(pickValue(index, ['Contrato', 'Contract', 'Numero de contrato', 'Número de contrato']));
+    const clientInstitution = asNullableString(pickValue(index, ['GRUPO CLIENTE', 'Cliente', 'Institucion', 'Institución', 'Cliente / Institucion', 'Cliente / Institución', 'Solicitante']));
+    const businessUnit = asNullableString(pickValue(index, ['BU', 'Business Unit', 'Unidad de Negocio']));
+    const sanctionResponsible = asNullableString(pickValue(index, ['RESPONSABLE DE SANCION', 'RESPONSABLE DE SANCIÓN', 'Responsable de Sancion', 'Responsable de Sanción']));
+    const channelRaw = asNullableString(pickValue(index, ['Canal', 'Channel', 'Mercado', 'Market']));
+    const sourceProductRaw = asNullableString(pickValue(index, ['MEDICAMENTO', 'Producto', 'Material', 'SKU', 'Product']));
+    const sourceProductNormalized = sourceProductRaw ? normalizeText(sourceProductRaw) : null;
+    const sku = asNullableString(pickValue(index, ['SKU', 'CÃ³digo SKU', 'Codigo SKU']));
+    const sanctionType = asNullableString(pickValue(index, ['Sancion', 'Sanción', 'Tipo sancion', 'Tipo sanción', 'Tipo']));
+    const sanctionReason = asNullableString(pickValue(index, ['MOTIVO DE SANCION', 'MOTIVO DE SANCIÓN', 'Motivo', 'Reason', 'Causa', 'Razon', 'Razón', 'Concepto']));
+    const sanctionStatus = asNullableString(pickValue(index, ['ESTATUS DE PAGO DE SANCION', 'ESTATUS DE PAGO DE SANCIÓN', 'Estatus', 'Status', 'Estado']));
+    const sanctionAmount = asNullableNumber(pickValue(index, ['SANCION ESTIMADA', 'SANCIÓN ESTIMADA', 'Monto Sancion', 'Monto Sanción', 'Importe Sancion', 'Importe Sanción', 'Sancion MXN', 'Sanción MXN', 'Amount']));
+    const invoicedAmount = asNullableNumber(pickValue(index, ['Monto Facturado', 'Facturado', 'Importe Facturado', 'Invoice Amount']));
+    const daysCount = asNullableNumber(pickValue(index, ['Cuenta Dias', 'Cuenta Días', 'Dias', 'Días', 'Days']));
+    const observations = asNullableString(pickValue(index, ['Observacion', 'Observación', 'OBSERVACION', 'OBSERVACIÓN', 'Comentarios', 'Comments']));
+    const errors: string[] = [];
+
+    if (!provisionMonth) errors.push('Missing or invalid provision month.');
+    if (!periodMonth) errors.push('Missing or invalid sanction period.');
+    if (!orderNumber && !documentNumber && !contractNumber && !clientInstitution && !sanctionType && !sanctionReason && sanctionAmount == null) {
+      errors.push('Missing sanction detail columns.');
+    }
+
+    if (errors.length > 0) {
+      validations.push({ rowNumber: row.row_number, validationStatus: 'error', errors });
+      continue;
+    }
+
+    normalizedRows.push({
+      rowNumber: row.row_number,
+      periodMonth: periodMonth!,
+      provisionYear,
+      estimatedMonthRaw,
+      sanctionDate,
+      orderNumber,
+      documentNumber,
+      contractNumber,
+      clientInstitution,
+      businessUnit,
+      sanctionResponsible,
+      channelRaw,
+      channelGroup: normalizeCommercialOperationsChannelGroup(channelRaw),
+      sourceProductRaw,
+      sourceProductNormalized,
+      sku,
+      sanctionType,
+      sanctionReason,
+      sanctionStatus,
+      sanctionAmount,
+      invoicedAmount,
+      daysCount,
+      observations,
+      payload,
+    });
+
+    validations.push({ rowNumber: row.row_number, validationStatus: 'valid', errors: [] });
+  }
+
+  return { validations, normalizedRows };
+}
+
+async function loadCommercialOperationsSanctionsStaging(uploadId: string, rows: CommercialOperationsSanctionsNormalizedRow[]) {
+  const client = getBigQueryClient();
+
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+      CREATE TABLE IF NOT EXISTS \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\` (
+      upload_id STRING,
+      row_number INT64,
+      period_month DATE,
+      provision_year INT64,
+      estimated_month_raw STRING,
+      sanction_date DATE,
+      order_number STRING,
+      document_number STRING,
+      contract_number STRING,
+      client_institution STRING,
+      business_unit STRING,
+      sanction_responsible STRING,
+      channel_raw STRING,
+      channel_group STRING,
+      source_product_raw STRING,
+      source_product_normalized STRING,
+      sku STRING,
+      sanction_type STRING,
+      sanction_reason STRING,
+      sanction_status STRING,
+      sanction_amount NUMERIC,
+      invoiced_amount NUMERIC,
+      days_count NUMERIC,
+      observations STRING,
+      source_payload_json JSON,
+      normalized_at TIMESTAMP
+    )` }));
+
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+    ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+    ADD COLUMN IF NOT EXISTS provision_year INT64
+  ` }));
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+    ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+    ADD COLUMN IF NOT EXISTS estimated_month_raw STRING
+  ` }));
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+    ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+    ADD COLUMN IF NOT EXISTS sanction_responsible STRING
+  ` }));
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+    ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+    ADD COLUMN IF NOT EXISTS source_product_normalized STRING
+  ` }));
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({ query: `
+    ALTER TABLE \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+    ADD COLUMN IF NOT EXISTS sku STRING
+  ` }));
+
+  await runQueryWithRetryOnConcurrentUpdate(() => client.query({
+    query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  }));
+
+  if (rows.length === 0) return;
+
+  const query = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_sanctions\`
+    (
+      upload_id, row_number, period_month, provision_year, estimated_month_raw, sanction_date,
+      order_number, document_number, contract_number, client_institution, business_unit,
+      sanction_responsible, channel_raw, channel_group, source_product_raw, source_product_normalized,
+      sku, sanction_type, sanction_reason, sanction_status, sanction_amount,
+      invoiced_amount, days_count, observations, source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      DATE(row.period_month),
+      SAFE_CAST(row.provision_year AS INT64),
+      NULLIF(row.estimated_month_raw, ''),
+      IF(row.sanction_date = '', NULL, DATE(row.sanction_date)),
+      NULLIF(row.order_number, ''),
+      NULLIF(row.document_number, ''),
+      NULLIF(row.contract_number, ''),
+      NULLIF(row.client_institution, ''),
+      NULLIF(row.business_unit, ''),
+      NULLIF(row.sanction_responsible, ''),
+      NULLIF(row.channel_raw, ''),
+      row.channel_group,
+      NULLIF(row.source_product_raw, ''),
+      NULLIF(row.source_product_normalized, ''),
+      NULLIF(row.sku, ''),
+      NULLIF(row.sanction_type, ''),
+      NULLIF(row.sanction_reason, ''),
+      NULLIF(row.sanction_status, ''),
+      SAFE_CAST(row.sanction_amount AS NUMERIC),
+      SAFE_CAST(row.invoiced_amount AS NUMERIC),
+      SAFE_CAST(row.days_count AS NUMERIC),
+      NULLIF(row.observations, ''),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItemsByApproxBytes(rows, {
+    maxBytesPerChunk: 2_000_000,
+    maxItemsPerChunk: 1500,
+    estimateBytes: (row) => JSON.stringify(row.payload ?? {}).length + 512,
+  });
+
+  await runChunksInParallel(chunks, async (chunk) => {
+    await runQueryWithRetryOnConcurrentUpdate(() => client.query({
+      query,
+      params: {
+        uploadId,
+        rows: chunk.map((row) => ({
+          row_number: row.rowNumber,
+          period_month: row.periodMonth,
+          provision_year: row.provisionYear == null ? '' : String(row.provisionYear),
+          estimated_month_raw: row.estimatedMonthRaw ?? '',
+          sanction_date: row.sanctionDate ?? '',
+          order_number: row.orderNumber ?? '',
+          document_number: row.documentNumber ?? '',
+          contract_number: row.contractNumber ?? '',
+          client_institution: row.clientInstitution ?? '',
+          business_unit: row.businessUnit ?? '',
+          sanction_responsible: row.sanctionResponsible ?? '',
+          channel_raw: row.channelRaw ?? '',
+          channel_group: row.channelGroup,
+          source_product_raw: row.sourceProductRaw ?? '',
+          source_product_normalized: row.sourceProductNormalized ?? '',
+          sku: row.sku ?? '',
+          sanction_type: row.sanctionType ?? '',
+          sanction_reason: row.sanctionReason ?? '',
+          sanction_status: row.sanctionStatus ?? '',
+          sanction_amount: row.sanctionAmount == null ? '' : String(row.sanctionAmount),
+          invoiced_amount: row.invoicedAmount == null ? '' : String(row.invoicedAmount),
+          days_count: row.daysCount == null ? '' : String(row.daysCount),
+          observations: row.observations ?? '',
+          source_payload_json: JSON.stringify(row.payload),
+        })),
+      },
+    }));
+  }, 1);
+}
+
 function normalizeCommercialOperationsGovernmentContractProgress(rows: RawUploadRow[]) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: CommercialOperationsGovernmentContractProgressNormalizedRow[] = [];
@@ -7702,6 +8233,25 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     const { validations, normalizedRows } = normalizeCommercialOperationsStocks(rows);
     await updateRawValidationStatus(uploadId, validations);
     await loadCommercialOperationsStocksStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (
+    moduleCode === 'commercial_operations_incidencias' ||
+    moduleCode === 'commercial_operations_otif' ||
+    moduleCode === 'otif'
+  ) {
+    const { validations, normalizedRows } = normalizeCommercialOperationsIncidencias(rows);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsIncidenciasStaging(uploadId, normalizedRows);
+    return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (moduleCode === 'commercial_operations_sanctions' || moduleCode === 'sanctions') {
+    const asOfMonth = await getUploadAsOfMonth(uploadId);
+    const { validations, normalizedRows } = normalizeCommercialOperationsSanctions(rows, asOfMonth);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsSanctionsStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 

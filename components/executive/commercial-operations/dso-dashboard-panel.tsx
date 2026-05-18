@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { DsoTrendChart } from '@/components/executive/commercial-operations/dso-trend-chart';
 import { DsoComparisonBarChart } from '@/components/executive/commercial-operations/dso-comparison-bar-chart';
+import { SanctionsPieChart } from '@/components/executive/commercial-operations/sanctions-pie-chart';
+import { SanctionsRankingBarChart } from '@/components/executive/commercial-operations/sanctions-ranking-bar-chart';
 import type {
   CommercialOperationsDeliveryOrderRow,
   CommercialOperationsDsoOverviewRow,
   CommercialOperationsDsoTrendRow,
   CommercialOperationsGovernmentContractProgressRow,
+  CommercialOperationsOtifRow,
+  CommercialOperationsSanctionRow,
   CommercialOperationsStockRow,
 } from '@/lib/data/commercial-operations';
 
@@ -32,6 +36,8 @@ type DsoDashboardPanelProps = {
   stockRows: CommercialOperationsStockRow[];
   governmentContractRows: CommercialOperationsGovernmentContractProgressRow[];
   deliveryOrderRows: CommercialOperationsDeliveryOrderRow[];
+  otifRows: CommercialOperationsOtifRow[];
+  sanctionRows: CommercialOperationsSanctionRow[];
   stockTargets: {
     totalDays: number | null;
     privateDays: number | null;
@@ -49,6 +55,8 @@ type DsoDashboardPanelProps = {
 type StockScope = 'total' | 'private' | 'public';
 
 const GROUP_ORDER = ['Anual / General', 'B2B Privado', 'B2C Privado', 'B2C Gobierno', 'B2B Gobierno'];
+const EMPTY_OTIF_ROWS: CommercialOperationsOtifRow[] = [];
+const EMPTY_SANCTION_ROWS: CommercialOperationsSanctionRow[] = [];
 
 function normalizeLabel(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -126,6 +134,20 @@ function formatCurrency(value: number | null | undefined) {
   }).format(value);
 }
 
+function formatSignedCurrency(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  const formatted = formatCurrency(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return '$0';
+}
+
+function formatSignedPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  const prefix = value > 0 ? '+' : '';
+  return `${prefix}${value.toFixed(1)}%`;
+}
+
 function toMonthDate(value: string | null | undefined) {
   if (!value) return null;
   const date = new Date(`${value}T00:00:00Z`);
@@ -169,6 +191,34 @@ function toScopeLabel(scope: StockScope) {
   if (scope === 'private') return 'Private';
   if (scope === 'public') return 'Public';
   return 'Total';
+}
+
+function getOtifCustomer(row: CommercialOperationsOtifRow) {
+  return (row.customerDescription ?? row.solicitante ?? '').trim() || 'N/A';
+}
+
+function isChiesiSanctionResponsibility(row: CommercialOperationsSanctionRow) {
+  return normalizeLabel(row.sanctionResponsible ?? '').includes('chiesi');
+}
+
+function getSanctionsCustomer(row: CommercialOperationsSanctionRow) {
+  const value = (row.clientInstitution ?? '').trim();
+  if (!value) return 'Unassigned';
+  if (normalizeLabel(value) === 'descentralizados') return 'Descentralizados';
+  return value;
+}
+
+function getSanctionsReason(row: CommercialOperationsSanctionRow) {
+  return (row.sanctionReason ?? '').trim() || 'Unassigned';
+}
+
+function filterSanctionsByResponsibility(
+  row: CommercialOperationsSanctionRow,
+  filter: 'all' | 'chiesi' | 'others',
+) {
+  if (filter === 'all') return true;
+  const isChiesi = isChiesiSanctionResponsibility(row);
+  return filter === 'chiesi' ? isChiesi : !isChiesi;
 }
 
 type GovernmentStage = 'ordenado' | 'entregado' | 'facturado';
@@ -260,11 +310,13 @@ export function DsoDashboardPanel({
   stockTargets,
   deliveryTargets,
   contractsSourceAsOfMonth,
+  otifRows = EMPTY_OTIF_ROWS,
+  sanctionRows = EMPTY_SANCTION_ROWS,
 }: DsoDashboardPanelProps) {
   const initial = initialGroup || tableRows[0]?.groupName || overviewRows[0]?.groupName || '';
   const [selectedGroup, setSelectedGroup] = useState(initial);
   const [activeView, setActiveView] = useState<
-    'dso' | 'stock' | 'government-contract-progress' | 'delivery'
+    'dso' | 'stock' | 'government-contract-progress' | 'delivery' | 'otif' | 'sanctions'
   >('dso');
   const [selectedStockScope, setSelectedStockScope] = useState<StockScope>('total');
   const [selectedDeliveryScope, setSelectedDeliveryScope] = useState<'government' | 'private' | 'total'>(
@@ -282,6 +334,16 @@ export function DsoDashboardPanel({
   const [stockSkuFilter, setStockSkuFilter] = useState('');
   const [deliveryClientFilter, setDeliveryClientFilter] = useState('');
   const [deliveryMarketBrandFilter, setDeliveryMarketBrandFilter] = useState('');
+  const [otifPeriodMode, setOtifPeriodMode] = useState<'ytd' | 'mth'>('ytd');
+  const [otifFailureReasonFilter, setOtifFailureReasonFilter] = useState('');
+  const [otifFailureCustomerFilter, setOtifFailureCustomerFilter] = useState('');
+  const [otifFailureChannelFilter, setOtifFailureChannelFilter] = useState('');
+  const [sanctionsPeriodMode, setSanctionsPeriodMode] = useState<'ytd' | 'mth'>('ytd');
+  const [sanctionsResponsibilityFilter, setSanctionsResponsibilityFilter] = useState<'all' | 'chiesi' | 'others'>('chiesi');
+  const [sanctionsClientFilter, setSanctionsClientFilter] = useState('');
+  const [sanctionsBuFilter, setSanctionsBuFilter] = useState('');
+  const [sanctionsBrandFilter, setSanctionsBrandFilter] = useState('');
+  const [sanctionsReasonFilter, setSanctionsReasonFilter] = useState('');
 
   const selectedOverview = findGroup(overviewRows, selectedGroup);
   const selectedTable = findGroup(tableRows, selectedGroup);
@@ -777,6 +839,423 @@ export function DsoDashboardPanel({
       .slice(0, 25);
   }, [deliveryScopedRows, deliveryClientFilter, deliveryMarketBrandFilter, deliveryRankingMode]);
 
+  const otifSourceAsOf = otifRows.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
+  const otifScopedRows = useMemo(
+    () => otifRows.filter((row) => (otifPeriodMode === 'ytd' ? row.isYtd : row.isMth)),
+    [otifRows, otifPeriodMode],
+  );
+  const otifSummary = useMemo(() => {
+    const total = otifScopedRows.length;
+    const ok = otifScopedRows.filter((row) => row.otif).length;
+    const failed = total - ok;
+    const deliveredPieces = otifScopedRows.reduce((sum, row) => sum + (row.deliveredPieces ?? 0), 0);
+    const returnedPieces = otifScopedRows.reduce((sum, row) => sum + (row.returnedPieces ?? 0), 0);
+    return {
+      total,
+      ok,
+      failed,
+      otifPct: total > 0 ? (ok / total) * 100 : null,
+      deliveredPieces,
+      returnedPieces,
+    };
+  }, [otifScopedRows]);
+  const otifTrendRows = useMemo(() => {
+    const byPeriod = new Map<string, { periodMonth: string; total: number; ok: number }>();
+    for (const row of otifRows) {
+      const current = byPeriod.get(row.periodMonth) ?? { periodMonth: row.periodMonth, total: 0, ok: 0 };
+      current.total += 1;
+      if (row.otif) current.ok += 1;
+      byPeriod.set(row.periodMonth, current);
+    }
+    return [...byPeriod.values()]
+      .map((row) => ({
+        periodMonth: row.periodMonth,
+        dsoValue: row.total > 0 ? (row.ok / row.total) * 100 : 0,
+        targetValue: 95,
+      }))
+      .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
+  }, [otifRows]);
+  const otifChannelRows = useMemo(() => {
+    const byChannel = new Map<string, { label: string; total: number; ok: number; failed: number }>();
+    for (const row of otifScopedRows) {
+      const label = row.channelGroup || 'Other';
+      const current = byChannel.get(label) ?? { label, total: 0, ok: 0, failed: 0 };
+      current.total += 1;
+      if (row.otif) current.ok += 1;
+      else current.failed += 1;
+      byChannel.set(label, current);
+    }
+    return [...byChannel.values()]
+      .map((row) => ({ ...row, otifPct: row.total > 0 ? (row.ok / row.total) * 100 : null }))
+      .sort((a, b) => b.total - a.total);
+  }, [otifScopedRows]);
+  const otifReasonRows = useMemo(() => {
+    const byReason = new Map<string, { reason: string; count: number; returnedPieces: number }>();
+    for (const row of otifScopedRows) {
+      if (row.otif) continue;
+      const reason = (row.falseOtifReason ?? '').trim() || 'Unspecified';
+      const current = byReason.get(reason) ?? { reason, count: 0, returnedPieces: 0 };
+      current.count += 1;
+      current.returnedPieces += row.returnedPieces ?? 0;
+      byReason.set(reason, current);
+    }
+    return [...byReason.values()].sort((a, b) => b.count - a.count).slice(0, 8);
+  }, [otifScopedRows]);
+  const otifFailureRows = useMemo(() => otifScopedRows.filter((row) => !row.otif), [otifScopedRows]);
+  const otifFailureReasonOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const row of otifFailureRows) {
+      values.add((row.falseOtifReason ?? '').trim() || 'Unspecified');
+    }
+    return [...values].sort((a, b) => a.localeCompare(b));
+  }, [otifFailureRows]);
+  const otifFailureCustomerOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const row of otifFailureRows) {
+      values.add(getOtifCustomer(row));
+    }
+    return [...values].sort((a, b) => a.localeCompare(b));
+  }, [otifFailureRows]);
+  const otifFailureChannelOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const row of otifFailureRows) {
+      values.add(row.channelGroup || 'Other');
+    }
+    return [...values].sort((a, b) => a.localeCompare(b));
+  }, [otifFailureRows]);
+  const effectiveOtifFailureReasonFilter = otifFailureReasonOptions.includes(otifFailureReasonFilter)
+    ? otifFailureReasonFilter
+    : '';
+  const effectiveOtifFailureCustomerFilter = otifFailureCustomerOptions.includes(otifFailureCustomerFilter)
+    ? otifFailureCustomerFilter
+    : '';
+  const effectiveOtifFailureChannelFilter = otifFailureChannelOptions.includes(otifFailureChannelFilter)
+    ? otifFailureChannelFilter
+    : '';
+  const otifFilteredFailures = useMemo(
+    () =>
+      otifFailureRows
+        .filter((row) => {
+          const reason = (row.falseOtifReason ?? '').trim() || 'Unspecified';
+          const customer = getOtifCustomer(row);
+          const channel = row.channelGroup || 'Other';
+          if (effectiveOtifFailureReasonFilter && reason !== effectiveOtifFailureReasonFilter) return false;
+          if (effectiveOtifFailureCustomerFilter && customer !== effectiveOtifFailureCustomerFilter) return false;
+          if (effectiveOtifFailureChannelFilter && channel !== effectiveOtifFailureChannelFilter) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          const periodCompare = b.periodMonth.localeCompare(a.periodMonth);
+          if (periodCompare !== 0) return periodCompare;
+          return (b.orden ?? '').localeCompare(a.orden ?? '');
+        }),
+    [
+      effectiveOtifFailureChannelFilter,
+      effectiveOtifFailureCustomerFilter,
+      effectiveOtifFailureReasonFilter,
+      otifFailureRows,
+    ],
+  );
+  const sanctionsSourceAsOf = sanctionRows.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
+  const sanctionsScopedRows = useMemo(
+    () => sanctionRows.filter((row) => (sanctionsPeriodMode === 'ytd' ? row.isYtd : row.isMth)),
+    [sanctionRows, sanctionsPeriodMode],
+  );
+  const sanctionsPyScopedRows = useMemo(
+    () => sanctionRows.filter((row) => (sanctionsPeriodMode === 'ytd' ? row.isYtdPy : row.isMthPy)),
+    [sanctionRows, sanctionsPeriodMode],
+  );
+  const sanctionsResponsibilityRows = useMemo(
+    () =>
+      sanctionsScopedRows.filter((row) => filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter)),
+    [sanctionsResponsibilityFilter, sanctionsScopedRows],
+  );
+  const sanctionsResponsibilityPyRows = useMemo(
+    () =>
+      sanctionsPyScopedRows.filter((row) => filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter)),
+    [sanctionsPyScopedRows, sanctionsResponsibilityFilter],
+  );
+  const sanctionsClientOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          [...sanctionsResponsibilityRows, ...sanctionsResponsibilityPyRows].map(
+            (row) => getSanctionsCustomer(row),
+          ),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [sanctionsResponsibilityPyRows, sanctionsResponsibilityRows],
+  );
+  const effectiveSanctionsClientFilter = sanctionsClientOptions.includes(sanctionsClientFilter)
+    ? sanctionsClientFilter
+    : '';
+  const sanctionsBuOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          [...sanctionsResponsibilityRows, ...sanctionsResponsibilityPyRows]
+            .filter((row) => {
+              const client = getSanctionsCustomer(row);
+              return !effectiveSanctionsClientFilter || client === effectiveSanctionsClientFilter;
+            })
+            .map((row) => (row.productBusinessUnitName ?? row.businessUnit ?? '').trim() || 'Unassigned'),
+        ),
+      ]
+        .sort((a, b) => a.localeCompare(b)),
+    [effectiveSanctionsClientFilter, sanctionsResponsibilityPyRows, sanctionsResponsibilityRows],
+  );
+  const effectiveSanctionsBuFilter = sanctionsBuOptions.includes(sanctionsBuFilter) ? sanctionsBuFilter : '';
+  const sanctionsBrandOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          [...sanctionsResponsibilityRows, ...sanctionsResponsibilityPyRows]
+            .filter((row) => {
+              const client = getSanctionsCustomer(row);
+              return !effectiveSanctionsClientFilter || client === effectiveSanctionsClientFilter;
+            })
+            .filter((row) => !effectiveSanctionsBuFilter || ((row.productBusinessUnitName ?? row.businessUnit ?? '').trim() || 'Unassigned') === effectiveSanctionsBuFilter)
+            .map((row) => (row.brandName ?? '').trim() || 'Unassigned'),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [effectiveSanctionsBuFilter, effectiveSanctionsClientFilter, sanctionsResponsibilityPyRows, sanctionsResponsibilityRows],
+  );
+  const effectiveSanctionsBrandFilter = sanctionsBrandOptions.includes(sanctionsBrandFilter) ? sanctionsBrandFilter : '';
+  const sanctionsReasonOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          [...sanctionsResponsibilityRows, ...sanctionsResponsibilityPyRows]
+            .filter((row) => {
+              const client = getSanctionsCustomer(row);
+              return !effectiveSanctionsClientFilter || client === effectiveSanctionsClientFilter;
+            })
+            .filter((row) => !effectiveSanctionsBuFilter || ((row.productBusinessUnitName ?? row.businessUnit ?? '').trim() || 'Unassigned') === effectiveSanctionsBuFilter)
+            .filter((row) => !effectiveSanctionsBrandFilter || ((row.brandName ?? '').trim() || 'Unassigned') === effectiveSanctionsBrandFilter)
+            .map((row) => getSanctionsReason(row)),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+    [
+      effectiveSanctionsBrandFilter,
+      effectiveSanctionsBuFilter,
+      effectiveSanctionsClientFilter,
+      sanctionsResponsibilityPyRows,
+      sanctionsResponsibilityRows,
+    ],
+  );
+  const effectiveSanctionsReasonFilter = sanctionsReasonOptions.includes(sanctionsReasonFilter) ? sanctionsReasonFilter : '';
+  const matchesSanctionsDimensionFilters = useCallback((row: CommercialOperationsSanctionRow) => {
+    const client = getSanctionsCustomer(row);
+    const bu = (row.productBusinessUnitName ?? row.businessUnit ?? '').trim() || 'Unassigned';
+    const brandName = (row.brandName ?? '').trim() || 'Unassigned';
+    const reason = getSanctionsReason(row);
+    if (effectiveSanctionsClientFilter && client !== effectiveSanctionsClientFilter) return false;
+    if (effectiveSanctionsBuFilter && bu !== effectiveSanctionsBuFilter) return false;
+    if (effectiveSanctionsBrandFilter && brandName !== effectiveSanctionsBrandFilter) return false;
+    if (effectiveSanctionsReasonFilter && reason !== effectiveSanctionsReasonFilter) return false;
+    return true;
+  }, [
+    effectiveSanctionsBrandFilter,
+    effectiveSanctionsBuFilter,
+    effectiveSanctionsClientFilter,
+    effectiveSanctionsReasonFilter,
+  ]);
+  const sanctionsFilteredRows = useMemo(
+    () => sanctionsResponsibilityRows.filter(matchesSanctionsDimensionFilters),
+    [matchesSanctionsDimensionFilters, sanctionsResponsibilityRows],
+  );
+  const sanctionsFilteredPyRows = useMemo(
+    () => sanctionsResponsibilityPyRows.filter(matchesSanctionsDimensionFilters),
+    [matchesSanctionsDimensionFilters, sanctionsResponsibilityPyRows],
+  );
+  const sanctionsTrendSourceRows = useMemo(
+    () =>
+      sanctionRows.filter(
+        (row) =>
+          filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter) &&
+          matchesSanctionsDimensionFilters(row),
+      ),
+    [
+      matchesSanctionsDimensionFilters,
+      sanctionRows,
+      sanctionsResponsibilityFilter,
+    ],
+  );
+  const sanctionsSummary = useMemo(() => {
+    const selectedAmount = sanctionsFilteredRows.reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const selectedPyAmount = sanctionsFilteredPyRows.reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const ytdRows = sanctionRows.filter(
+      (row) =>
+        row.isYtd &&
+        filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter) &&
+        matchesSanctionsDimensionFilters(row),
+    );
+    const ytdPyRows = sanctionRows.filter(
+      (row) =>
+        row.isYtdPy &&
+        filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter) &&
+        matchesSanctionsDimensionFilters(row),
+    );
+    const mthRows = sanctionRows.filter(
+      (row) =>
+        row.isMth &&
+        filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter) &&
+        matchesSanctionsDimensionFilters(row),
+    );
+    const mthPyRows = sanctionRows.filter(
+      (row) =>
+        row.isMthPy &&
+        filterSanctionsByResponsibility(row, sanctionsResponsibilityFilter) &&
+        matchesSanctionsDimensionFilters(row),
+    );
+    const ytdAmount = ytdRows.reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const ytdPyAmount = ytdPyRows.reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const mthAmount = mthRows.reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const mthPyAmount = mthPyRows.reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const ytdAllAmount = sanctionRows
+      .filter((row) => row.isYtd && matchesSanctionsDimensionFilters(row))
+      .reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    const ytdChiesiAmount = sanctionRows
+      .filter((row) => row.isYtd && isChiesiSanctionResponsibility(row) && matchesSanctionsDimensionFilters(row))
+      .reduce((sum, row) => sum + (row.sanctionAmount ?? 0), 0);
+    return {
+      rows: sanctionsFilteredRows.length,
+      pyRows: sanctionsFilteredPyRows.length,
+      selectedAmount,
+      selectedPyAmount,
+      selectedDelta: selectedAmount - selectedPyAmount,
+      selectedGrowthPct: selectedPyAmount > 0 ? ((selectedAmount - selectedPyAmount) / selectedPyAmount) * 100 : null,
+      ytdAmount,
+      ytdPyAmount,
+      ytdDelta: ytdAmount - ytdPyAmount,
+      ytdGrowthPct: ytdPyAmount > 0 ? ((ytdAmount - ytdPyAmount) / ytdPyAmount) * 100 : null,
+      mthAmount,
+      mthPyAmount,
+      mthDelta: mthAmount - mthPyAmount,
+      mthGrowthPct: mthPyAmount > 0 ? ((mthAmount - mthPyAmount) / mthPyAmount) * 100 : null,
+      chiesiMixYtdPct: ytdAllAmount > 0 ? (ytdChiesiAmount / ytdAllAmount) * 100 : null,
+    };
+  }, [
+    matchesSanctionsDimensionFilters,
+    sanctionRows,
+    sanctionsFilteredPyRows,
+    sanctionsFilteredRows,
+    sanctionsResponsibilityFilter,
+  ]);
+  const sanctionsTrendRows = useMemo(() => {
+    const byPeriod = new Map<string, { periodMonth: string; amount: number }>();
+    for (const row of sanctionsTrendSourceRows) {
+      const current = byPeriod.get(row.periodMonth) ?? { periodMonth: row.periodMonth, amount: 0 };
+      current.amount += row.sanctionAmount ?? 0;
+      byPeriod.set(row.periodMonth, current);
+    }
+    return [...byPeriod.values()]
+      .map((row) => ({ periodMonth: row.periodMonth, dsoValue: row.amount, targetValue: null }))
+      .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
+  }, [sanctionsTrendSourceRows]);
+  const sanctionsDetailRows = useMemo(
+    () => {
+      const byProduct = new Map<
+        string,
+        { bu: string; marketGroup: string; brandName: string; sku: string; amount: number; pyAmount: number }
+      >();
+      const addRow = (row: CommercialOperationsSanctionRow, amountField: 'amount' | 'pyAmount') => {
+        const bu = (row.productBusinessUnitName ?? row.businessUnit ?? '').trim() || 'Unassigned';
+        const brandName = (row.brandName ?? '').trim() || 'Unassigned';
+        if (effectiveSanctionsBuFilter && bu !== effectiveSanctionsBuFilter) return;
+        if (effectiveSanctionsBrandFilter && brandName !== effectiveSanctionsBrandFilter) return;
+        const marketGroup = (row.marketGroup ?? '').trim() || 'Unassigned';
+        const sku = (row.sku ?? row.canonicalProductName ?? row.sourceProductRaw ?? '').trim() || 'Unassigned';
+        const key = `${bu}|${marketGroup}|${brandName}|${sku}`;
+        const current = byProduct.get(key) ?? { bu, marketGroup, brandName, sku, amount: 0, pyAmount: 0 };
+        current[amountField] += row.sanctionAmount ?? 0;
+        byProduct.set(key, current);
+      };
+      for (const row of sanctionsFilteredRows) addRow(row, 'amount');
+      for (const row of sanctionsFilteredPyRows) addRow(row, 'pyAmount');
+      return [...byProduct.values()]
+        .map((row) => ({
+          ...row,
+          delta: row.amount - row.pyAmount,
+          growthPct: row.pyAmount > 0 ? ((row.amount - row.pyAmount) / row.pyAmount) * 100 : null,
+        }))
+        .sort((a, b) => b.amount - a.amount);
+    },
+    [effectiveSanctionsBrandFilter, effectiveSanctionsBuFilter, sanctionsFilteredPyRows, sanctionsFilteredRows],
+  );
+  const sanctionsProductChartRows = useMemo(
+    () => {
+      const byBrand = new Map<string, { label: string; amount: number; pyAmount: number }>();
+      for (const row of sanctionsDetailRows) {
+        const label = row.brandName !== 'Unassigned' ? row.brandName : row.sku;
+        const current = byBrand.get(label) ?? { label, amount: 0, pyAmount: 0 };
+        current.amount += row.amount;
+        current.pyAmount += row.pyAmount;
+        byBrand.set(label, current);
+      }
+      return [...byBrand.values()].sort((a, b) => b.amount - a.amount).slice(0, 8);
+    },
+    [sanctionsDetailRows],
+  );
+  const sanctionsClientRows = useMemo(
+    () => {
+      const byClient = new Map<string, { client: string; amount: number; pyAmount: number }>();
+      const addRow = (row: CommercialOperationsSanctionRow, amountField: 'amount' | 'pyAmount') => {
+        const client = getSanctionsCustomer(row);
+        const current = byClient.get(client) ?? { client, amount: 0, pyAmount: 0 };
+        current[amountField] += row.sanctionAmount ?? 0;
+        byClient.set(client, current);
+      };
+      for (const row of sanctionsFilteredRows) addRow(row, 'amount');
+      for (const row of sanctionsFilteredPyRows) addRow(row, 'pyAmount');
+      return [...byClient.values()]
+        .map((row) => ({
+          ...row,
+          delta: row.amount - row.pyAmount,
+          growthPct: row.pyAmount > 0 ? ((row.amount - row.pyAmount) / row.pyAmount) * 100 : null,
+        }))
+        .sort((a, b) => b.amount - a.amount);
+    },
+    [sanctionsFilteredPyRows, sanctionsFilteredRows],
+  );
+  const sanctionsCustomerPieRows = useMemo(
+    () =>
+      sanctionsClientRows.slice(0, 8).map((row) => ({
+        label: row.client,
+        amount: row.amount,
+      })),
+    [sanctionsClientRows],
+  );
+  const sanctionsReasonRows = useMemo(
+    () => {
+      const byReason = new Map<string, { reason: string; amount: number; pyAmount: number }>();
+      const addRow = (row: CommercialOperationsSanctionRow, amountField: 'amount' | 'pyAmount') => {
+        const reason = getSanctionsReason(row);
+        const current = byReason.get(reason) ?? { reason, amount: 0, pyAmount: 0 };
+        current[amountField] += row.sanctionAmount ?? 0;
+        byReason.set(reason, current);
+      };
+      for (const row of sanctionsFilteredRows) addRow(row, 'amount');
+      for (const row of sanctionsFilteredPyRows) addRow(row, 'pyAmount');
+      return [...byReason.values()]
+        .map((row) => ({
+          ...row,
+          delta: row.amount - row.pyAmount,
+          growthPct: row.pyAmount > 0 ? ((row.amount - row.pyAmount) / row.pyAmount) * 100 : null,
+        }))
+        .sort((a, b) => b.amount - a.amount);
+    },
+    [sanctionsFilteredPyRows, sanctionsFilteredRows],
+  );
+  const sanctionsReasonPieRows = useMemo(
+    () =>
+      sanctionsReasonRows.slice(0, 8).map((row) => ({
+        label: row.reason,
+        amount: row.amount,
+      })),
+    [sanctionsReasonRows],
+  );
+
   const activeSourceAsOf =
     activeView === 'dso'
       ? dsoSourceAsOf
@@ -784,7 +1263,13 @@ export function DsoDashboardPanel({
         ? stockSourceAsOf
         : activeView === 'delivery'
           ? deliverySourceAsOf
-          : contractsSourceAsOfMonth ?? null;
+          : activeView === 'otif'
+            ? otifSourceAsOf
+            : activeView === 'sanctions'
+              ? sanctionsSourceAsOf
+              : activeView === 'government-contract-progress'
+                ? contractsSourceAsOfMonth ?? null
+                : null;
 
   const formatMonthLabel = (value: string | null | undefined) => {
     if (!value) return 'N/A';
@@ -1201,11 +1686,10 @@ export function DsoDashboardPanel({
     [filteredGovernmentContractRows, selectedGovernmentStage],
   );
 
-  useEffect(() => {
-    if (selectedGovernmentContractType && !governmentContractTypeOptions.includes(selectedGovernmentContractType)) {
-      setSelectedGovernmentContractType('');
-    }
-  }, [governmentContractTypeOptions, selectedGovernmentContractType]);
+  const effectiveGovernmentContractType =
+    selectedGovernmentContractType && governmentContractTypeOptions.includes(selectedGovernmentContractType)
+      ? selectedGovernmentContractType
+      : '';
 
   const governmentContractGroupRows = useMemo(() => {
     const stageRows = filteredGovernmentContractRows.filter(
@@ -1307,7 +1791,7 @@ export function DsoDashboardPanel({
     const stageRows = filteredGovernmentContractRows.filter(
       (row) =>
         normalizeGovernmentStage(row.category) === selectedGovernmentStage &&
-        (!selectedGovernmentContractType || getGovernmentContractTypeLabel(row.contractType) === selectedGovernmentContractType),
+        (!effectiveGovernmentContractType || getGovernmentContractTypeLabel(row.contractType) === effectiveGovernmentContractType),
     );
     const denominatorSnapshotMonth =
       stageRows
@@ -1356,7 +1840,7 @@ export function DsoDashboardPanel({
       }))
       .sort((a, b) => b.mthDelivered - a.mthDelivered)
       .slice(0, 12);
-  }, [filteredGovernmentContractRows, selectedGovernmentContractType, selectedGovernmentDimension, selectedGovernmentStage]);
+  }, [filteredGovernmentContractRows, effectiveGovernmentContractType, selectedGovernmentDimension, selectedGovernmentStage]);
 
   return (
     <div className="space-y-4">
@@ -1397,6 +1881,24 @@ export function DsoDashboardPanel({
             }`}
           >
             Delivery View
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView('otif')}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+              activeView === 'otif' ? 'bg-slate-900 text-white' : 'text-slate-600'
+            }`}
+          >
+            OTIF View
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView('sanctions')}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+              activeView === 'sanctions' ? 'bg-slate-900 text-white' : 'text-slate-600'
+            }`}
+          >
+            Sanctions View
           </button>
         </div>
         <span className="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
@@ -2074,6 +2576,489 @@ export function DsoDashboardPanel({
         </article>
       ) : null}
 
+      {activeView === 'otif' ? (
+        <article className="space-y-4 rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-600">OTIF View</p>
+              <h2 className="text-lg font-semibold tracking-tight text-slate-950">On Time In Full Monitoring</h2>
+            </div>
+            <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+              {(['ytd', 'mth'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setOtifPeriodMode(mode)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                    otifPeriodMode === mode ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {mode.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-5">
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <KpiLabel help="Orders marked as OTIF divided by total incidence rows in the selected scope.">
+                {otifPeriodMode.toUpperCase()} OTIF
+              </KpiLabel>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatPercent(otifSummary.otifPct)}</p>
+              <p className="text-xs text-slate-600">{formatQuantity(otifSummary.ok)} / {formatQuantity(otifSummary.total)} orders</p>
+            </div>
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <KpiLabel help="Rows where OTIF is false for the selected scope.">Failures</KpiLabel>
+              <p className="mt-1 text-2xl font-semibold text-rose-700">{formatQuantity(otifSummary.failed)}</p>
+              <p className="text-xs text-slate-600">Not OTIF</p>
+            </div>
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <KpiLabel help="Total delivered pieces captured in the incidence file.">Delivered Pieces</KpiLabel>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQuantity(otifSummary.deliveredPieces)}</p>
+              <p className="text-xs text-slate-600">Selected scope</p>
+            </div>
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <KpiLabel help="Pieces returned in non-OTIF incidence rows when provided.">Returned Pieces</KpiLabel>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQuantity(otifSummary.returnedPieces)}</p>
+              <p className="text-xs text-slate-600">Selected scope</p>
+            </div>
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <KpiLabel help="Total orders for YTD or current month.">Orders</KpiLabel>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQuantity(otifSummary.total)}</p>
+              <p className="text-xs text-slate-600">{otifPeriodMode.toUpperCase()} base</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <div>
+              <h3 className="text-base font-semibold tracking-tight text-slate-900">Monthly OTIF Trend</h3>
+              <div className="mt-3">
+                <DsoTrendChart rows={otifTrendRows} metricLabel="OTIF %" />
+              </div>
+            </div>
+            <div className="rounded-[16px] border border-slate-200 bg-slate-50/70 p-3">
+              <h3 className="text-base font-semibold tracking-tight text-slate-900">Failure Reasons</h3>
+              <div className="mt-3 space-y-2">
+                {otifReasonRows.map((row) => {
+                  const pct = otifSummary.failed > 0 ? (row.count / otifSummary.failed) * 100 : 0;
+                  return (
+                    <div key={row.reason}>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate font-medium text-slate-800">{row.reason}</span>
+                        <span className="text-slate-600">{formatQuantity(row.count)} ({pct.toFixed(1)}%)</span>
+                      </div>
+                      <div className="mt-1 h-2 overflow-hidden rounded-full bg-white">
+                        <div className="h-full rounded-full bg-rose-500" style={{ width: `${Math.min(100, pct)}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                {otifReasonRows.length === 0 ? (
+                  <p className="text-sm text-slate-500">No failure reasons in the selected scope.</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Channel Group</p>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50/70 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Channel</th>
+                    <th className="px-3 py-2 text-right">Rows</th>
+                    <th className="px-3 py-2 text-right">OTIF</th>
+                    <th className="px-3 py-2 text-right">Failures</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {otifChannelRows.map((row) => (
+                    <tr key={row.label}>
+                      <td className="px-3 py-2 font-medium text-slate-800">{row.label}</td>
+                      <td className="px-3 py-2 text-right text-slate-900">{formatQuantity(row.total)}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatPercent(row.otifPct)}</td>
+                      <td className="px-3 py-2 text-right text-rose-700">{formatQuantity(row.failed)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-hidden rounded-[14px] border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Latest Non-OTIF Orders</p>
+                  <p className="text-xs text-slate-500">
+                    {formatQuantity(otifFilteredFailures.length)} / {formatQuantity(otifFailureRows.length)}
+                  </p>
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  <select
+                    value={effectiveOtifFailureReasonFilter}
+                    onChange={(e) => setOtifFailureReasonFilter(e.target.value)}
+                    className="rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                  >
+                    <option value="">All Reasons</option>
+                    {otifFailureReasonOptions.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={effectiveOtifFailureCustomerFilter}
+                    onChange={(e) => setOtifFailureCustomerFilter(e.target.value)}
+                    className="rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                  >
+                    <option value="">All Customers</option>
+                    {otifFailureCustomerOptions.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={effectiveOtifFailureChannelFilter}
+                    onChange={(e) => setOtifFailureChannelFilter(e.target.value)}
+                    className="rounded-[10px] border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                  >
+                    <option value="">All Channels</option>
+                    {otifFailureChannelOptions.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="max-h-[360px] overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Order</th>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Channel</th>
+                      <th className="px-3 py-2 text-left">Reason</th>
+                      <th className="px-3 py-2 text-right">Pieces</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {otifFilteredFailures.map((row, index) => (
+                      <tr key={`${row.periodMonth}-${row.orden}-${row.referenciaCliente}-${index}`}>
+                        <td className="px-3 py-2 font-medium text-slate-800">{row.orden ?? 'N/A'}</td>
+                        <td className="px-3 py-2 text-slate-600">{getOtifCustomer(row)}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.channelGroup}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.falseOtifReason ?? 'Unspecified'}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{formatQuantity(row.deliveredPieces)}</td>
+                      </tr>
+                    ))}
+                    {otifFilteredFailures.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-center text-slate-500" colSpan={5}>
+                          No non-OTIF rows in the selected scope.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </article>
+      ) : null}
+
+      {activeView === 'sanctions' ? (
+        <article className="space-y-4 rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Sanctions View</p>
+              <h2 className="mt-2 text-lg font-semibold tracking-tight text-slate-950">Sanctions Monitoring</h2>
+            </div>
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 px-3 py-2 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Table Scope</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">
+                {sanctionsPeriodMode.toUpperCase()} {formatCurrency(sanctionsSummary.selectedAmount)}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+              <KpiLabel help="Year-to-date sanctions amount for the selected responsibility scope.">YTD Amount</KpiLabel>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{formatCurrency(sanctionsSummary.ytdAmount)}</p>
+              <p className={`mt-1 text-xs ${sanctionsSummary.ytdDelta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                vs PY {formatCurrency(sanctionsSummary.ytdPyAmount)} | {formatSignedCurrency(sanctionsSummary.ytdDelta)}
+                {sanctionsSummary.ytdGrowthPct == null ? '' : ` (${formatSignedPercent(sanctionsSummary.ytdGrowthPct)})`}
+              </p>
+            </div>
+            <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+              <KpiLabel help="Current-month sanctions amount for the selected responsibility scope.">MTH Amount</KpiLabel>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{formatCurrency(sanctionsSummary.mthAmount)}</p>
+              <p className={`mt-1 text-xs ${sanctionsSummary.mthDelta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                vs PY {formatCurrency(sanctionsSummary.mthPyAmount)} | {formatSignedCurrency(sanctionsSummary.mthDelta)}
+                {sanctionsSummary.mthGrowthPct == null ? '' : ` (${formatSignedPercent(sanctionsSummary.mthGrowthPct)})`}
+              </p>
+            </div>
+            <div className="rounded-[14px] border border-slate-200 bg-slate-50/70 p-3">
+              <KpiLabel help="Share of total YTD sanctions amount assigned to Chiesi responsibility.">Chiesi Responsibility Mix YTD</KpiLabel>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{formatPercent(sanctionsSummary.chiesiMixYtdPct)}</p>
+              <p className="mt-1 text-xs text-slate-600">Amount-weighted mix</p>
+            </div>
+          </div>
+
+          <div className="rounded-[16px] border border-slate-200 bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Analysis Controls</p>
+                <p className="mt-1 text-sm text-slate-700">
+                  Rows: {formatQuantity(sanctionsSummary.rows)} current / {formatQuantity(sanctionsSummary.pyRows)} PY
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-5">
+              <select
+                value={sanctionsResponsibilityFilter}
+                onChange={(e) => {
+                  setSanctionsResponsibilityFilter(e.target.value as 'all' | 'chiesi' | 'others');
+                  setSanctionsClientFilter('');
+                  setSanctionsBuFilter('');
+                  setSanctionsBrandFilter('');
+                  setSanctionsReasonFilter('');
+                }}
+                className="rounded-[10px] border border-slate-200 bg-white px-2 py-2 text-xs text-slate-900"
+              >
+                <option value="all">All Responsibles</option>
+                <option value="chiesi">Chiesi</option>
+                <option value="others">Others</option>
+              </select>
+              <select
+                value={effectiveSanctionsClientFilter}
+                onChange={(e) => setSanctionsClientFilter(e.target.value)}
+                className="rounded-[10px] border border-slate-200 bg-white px-2 py-2 text-xs text-slate-900"
+              >
+                <option value="">All Customers</option>
+                {sanctionsClientOptions.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+              <select
+                value={effectiveSanctionsBuFilter}
+                onChange={(e) => {
+                  setSanctionsBuFilter(e.target.value);
+                  setSanctionsBrandFilter('');
+                  setSanctionsReasonFilter('');
+                }}
+                className="rounded-[10px] border border-slate-200 bg-white px-2 py-2 text-xs text-slate-900"
+              >
+                <option value="">All BU</option>
+                {sanctionsBuOptions.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+              <select
+                value={effectiveSanctionsBrandFilter}
+                onChange={(e) => setSanctionsBrandFilter(e.target.value)}
+                className="rounded-[10px] border border-slate-200 bg-white px-2 py-2 text-xs text-slate-900"
+              >
+                <option value="">All Brand Name</option>
+                {sanctionsBrandOptions.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+              <select
+                value={effectiveSanctionsReasonFilter}
+                onChange={(e) => setSanctionsReasonFilter(e.target.value)}
+                className="rounded-[10px] border border-slate-200 bg-white px-2 py-2 text-xs text-slate-900"
+              >
+                <option value="">All Reasons</option>
+                {sanctionsReasonOptions.map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setSanctionsClientFilter('');
+                  setSanctionsBuFilter('');
+                  setSanctionsBrandFilter('');
+                  setSanctionsReasonFilter('');
+                }}
+                className="rounded-[10px] border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700 hover:bg-slate-100"
+              >
+                Clear Filters
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-[16px] border border-slate-200 bg-slate-50/70 p-3">
+            <h3 className="text-base font-semibold tracking-tight text-slate-900">Annual Sanctions Trend</h3>
+            <div className="mt-3 min-w-0">
+              <DsoTrendChart rows={sanctionsTrendRows} metricLabel="Amount" valueFormat="currencyCompact" />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-slate-200 bg-white p-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Table Period</p>
+              <p className="mt-1 text-sm text-slate-700">
+                Controls the Customer, Reason and Product breakdowns below.
+              </p>
+            </div>
+            <div className="flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+              {(['ytd', 'mth'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setSanctionsPeriodMode(mode)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                    sanctionsPeriodMode === mode ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {mode.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[14px] border border-slate-200 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Sanctions by Customer</p>
+              <span className="text-xs text-slate-500">{sanctionsPeriodMode.toUpperCase()} current vs PY</span>
+            </div>
+            <div className="grid gap-3 p-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
+              <SanctionsPieChart rows={sanctionsCustomerPieRows} />
+              <div className="max-h-[300px] min-w-0 overflow-auto rounded-[12px] border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-right">PY</th>
+                      <th className="px-3 py-2 text-right">Variance</th>
+                      <th className="px-3 py-2 text-right">Var %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {sanctionsClientRows.map((row) => (
+                      <tr key={row.client}>
+                        <td className="px-3 py-2 font-medium text-slate-800">{row.client}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatCurrency(row.amount)}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{formatCurrency(row.pyAmount)}</td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.delta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedCurrency(row.delta)}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.delta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedPercent(row.growthPct)}
+                        </td>
+                      </tr>
+                    ))}
+                    {sanctionsClientRows.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-center text-slate-500" colSpan={5}>No customer sanctions rows in the selected scope.</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[14px] border border-slate-200 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Sanctions by Reason</p>
+              <span className="text-xs text-slate-500">{sanctionsPeriodMode.toUpperCase()} current vs PY</span>
+            </div>
+            <div className="grid gap-3 p-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
+              <SanctionsPieChart rows={sanctionsReasonPieRows} />
+              <div className="max-h-[300px] min-w-0 overflow-auto rounded-[12px] border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Reason</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-right">PY</th>
+                      <th className="px-3 py-2 text-right">Variance</th>
+                      <th className="px-3 py-2 text-right">Var %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {sanctionsReasonRows.map((row) => (
+                      <tr key={row.reason}>
+                        <td className="px-3 py-2 font-medium text-slate-800">{row.reason}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatCurrency(row.amount)}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{formatCurrency(row.pyAmount)}</td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.delta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedCurrency(row.delta)}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.delta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedPercent(row.growthPct)}
+                        </td>
+                      </tr>
+                    ))}
+                    {sanctionsReasonRows.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-center text-slate-500" colSpan={5}>No reason sanctions rows in the selected scope.</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[14px] border border-slate-200 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">Sanctions by Product</p>
+              <span className="text-xs text-slate-500">{sanctionsPeriodMode.toUpperCase()} current vs PY</span>
+            </div>
+            <div className="grid gap-3 p-3 xl:grid-cols-[minmax(300px,420px)_1fr]">
+              <SanctionsRankingBarChart rows={sanctionsProductChartRows} />
+              <div className="max-h-[300px] min-w-0 overflow-auto rounded-[12px] border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">BU</th>
+                      <th className="px-3 py-2 text-left">Market Group</th>
+                      <th className="px-3 py-2 text-left">Brand Name</th>
+                      <th className="px-3 py-2 text-left">SKU</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-right">PY</th>
+                      <th className="px-3 py-2 text-right">Variance</th>
+                      <th className="px-3 py-2 text-right">Var %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {sanctionsDetailRows.map((row) => (
+                      <tr key={`${row.bu}-${row.marketGroup}-${row.brandName}-${row.sku}`}>
+                        <td className="px-3 py-2 text-slate-700">{row.bu}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.marketGroup}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.brandName}</td>
+                        <td className="px-3 py-2 font-medium text-slate-800">{row.sku}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-900">{formatCurrency(row.amount)}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">{formatCurrency(row.pyAmount)}</td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.delta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedCurrency(row.delta)}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.delta <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedPercent(row.growthPct)}
+                        </td>
+                      </tr>
+                    ))}
+                    {sanctionsDetailRows.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-center text-slate-500" colSpan={8}>No sanctions rows in the selected scope.</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </article>
+      ) : null}
+
       {activeView === 'government-contract-progress' ? (
         <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
           <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Government Contract Progress</p>
@@ -2343,7 +3328,7 @@ export function DsoDashboardPanel({
               type="button"
               onClick={() => setSelectedGovernmentContractType('')}
               className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
-                selectedGovernmentContractType === '' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                effectiveGovernmentContractType === '' ? 'bg-slate-900 text-white' : 'text-slate-600'
               }`}
             >
               All
@@ -2354,7 +3339,7 @@ export function DsoDashboardPanel({
                 type="button"
                 onClick={() => setSelectedGovernmentContractType(option)}
                 className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
-                  selectedGovernmentContractType === option ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  effectiveGovernmentContractType === option ? 'bg-slate-900 text-white' : 'text-slate-600'
                 }`}
               >
                 {option}

@@ -6,9 +6,11 @@ import { revalidatePath } from 'next/cache';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import {
   sendFormRequestInfoEmail,
+  sendReadyValidationEmail,
   sendRequestInfoEmail,
   sendRequestInfoSummaryEmail,
   type FormRequestInfoRecipient,
+  type ReadyValidationRecipient,
   type RequestInfoRecipient,
 } from '@/lib/email/request-info';
 import { getActiveFormResponsibles } from '@/lib/data/form-responsibles';
@@ -353,6 +355,124 @@ export async function requestReportingVersionInfo(input: {
   });
 
   return { ok: true as const, sent: sent + formsSent, failed };
+}
+
+export async function notifyReportingVersionReadyValidation(input: {
+  reportingVersionId: string;
+  periodMonth: string;
+  committeeMeetingDate: string;
+}) {
+  const reportingVersionId = (input.reportingVersionId ?? '').trim();
+  const periodMonth = (input.periodMonth ?? '').trim();
+  const committeeMeetingDate = (input.committeeMeetingDate ?? '').trim();
+  if (!reportingVersionId) throw new Error('reportingVersionId is required.');
+  if (!periodMonth) throw new Error('periodMonth is required.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(committeeMeetingDate)) {
+    throw new Error('Committee meeting date is required.');
+  }
+
+  const client = getBigQueryClient();
+  const [versionRows] = await client.query({
+    query: `
+      SELECT CAST(period_month AS STRING) AS period_month
+      FROM \`${REPORTING_VERSIONS_TABLE}\`
+      WHERE reporting_version_id = @reportingVersionId
+      LIMIT 1
+    `,
+    params: { reportingVersionId },
+  });
+  const versionRow = (versionRows as Array<Record<string, unknown>>)[0];
+  if (!versionRow) throw new Error('Reporting version not found.');
+
+  const recipientsByEmail = new Map<string, ReadyValidationRecipient>();
+  for (const recipient of await getRequestInfoRecipients()) {
+    const emailOwner = normalizeEmail(recipient.emailOwner);
+    if (!emailOwner) continue;
+    recipientsByEmail.set(emailOwner, {
+      ownerName: recipient.ownerName,
+      emailOwner,
+    });
+  }
+  for (const responsible of await getActiveFormResponsibles()) {
+    const emailOwner = normalizeEmail(responsible.emailOwner);
+    if (!emailOwner || recipientsByEmail.has(emailOwner)) continue;
+    recipientsByEmail.set(emailOwner, {
+      ownerName: responsible.ownerName ?? '',
+      emailOwner,
+    });
+  }
+
+  const recipients = [...recipientsByEmail.values()];
+  if (recipients.length === 0) {
+    return { ok: true as const, sent: 0, failed: 0 };
+  }
+
+  const periodLabel = formatPeriodLabel(String(versionRow.period_month ?? periodMonth));
+  const meetingDateLabel = formatSpanishDate(new Date(`${committeeMeetingDate}T00:00:00Z`));
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const recipient of recipients) {
+    try {
+      await sendReadyValidationEmail({
+        recipient,
+        periodLabel,
+        committeeMeetingDate: meetingDateLabel,
+      });
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
+    }
+  }
+
+  revalidatePath('/admin/versions');
+
+  if (failed > 0) {
+    throw new Error(`Sent ${sent} validation emails, but ${failed} failed. ${errors.slice(0, 3).join(' | ')}`);
+  }
+
+  return { ok: true as const, sent, failed };
+}
+
+export async function sendReadyValidationTestEmail(input: {
+  reportingVersionId: string;
+  periodMonth: string;
+  committeeMeetingDate: string;
+}) {
+  const reportingVersionId = (input.reportingVersionId ?? '').trim();
+  const periodMonth = (input.periodMonth ?? '').trim();
+  const committeeMeetingDate = (input.committeeMeetingDate ?? '').trim();
+  if (!reportingVersionId) throw new Error('reportingVersionId is required.');
+  if (!periodMonth) throw new Error('periodMonth is required.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(committeeMeetingDate)) {
+    throw new Error('Committee meeting date is required.');
+  }
+
+  const client = getBigQueryClient();
+  const [versionRows] = await client.query({
+    query: `
+      SELECT CAST(period_month AS STRING) AS period_month
+      FROM \`${REPORTING_VERSIONS_TABLE}\`
+      WHERE reporting_version_id = @reportingVersionId
+      LIMIT 1
+    `,
+    params: { reportingVersionId },
+  });
+  const versionRow = (versionRows as Array<Record<string, unknown>>)[0];
+  if (!versionRow) throw new Error('Reporting version not found.');
+
+  await sendReadyValidationEmail({
+    recipient: {
+      ownerName: 'Guillermo',
+      emailOwner: 'guillermo@jelpus.com',
+    },
+    periodLabel: formatPeriodLabel(String(versionRow.period_month ?? periodMonth)),
+    committeeMeetingDate: formatSpanishDate(new Date(`${committeeMeetingDate}T00:00:00Z`)),
+  });
+
+  return { ok: true as const, sent: 1 };
 }
 
 export async function deleteReportingVersion(reportingVersionId: string) {

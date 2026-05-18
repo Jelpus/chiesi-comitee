@@ -17,6 +17,8 @@ import type {
   SellOutUnmappedProductRow,
   CuotasProductMappingRow,
   CuotasUnmappedProductRow,
+  SanctionsProductMappingRow,
+  SanctionsUnmappedProductRow,
 } from '@/lib/data/products/product-metadata';
 
 type MappingTabsProps = {
@@ -50,9 +52,13 @@ type MappingTabsProps = {
     unmappedRows: CuotasUnmappedProductRow[];
     mappedRows: CuotasProductMappingRow[];
   };
+  sanctions: {
+    unmappedRows: SanctionsUnmappedProductRow[];
+    mappedRows: SanctionsProductMappingRow[];
+  };
 };
 
-type TabKey = 'ddd' | 'closeup' | 'gob360' | 'sellout' | 'stocks' | 'contracts' | 'cuotas';
+type TabKey = 'ddd' | 'closeup' | 'gob360' | 'sellout' | 'stocks' | 'contracts' | 'cuotas' | 'sanctions';
 
 export function MappingTabs({
   productOptions,
@@ -64,6 +70,7 @@ export function MappingTabs({
   stocks,
   contracts,
   cuotas,
+  sanctions,
 }: MappingTabsProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('ddd');
 
@@ -148,6 +155,17 @@ export function MappingTabs({
           >
             Cuotas
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('sanctions')}
+            className={`rounded-full px-4 py-2 text-xs font-medium uppercase tracking-[0.14em] transition ${
+              activeTab === 'sanctions'
+                ? 'bg-slate-900 text-white'
+                : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            Sanctions
+          </button>
         </div>
       </div>
 
@@ -216,6 +234,17 @@ export function MappingTabs({
           marketGroupOptions={marketGroupOptions}
           label="Cuotas"
           mappingSource="cuotas"
+        />
+      ) : null}
+
+      {activeTab === 'sanctions' ? (
+        <SellOutProductMapping
+          unmappedRows={sanctions.unmappedRows}
+          mappedRows={sanctions.mappedRows}
+          productOptions={productOptions}
+          marketGroupOptions={marketGroupOptions}
+          label="Sanctions"
+          mappingSource="sanctions"
         />
       ) : null}
     </section>

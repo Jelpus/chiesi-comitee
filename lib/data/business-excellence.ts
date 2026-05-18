@@ -78,8 +78,6 @@ const FIELD_FORCE_SERVING_HCP_MONTH =
   'chiesi-committee.chiesi_committee_serving.business_excellence_ff_hcp_month';
 const FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH =
   'chiesi-committee.chiesi_committee_serving.business_excellence_ff_hcp_channel_month';
-const FIELD_FORCE_SERVING_INTERACTIONS_MATCHED =
-  'chiesi-committee.chiesi_committee_serving.vw_business_excellence_ff_t2_interactions_matched';
 const PRIVATE_SELLOUT_MART_VIEW =
   'chiesi-committee.chiesi_committee_mart.vw_private_sellout';
 const GOB360_PRODUCT_MAPPING_TABLE =
@@ -3814,7 +3812,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
   bu,
   detailMode,
   potential,
-  channel,
+  channels,
   accountTypes,
 }: {
   reportingVersionId: string;
@@ -3824,10 +3822,12 @@ export async function getBusinessExcellenceFieldForceDetailData({
   bu: 'total' | 'air' | 'care';
   detailMode: 'territory' | 'district';
   potential: string;
-  channel: string;
+  channels?: string[];
   accountTypes?: string[];
 }): Promise<BusinessExcellenceFieldForceDetailData> {
   const client = getBigQueryClient();
+  const selectedChannels = Array.from(new Set((channels ?? []).map((value) => value.trim()).filter(Boolean)));
+  const channelsFilterEnabled = selectedChannels.length > 0;
   const selectedAccountTypes = Array.from(new Set((accountTypes ?? []).map((value) => value.trim()).filter(Boolean)));
   const accountTypesFilterEnabled = selectedAccountTypes.length > 0;
   const params = {
@@ -3838,7 +3838,8 @@ export async function getBusinessExcellenceFieldForceDetailData({
     bu,
     detailMode,
     potential,
-    channel,
+    channelsFilterEnabled,
+    channels: channelsFilterEnabled ? selectedChannels : ['__ALL_CHANNELS__'],
     accountTypesFilterEnabled,
     accountTypes: accountTypesFilterEnabled ? selectedAccountTypes : ['__ALL_ACCOUNT_TYPES__'],
   };
@@ -3894,28 +3895,29 @@ export async function getBusinessExcellenceFieldForceDetailData({
     ),
     matched_interactions AS (
       SELECT
-        LOWER(mi.bu) AS bu,
-        mi.territory_normalized,
-        mi.doctor_key,
-        COALESCE(NULLIF(mi.channel, ''), 'Unknown') AS channel,
-        COALESCE(NULLIF(mi.visit_type, ''), 'Unknown') AS visit_type,
-        mi.interaction_id
-      FROM \`${FIELD_FORCE_SERVING_INTERACTIONS_MATCHED}\` mi
+        LOWER(bu) AS bu,
+        territory_normalized,
+        doctor_key,
+        COALESCE(NULLIF(channel, ''), 'Unknown') AS channel,
+        COALESCE(NULLIF(visit_type, ''), 'Unknown') AS visit_type,
+        SUM(interactions) AS interactions
+      FROM \`${FIELD_FORCE_SERVING_HCP_CHANNEL_MONTH}\`
       JOIN reporting_context rc ON TRUE
-      WHERE mi.reporting_version_id = @reportingVersionId
+      WHERE reporting_version_id = @reportingVersionId
         AND (
-          (@view = 'MTH' AND mi.period_month = rc.report_period_month)
-          OR (@view = 'YTD' AND mi.period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
+          (@view = 'MTH' AND period_month = rc.report_period_month)
+          OR (@view = 'YTD' AND period_month BETWEEN rc.ytd_start_month AND rc.report_period_month)
         )
-        AND (@bu = 'total' OR LOWER(mi.bu) = @bu)
-        AND (NOT @accountTypesFilterEnabled OR COALESCE(NULLIF(TRIM(mi.account_type), ''), 'N/A') IN UNNEST(@accountTypes))
+        AND (@bu = 'total' OR LOWER(bu) = @bu)
+        AND (NOT @accountTypesFilterEnabled OR COALESCE(NULLIF(TRIM(account_type), ''), 'N/A') IN UNNEST(@accountTypes))
+      GROUP BY 1,2,3,4,5
     ),
     all_counts AS (
       SELECT
         bu,
         territory_normalized,
         doctor_key,
-        COUNT(DISTINCT interaction_id) AS all_interactions
+        SUM(interactions) AS all_interactions
       FROM matched_interactions
       GROUP BY 1,2,3
     ),
@@ -3924,16 +3926,16 @@ export async function getBusinessExcellenceFieldForceDetailData({
         bu,
         territory_normalized,
         doctor_key,
-        COUNT(DISTINCT interaction_id) AS channel_interactions
+        SUM(interactions) AS channel_interactions
       FROM matched_interactions
-      WHERE @channel != 'all'
-        AND channel = @channel
+      WHERE @channelsFilterEnabled
+        AND channel IN UNNEST(@channels)
       GROUP BY 1,2,3
     ),
     doctor_scoped AS (
       SELECT
         db.*,
-        IF(@channel = 'all', COALESCE(ac.all_interactions, 0), COALESCE(cc.channel_interactions, 0)) AS interactions,
+        IF(@channelsFilterEnabled, COALESCE(cc.channel_interactions, 0), COALESCE(ac.all_interactions, 0)) AS interactions,
         IF(@coverage = 'adjusted', db.objective_adjusted, db.objective_base) AS selected_objective
       FROM doctor_base db
       LEFT JOIN all_counts ac
@@ -4031,14 +4033,14 @@ export async function getBusinessExcellenceFieldForceDetailData({
     interactions_filtered AS (
       SELECT
         COALESCE(NULLIF(mi.visit_type, ''), 'Unknown') AS visit_type,
-        IF(@channel = 'all', 'All Channels', @channel) AS channel,
-        COUNT(DISTINCT mi.interaction_id) AS interactions
+        IF(@channelsFilterEnabled, ARRAY_TO_STRING(@channels, ', '), 'All Channels') AS channel,
+        SUM(mi.interactions) AS interactions
       FROM matched_interactions mi
       JOIN doctor_filtered df
         ON df.bu = mi.bu
        AND df.territory_normalized = mi.territory_normalized
        AND df.doctor_key = mi.doctor_key
-      WHERE (@channel = 'all' OR mi.channel = @channel)
+      WHERE (NOT @channelsFilterEnabled OR mi.channel IN UNNEST(@channels))
       GROUP BY 1,2
     )
     SELECT visit_type, channel, interactions
@@ -4218,7 +4220,7 @@ export async function getBusinessExcellenceFieldForceDetailData({
     return {
       visitType: fullVisitType.length > 30 ? `${fullVisitType.slice(0, 30)}...` : fullVisitType,
       fullVisitType,
-      channel: String(row.channel ?? (channel === 'all' ? 'All Channels' : channel)),
+      channel: String(row.channel ?? (channelsFilterEnabled ? selectedChannels.join(', ') : 'All Channels')),
       interactions: Number(row.interactions ?? 0),
     };
   });

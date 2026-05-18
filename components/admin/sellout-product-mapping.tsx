@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { saveCuotasProductMapping, saveSellOutProductMapping } from '@/app/admin/products/actions';
+import { saveCuotasProductMapping, saveSanctionsProductMapping, saveSellOutProductMapping } from '@/app/admin/products/actions';
 import type {
   SellOutProductMappingRow,
   SellOutUnmappedProductRow,
@@ -16,7 +16,7 @@ type SellOutProductMappingProps = {
   productOptions: DimProductOption[];
   marketGroupOptions: string[];
   label?: string;
-  mappingSource?: 'sell_out' | 'cuotas';
+  mappingSource?: 'sell_out' | 'cuotas' | 'sanctions';
 };
 
 export function SellOutProductMapping({
@@ -45,7 +45,12 @@ export function SellOutProductMapping({
   const filteredMappedRows = mappedRows.filter((row) =>
     mappedMarketFilter ? (row.marketGroup ?? '') === mappedMarketFilter : true,
   );
-  const saveMapping = mappingSource === 'cuotas' ? saveCuotasProductMapping : saveSellOutProductMapping;
+  const saveMapping =
+    mappingSource === 'cuotas'
+      ? saveCuotasProductMapping
+      : mappingSource === 'sanctions'
+        ? saveSanctionsProductMapping
+        : saveSellOutProductMapping;
 
   if (unmappedRows.length === 0 && mappedRows.length === 0) {
     return (

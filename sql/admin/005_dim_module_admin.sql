@@ -53,6 +53,7 @@ USING (
   SELECT 'commercial_operations_private_orders', 'Commercial Operations - Private Orders', 'commercial_operations', 330 UNION ALL
   SELECT 'commercial_operations_government_contract_progress', 'Commercial Operations - Government Contract Progress', 'commercial_operations', 340 UNION ALL
   SELECT 'commercial_operations_stocks', 'Commercial Operations - Stocks', 'commercial_operations', 350 UNION ALL
+  SELECT 'commercial_operations_incidencias', 'Commercial Operations - Incidencias', 'commercial_operations', 355 UNION ALL
   SELECT 'commercial_operations_sanctions', 'Commercial Operations - Sanctions', 'commercial_operations', 360 UNION ALL
   SELECT 'opex_by_cc', 'OPEX by CC', 'opex', 410
 ) AS source

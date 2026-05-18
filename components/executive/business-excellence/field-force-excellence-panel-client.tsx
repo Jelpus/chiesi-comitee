@@ -20,6 +20,9 @@ import type {
   BusinessExcellenceFieldForceExcellenceData,
 } from '@/types/business-excellence';
 
+const DEFAULT_INTERACTION_CHANNELS = ['Presencial', 'Remota'];
+const DEFAULT_ACCOUNT_TYPES = ['MP (Medical Professional) MX', 'MP (Medical Professional) BR'];
+
 function formatPeriodTag(value: string | null | undefined) {
   if (!value) return 'N/A';
   const raw = String(value).trim();
@@ -74,8 +77,9 @@ export function FieldForceExcellencePanelClient({
   const [activeBu, setActiveBu] = useState<'total' | 'air' | 'care'>(initialBu);
   const [activeDetailMode, setActiveDetailMode] = useState<'territory' | 'district'>(initialDetailMode);
   const [activePotential, setActivePotential] = useState<string>(initialPotential && initialPotential !== 'all' ? initialPotential : 'all');
-  const [activeInteractionChannel, setActiveInteractionChannel] = useState<string>('all');
-  const [activeAccountTypes, setActiveAccountTypes] = useState<string[]>([]);
+  const [activeInteractionChannels, setActiveInteractionChannels] = useState<string[]>(DEFAULT_INTERACTION_CHANNELS);
+  const [channelMenuOpen, setChannelMenuOpen] = useState(false);
+  const [activeAccountTypes, setActiveAccountTypes] = useState<string[]>(DEFAULT_ACCOUNT_TYPES);
   const [accountTypeMenuOpen, setAccountTypeMenuOpen] = useState(false);
   const [detailData, setDetailData] = useState<BusinessExcellenceFieldForceDetailData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -136,8 +140,8 @@ export function FieldForceExcellencePanelClient({
       bu: activeBu,
       detailMode: activeDetailMode,
       potential: activePotential,
-      channel: activeInteractionChannel,
     });
+    activeInteractionChannels.forEach((channel) => params.append('channels', channel));
     activeAccountTypes.forEach((accountType) => params.append('accountTypes', accountType));
 
     void Promise.resolve().then(() => {
@@ -173,7 +177,7 @@ export function FieldForceExcellencePanelClient({
     activeBu,
     activeDetailMode,
     activePotential,
-    activeInteractionChannel,
+    activeInteractionChannels,
     activeAccountTypes,
   ]);
 
@@ -185,17 +189,26 @@ export function FieldForceExcellencePanelClient({
       : activeAccountTypes.length === 1
         ? activeAccountTypes[0]
         : `${activeAccountTypes.length} Account Types`;
+  const selectedChannelLabel =
+    activeInteractionChannels.length === 0
+      ? 'All Channels'
+      : activeInteractionChannels.length === 1
+        ? activeInteractionChannels[0]
+        : `${activeInteractionChannels.length} Channels`;
+  const toggleInteractionChannel = (channel: string) => {
+    setActiveInteractionChannels((current) =>
+      current.includes(channel)
+        ? current.filter((item) => item !== channel)
+        : [...current, channel],
+    );
+  };
   const toggleAccountType = (accountType: string) => {
     setActiveAccountTypes((current) =>
       current.includes(accountType)
         ? current.filter((item) => item !== accountType)
         : [...current, accountType],
     );
-    setActiveInteractionChannel('all');
   };
-  const selectedInteractionChannel = channelOptions.includes(activeInteractionChannel)
-    ? activeInteractionChannel
-    : 'all';
   const detailRows = detailData?.detailRows ?? [];
   const interactionMixChart = detailData?.interactionMixChart ?? [];
   const overvisitedTop = detailData?.overvisitedTop ?? [];
@@ -418,10 +431,7 @@ export function FieldForceExcellencePanelClient({
                     <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Account Type</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        setActiveAccountTypes([]);
-                        setActiveInteractionChannel('all');
-                      }}
+                      onClick={() => setActiveAccountTypes([])}
                       className="text-xs font-semibold text-slate-700 hover:text-slate-950"
                     >
                       All
@@ -475,14 +485,52 @@ export function FieldForceExcellencePanelClient({
             </p>
             <div className="flex items-center gap-2">
               <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Channel</label>
-              <select
-                value={selectedInteractionChannel}
-                onChange={(e) => setActiveInteractionChannel(e.target.value)}
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-              >
-                <option value="all">All</option>
-                {channelOptions.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
-              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setChannelMenuOpen((open) => !open)}
+                  className="inline-flex min-h-[30px] max-w-[240px] items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 shadow-sm"
+                >
+                  <span className="truncate">{selectedChannelLabel}</span>
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition ${channelMenuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+                {channelMenuOpen && (
+                  <div className="absolute right-0 z-20 mt-2 w-[260px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Channel</span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveInteractionChannels([])}
+                        className="text-xs font-semibold text-slate-700 hover:text-slate-950"
+                      >
+                        All
+                      </button>
+                    </div>
+                    <div className="max-h-[220px] overflow-auto py-1">
+                      {channelOptions.map((channel) => {
+                        const selected = activeInteractionChannels.includes(channel);
+                        return (
+                          <button
+                            key={channel}
+                            type="button"
+                            onClick={() => toggleInteractionChannel(channel)}
+                            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs ${
+                              selected ? 'bg-slate-50 text-slate-950' : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                              selected ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-transparent'
+                            }`}>
+                              <Check className="h-3 w-3" aria-hidden="true" />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{channel}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div className="h-[320px] min-w-0 p-3">
