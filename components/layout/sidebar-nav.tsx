@@ -13,6 +13,7 @@ import {
   Home,
   Layers,
   ClipboardList,
+  LoaderCircle,
   Settings,
   Tag,
   Target,
@@ -27,10 +28,11 @@ function isItemActive(pathname: string, href: string) {
 
 type SidebarNavProps = {
   collapsed?: boolean;
-  onNavigate?: () => void;
+  onNavigate?: (href?: string) => void;
+  pendingHref?: string | null;
 };
 
-export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
+export function SidebarNav({ collapsed = false, onNavigate, pendingHref }: SidebarNavProps) {
   const pathname = usePathname();
   const router = useRouter();
   const iconByHref: Record<string, ComponentType<{ className?: string }>> = {
@@ -83,34 +85,33 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
   });
 
   function handleSectionChange(nextSection: string) {
+    const navigate = (href: string) => {
+      onNavigate?.(href);
+      router.push(href);
+    };
+
     if (nextSection === 'home') {
-      router.push('/forms');
-      onNavigate?.();
+      navigate('/forms');
       return;
     }
     if (nextSection === 'admin') {
-      router.push('/admin');
-      onNavigate?.();
+      navigate('/admin');
       return;
     }
     if (nextSection === 'executive') {
-      router.push('/executive');
-      onNavigate?.();
+      navigate('/executive');
       return;
     }
     if (nextSection === 'air') {
-      router.push('/air');
-      onNavigate?.();
+      navigate('/air');
       return;
     }
     if (nextSection === 'closing-inputs') {
-      router.push('/closing-inputs');
-      onNavigate?.();
+      navigate('/closing-inputs');
       return;
     }
     if (nextSection === 'prepare') {
-      router.push('/prepare');
-      onNavigate?.();
+      navigate('/prepare');
     }
   }
 
@@ -144,6 +145,7 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
         ) : (
           sectionItems.map((item) => {
             const active = isItemActive(pathname, item.href);
+            const pending = pendingHref === item.href && !active;
             const itemLabel = item.label;
             const Icon = iconByHref[item.href] ?? Gauge;
 
@@ -152,7 +154,8 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
                 key={item.href}
                 href={item.href}
                 title={itemLabel}
-                onClick={onNavigate}
+                onClick={() => onNavigate?.(item.href)}
+                aria-busy={pending}
                 className={[
                   'relative w-full rounded-xl transition',
                   collapsed
@@ -165,7 +168,9 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
               >
                 {collapsed ? (
                   <span className="inline-flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-md border border-slate-700 bg-slate-900/70 text-[10px] font-semibold">
-                    {item.href.startsWith('/executive') && item.href !== '/executive' ? (
+                    {pending ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin text-sky-300" />
+                    ) : item.href.startsWith('/executive') && item.href !== '/executive' ? (
                       <>
                         <ModuleIcon module={item.label} className="h-3.5 w-3.5" />
                         <span className="tracking-[0.08em] text-slate-200">
@@ -177,13 +182,17 @@ export function SidebarNav({ collapsed = false, onNavigate }: SidebarNavProps) {
                     )}
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-3.5">
-                    {item.href.startsWith('/executive') && item.href !== '/executive' ? (
+                  <span className="inline-flex min-w-0 items-center gap-3.5">
+                    {pending ? (
+                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sky-600/60 bg-sky-950/50 text-sky-300">
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      </span>
+                    ) : item.href.startsWith('/executive') && item.href !== '/executive' ? (
                       <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-700/80 bg-slate-900/70 text-slate-300">
                         <ModuleIcon module={item.label} className="h-4.5 w-4.5" />
                       </span>
                     ) : null}
-                    {itemLabel}
+                    <span className="truncate">{pending ? `Loading ${itemLabel}` : itemLabel}</span>
                   </span>
                 )}
               </Link>

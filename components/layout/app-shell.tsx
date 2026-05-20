@@ -1,9 +1,9 @@
 'use client';
 
 import Image from 'next/image';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Menu, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LoaderCircle, Menu, X } from 'lucide-react';
 import { SidebarNav } from '@/components/layout/sidebar-nav';
 import type { ReactNode } from 'react';
 
@@ -14,6 +14,7 @@ type AppShellProps = {
 export function AppShell({ children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const pathname = usePathname();
   const hideSidebar = pathname === '/access';
   const sectionLabel = useMemo(() => {
@@ -23,19 +24,54 @@ export function AppShell({ children }: AppShellProps) {
     return 'Forms';
   }, [pathname]);
 
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    function handleDocumentClick(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest('a[href]');
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (anchor.target && anchor.target !== '_self') return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+      const nextUrl = new URL(anchor.href);
+      if (nextUrl.origin !== window.location.origin) return;
+      if (`${nextUrl.pathname}${nextUrl.search}` === `${window.location.pathname}${window.location.search}`) return;
+      setPendingHref(`${nextUrl.pathname}${nextUrl.search}`);
+    }
+
+    document.addEventListener('click', handleDocumentClick, true);
+    return () => document.removeEventListener('click', handleDocumentClick, true);
+  }, []);
+
+  function handleNavigate(href?: string) {
+    if (href && href !== pathname) setPendingHref(href);
+  }
+
   if (hideSidebar) {
     return <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">{children}</main>;
   }
 
   return (
     <div className="min-h-screen">
+      {pendingHref ? (
+        <div className="fixed inset-x-0 top-0 z-50 h-1 overflow-hidden bg-slate-200">
+          <div className="h-full w-1/3 animate-[route-progress_1.1s_ease-in-out_infinite] bg-sky-500" />
+        </div>
+      ) : null}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur lg:hidden">
         <div className="flex items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <Image src="/icon_chiesi.png" alt="Chiesi" width={32} height={32} className="rounded-md" />
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Navigation</p>
-              <p className="text-sm font-semibold text-slate-900">{sectionLabel}</p>
+              <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                {pendingHref ? <LoaderCircle className="h-3.5 w-3.5 animate-spin text-sky-600" /> : null}
+                {pendingHref ? 'Loading' : sectionLabel}
+              </p>
             </div>
           </div>
           <button
@@ -83,7 +119,14 @@ export function AppShell({ children }: AppShellProps) {
             </div>
 
             <div className="flex-1 overflow-hidden">
-              <SidebarNav collapsed={collapsed} onNavigate={() => setCollapsed(true)} />
+              <SidebarNav
+                collapsed={collapsed}
+                pendingHref={pendingHref}
+                onNavigate={(href) => {
+                  handleNavigate(href);
+                  setCollapsed(true);
+                }}
+              />
             </div>
           </div>
         </aside>
@@ -124,7 +167,14 @@ export function AppShell({ children }: AppShellProps) {
               </button>
             </div>
             <div className="flex-1 overflow-hidden">
-              <SidebarNav collapsed={false} onNavigate={() => setMobileOpen(false)} />
+              <SidebarNav
+                collapsed={false}
+                pendingHref={pendingHref}
+                onNavigate={(href) => {
+                  handleNavigate(href);
+                  setMobileOpen(false);
+                }}
+              />
             </div>
           </div>
         </aside>
