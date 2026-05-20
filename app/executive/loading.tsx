@@ -1,6 +1,13 @@
+import { LoaderCircle } from 'lucide-react';
+
 export default function ExecutiveLoading() {
   return (
     <section className="space-y-4 pb-8">
+      <div className="flex items-center gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-900 shadow-sm">
+        <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
+        <span>Loading executive module...</span>
+      </div>
+
       <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
