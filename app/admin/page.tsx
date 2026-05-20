@@ -14,6 +14,8 @@ export const dynamic = 'force-dynamic';
 type AdminPageProps = {
   searchParams: Promise<{
     version?: string;
+    homeArea?: string;
+    homeStatus?: string;
   }>;
 };
 
@@ -49,6 +51,30 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     }),
     getFormResponsibles(),
   ]);
+  const homeAreaFilter = params.homeArea ?? '';
+  const homeStatusFilter = params.homeStatus ?? '';
+  const areaOptions = [
+    { value: '', label: 'All areas' },
+    ...[...new Set(statusData.rows.map((row) => row.area))]
+      .sort((a, b) => a.localeCompare(b))
+      .map((area) => ({ value: area, label: area.replace(/_/g, ' ') })),
+  ];
+  const statusOptions = [
+    { value: '', label: 'All statuses' },
+    ...[
+      ...new Set(
+        statusData.rows.map((row) => (row.isMissing ? 'missing' : row.status)),
+      ),
+    ]
+      .sort((a, b) => a.localeCompare(b))
+      .map((status) => ({ value: status, label: status.replace(/_/g, ' ') })),
+  ];
+  const filteredHomeRows = statusData.rows.filter((row) => {
+    const rowStatus = row.isMissing ? 'missing' : row.status;
+    if (homeAreaFilter && row.area !== homeAreaFilter) return false;
+    if (homeStatusFilter && rowStatus !== homeStatusFilter) return false;
+    return true;
+  });
 
   return (
     <section className="space-y-6">
@@ -146,7 +172,21 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
           </div>
           <AdminSyncActions reportingVersionId={selected.reportingVersionId} periodMonth={selected.periodMonth} />
         </div>
-        <div className="mt-3 flex justify-end">
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap gap-3">
+            <SelectFilter
+              paramName="homeArea"
+              label="Area"
+              value={homeAreaFilter}
+              options={areaOptions}
+            />
+            <SelectFilter
+              paramName="homeStatus"
+              label="Status"
+              value={homeStatusFilter}
+              options={statusOptions}
+            />
+          </div>
           <Link
             href={`/admin/preread?reportversion=${encodeURIComponent(selected.reportingVersionId)}`}
             className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-700 hover:border-slate-400"
@@ -168,7 +208,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {statusData.rows.map((row) => (
+              {filteredHomeRows.map((row) => (
                 <tr key={row.moduleCode}>
                   <td className="px-4 py-3 text-slate-700">{row.area}</td>
                   <td className="px-4 py-3 font-semibold text-slate-900">{row.moduleLabel}</td>
@@ -197,6 +237,13 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                   </td>
                 </tr>
               ))}
+              {filteredHomeRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">
+                    No modules match the selected filters.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>

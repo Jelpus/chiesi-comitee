@@ -5,6 +5,7 @@ import {
   ensureBusinessExcellenceTftEffectiveView,
   refreshBusinessExcellenceFieldForceServingArtifacts,
 } from '@/lib/serving/refresh-business-excellence-field-force';
+import { refreshAirServingArtifacts } from '@/lib/serving/refresh-air-serving';
 
 type UploadPublishContext = {
   uploadId: string;
@@ -12,6 +13,16 @@ type UploadPublishContext = {
   periodMonth: string;
   reportingVersionId: string;
 };
+
+async function refreshBusinessExcellenceServingArtifacts(
+  client: ReturnType<typeof getBigQueryClient>,
+  context: UploadPublishContext,
+) {
+  await refreshBusinessExcellenceFieldForceServingArtifacts(client, {
+    reportingVersionId: context.reportingVersionId,
+  });
+  await refreshAirServingArtifacts(client, { reportingVersionId: context.reportingVersionId });
+}
 
 async function getPublishContext(uploadId: string): Promise<UploadPublishContext> {
   const client = getBigQueryClient();
@@ -178,7 +189,7 @@ async function publishBusinessExcellenceCloseupUpload(context: UploadPublishCont
     params: { reportingVersionId: context.reportingVersionId },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
@@ -332,7 +343,7 @@ async function publishBusinessExcellenceDddUpload(context: UploadPublishContext)
     },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
@@ -482,7 +493,7 @@ async function publishBusinessExcellenceSellOutUpload(context: UploadPublishCont
     },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
@@ -689,7 +700,7 @@ async function publishBusinessExcellenceCuotasUpload(context: UploadPublishConte
     },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
@@ -908,7 +919,7 @@ async function publishBusinessExcellenceSalesforceMedicalFileUpload(context: Upl
     params: { uploadId: context.uploadId, periodMonth: context.periodMonth },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
 
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
@@ -979,7 +990,7 @@ async function publishBusinessExcellenceSalesforceTftUpload(context: UploadPubli
     params: { uploadId: context.uploadId, periodMonth: context.periodMonth },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
 
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
@@ -1049,7 +1060,7 @@ async function publishBusinessExcellenceSalesforceInteractionsUpload(context: Up
     params: { uploadId: context.uploadId, periodMonth: context.periodMonth },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
 
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
@@ -1117,7 +1128,7 @@ async function publishBusinessExcellenceStandardDaysUpload(context: UploadPublis
     params: { uploadId: context.uploadId },
   });
 
-  await refreshBusinessExcellenceFieldForceServingArtifacts(client);
+  await refreshBusinessExcellenceServingArtifacts(client, context);
 
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }

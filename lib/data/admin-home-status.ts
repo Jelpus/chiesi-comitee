@@ -5,6 +5,7 @@ import { getAdminTargets } from '@/lib/data/targets';
 import { RA_TOPICS } from '@/lib/data/ra-forms-schema';
 import { LEGAL_COMPLIANCE_KPIS } from '@/lib/data/legal-compliance-forms-schema';
 import { CLOSING_INPUT_AREAS } from '@/lib/data/closing-inputs-schema';
+import { defaultModules, getModules } from '@/lib/data/modules';
 
 export type AdminHomeModuleStatusRow = {
   moduleCode: string;
@@ -54,53 +55,36 @@ const CLOSING_INPUT_STATUS_AREAS = CLOSING_INPUT_AREAS.filter((area) =>
   ].includes(area.slug),
 );
 
-const EXPECTED_MODULES: Array<{ moduleCode: string; moduleLabel: string; area: string }> = [
-  { moduleCode: 'sales_internal', moduleLabel: 'Internal Sales', area: 'internal_sales' },
-  { moduleCode: 'business_excellence_ddd', moduleLabel: 'Business Excellence - DDD', area: 'business_excellence' },
-  { moduleCode: 'business_excellence_budget_sell_out', moduleLabel: 'Business Excellence - Budget Sell Out', area: 'business_excellence' },
-  { moduleCode: 'business_excellence_brick_assignment', moduleLabel: 'Business Excellence - Brick Assignment', area: 'business_excellence' },
-  { moduleCode: 'business_excellence_iqvia_weekly', moduleLabel: 'Business Excellence - Weekly Tracking', area: 'business_excellence' },
-  { moduleCode: 'business_excellence_closeup', moduleLabel: 'Business Excellence - Closeup', area: 'business_excellence' },
-  { moduleCode: 'business_excellence_cuotas', moduleLabel: 'Business Excellence - Cuotas', area: 'business_excellence' },
-  {
-    moduleCode: 'business_excellence_salesforce_fichero_medico',
-    moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - Fichero Medico',
-    area: 'business_excellence',
-  },
-  {
-    moduleCode: 'business_excellence_salesforce_tft',
-    moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - TFT',
-    area: 'business_excellence',
-  },
-  {
-    moduleCode: 'business_excellence_salesforce_interacciones',
-    moduleLabel: 'Business Excellence - Efectividad Fuerza de Ventas - Interacciones',
-    area: 'business_excellence',
-  },
-  {
-    moduleCode: 'business_excellence_standard_days',
-    moduleLabel: 'Business Excellence - Standard Days',
-    area: 'business_excellence',
-  },
-  {
-    moduleCode: 'business_excellence_recompra_lexicomp',
-    moduleLabel: 'Business Excellence - Recompra Lexicomp',
-    area: 'business_excellence',
-  },
-  { moduleCode: 'human_resources_turnover', moduleLabel: 'Human Resources - Turnover', area: 'human_resources' },
-  { moduleCode: 'human_resources_training', moduleLabel: 'Human Resources - Training', area: 'human_resources' },
-  { moduleCode: 'commercial_operations_dso', moduleLabel: 'Commercial Operations - DSO', area: 'commercial_operations' },
-  { moduleCode: 'commercial_operations_government_orders', moduleLabel: 'Commercial Operations - Government Orders', area: 'commercial_operations' },
-  { moduleCode: 'commercial_operations_private_orders', moduleLabel: 'Commercial Operations - Private Orders', area: 'commercial_operations' },
-  {
-    moduleCode: 'commercial_operations_government_contract_progress',
-    moduleLabel: 'Commercial Operations - Government Contract Progress',
-    area: 'commercial_operations',
-  },
-  { moduleCode: 'commercial_operations_stocks', moduleLabel: 'Commercial Operations - Stocks', area: 'commercial_operations' },
-  { moduleCode: 'commercial_operations_sanctions', moduleLabel: 'Commercial Operations - Sanctions', area: 'commercial_operations' },
-  { moduleCode: 'opex_by_cc', moduleLabel: 'OPEX - Opex by CC', area: 'opex' },
-];
+async function getExpectedModules() {
+  try {
+    const modules = await getModules();
+    const activeModules = modules.filter((module) => module.isActive);
+    if (activeModules.length > 0) {
+      return activeModules
+        .map((module) => ({
+          moduleCode: module.moduleCode,
+          moduleLabel: module.moduleName,
+          area: module.areaCode,
+          displayOrder: module.displayOrder,
+        }))
+        .sort((a, b) => {
+          const byArea = a.area.localeCompare(b.area);
+          if (byArea !== 0) return byArea;
+          if (a.displayOrder !== b.displayOrder) return a.displayOrder - b.displayOrder;
+          return a.moduleLabel.localeCompare(b.moduleLabel);
+        });
+    }
+  } catch {
+    // Fall back to the local module registry if Dim_Module cannot be reached.
+  }
+
+  return defaultModules.map((module) => ({
+    moduleCode: module.moduleCode,
+    moduleLabel: module.moduleName,
+    area: module.areaCode,
+    displayOrder: module.displayOrder,
+  }));
+}
 
 function computeReadiness(rows: AdminHomeModuleStatusRow[]) {
   const totalExpected = rows.length;
@@ -267,6 +251,7 @@ export async function getAdminHomeStatusData(params: {
   periodMonth: string;
 }): Promise<AdminHomeStatusData> {
   const client = getBigQueryClient();
+  const expectedModules = await getExpectedModules();
   const [rows] = await client.query({
     query: `
       WITH latest AS (
@@ -311,7 +296,7 @@ export async function getAdminHomeStatusData(params: {
     ]),
   );
 
-  const statusRows: AdminHomeModuleStatusRow[] = EXPECTED_MODULES.map((expected) => {
+  const statusRows: AdminHomeModuleStatusRow[] = expectedModules.map((expected) => {
     const current = latestByModule.get(expected.moduleCode);
     const status = current?.status ?? 'missing';
     return {

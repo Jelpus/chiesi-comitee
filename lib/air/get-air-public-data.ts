@@ -15,6 +15,7 @@ import type {
 } from '@/lib/air/types';
 
 const GOB360_PRODUCT_MAPPING_TABLE = 'chiesi-committee.chiesi_committee_admin.gob360_product_mapping';
+const AIR_PUBLIC_SERVING_TABLE = 'chiesi-committee.chiesi_committee_serving.air_public_clue_mat';
 
 type Gob360ProductMapping = {
   sourceClaveNormalized: string;
@@ -34,6 +35,12 @@ let publicDataPromise: Promise<AirPublicPageData> | null = null;
 function numberValue(value: unknown) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function isMissingServingArtifact(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return code === 404 || /not found/i.test(message);
 }
 
 function stringValue(value: unknown, fallback = '') {
@@ -222,6 +229,9 @@ async function buildAirPublicPageData(options: {
   }
 
   try {
+    const servingData = await getAirPublicServingPageData(options.periodMonth, selectedMarketGroup);
+    if (servingData) return servingData;
+
     const mappings = await getGob360ProductMappings();
     const marketGroups = [...new Set(mappings.map((mapping) => mapping.marketGroup).filter(Boolean))].sort((a, b) =>
       a.localeCompare(b),
@@ -420,5 +430,113 @@ async function buildAirPublicPageData(options: {
         }`,
       ],
     };
+  }
+}
+
+async function getAirPublicServingPageData(
+  periodMonth: string,
+  selectedMarketGroup: string,
+): Promise<AirPublicPageData | null> {
+  const client = getBigQueryClient();
+  const filterByMarketGroup = selectedMarketGroup !== 'all';
+
+  try {
+    const [marketGroupRows, clueRows] = await Promise.all([
+      client.query({
+        query: `
+          SELECT DISTINCT market_group
+          FROM \`${AIR_PUBLIC_SERVING_TABLE}\`
+          WHERE period_month = DATE(@periodMonth)
+          ORDER BY market_group
+        `,
+        params: { periodMonth },
+      }),
+      client.query({
+        query: `
+          SELECT
+            clue,
+            unit_name,
+            territory,
+            district,
+            state,
+            institution,
+            reference,
+            visited,
+            market_group,
+            public_demand_mat,
+            chiesi_public_demand_mat
+          FROM \`${AIR_PUBLIC_SERVING_TABLE}\`
+          WHERE period_month = DATE(@periodMonth)
+            ${filterByMarketGroup ? 'AND market_group = @marketGroup' : ''}
+          ORDER BY public_demand_mat DESC
+        `,
+        params: {
+          periodMonth,
+          ...(filterByMarketGroup ? { marketGroup: selectedMarketGroup } : {}),
+        },
+      }),
+    ]);
+
+    const marketGroups = (marketGroupRows[0] as Array<Record<string, unknown>>)
+      .map((row) => stringValue(row.market_group))
+      .filter(Boolean);
+    const rawClues = (clueRows[0] as Array<Record<string, unknown>>).map((row) => {
+      const publicDemandMat = numberValue(row.public_demand_mat);
+      const chiesiPublicDemandMat = numberValue(row.chiesi_public_demand_mat);
+      return {
+        clue: stringValue(row.clue),
+        unitName: stringValue(row.unit_name, stringValue(row.clue)),
+        territory: stringValue(row.territory),
+        district: stringValue(row.district),
+        state: stringValue(row.state),
+        institution: stringValue(row.institution),
+        reference: stringValue(row.reference),
+        visited: Boolean(row.visited),
+        marketGroup: stringValue(row.market_group, 'Unmapped market'),
+        publicDemandMat,
+        chiesiPublicDemandMat,
+        chiesiShareMat: publicDemandMat > 0 ? chiesiPublicDemandMat / publicDemandMat : 0,
+        demandSegment: 'Very Low Public Demand',
+        visitCoverageSegment: 'Review / unmapped',
+        chiesiAffinitySegment: 'No / Minimal Chiesi Affinity',
+        airRelevanceSegment: 'E. Review / Unmapped',
+      };
+    });
+
+    if (marketGroups.length === 0 && rawClues.length === 0) return null;
+
+    const segmentedClues = rawClues.map((clue, index) => {
+      const demandSegment = demandSegmentForIndex(index, rawClues.length);
+      const withDemand = { ...clue, demandSegment };
+      const coverage = visitCoverageSegment(withDemand);
+      const affinity = affinitySegment(withDemand.chiesiShareMat);
+      const withCoverage = { ...withDemand, visitCoverageSegment: coverage, chiesiAffinitySegment: affinity };
+      return {
+        ...withCoverage,
+        airRelevanceSegment: relevanceSegment(withCoverage),
+      };
+    });
+    const sortedClues = sortPublicCluesForUi(segmentedClues);
+    const warnings =
+      sortedClues.length === 0
+        ? ['No GOB360 public CLUE demand was found for the current MAT period and market group.']
+        : [];
+
+    return {
+      selectedMarketGroup,
+      marketGroups,
+      clues: sortedClues,
+      matrix: buildPublicMatrix(segmentedClues),
+      relevanceSummary: buildPublicRelevanceSummary(segmentedClues),
+      totalClues: segmentedClues.length,
+      visitedClues: segmentedClues.filter((clue) => clue.visited).length,
+      notVisitedClues: segmentedClues.filter((clue) => !clue.visited).length,
+      totalPublicDemandMat: segmentedClues.reduce((sum, clue) => sum + clue.publicDemandMat, 0),
+      totalChiesiPublicDemandMat: segmentedClues.reduce((sum, clue) => sum + clue.chiesiPublicDemandMat, 0),
+      warnings,
+    };
+  } catch (error) {
+    if (isMissingServingArtifact(error)) return null;
+    throw error;
   }
 }

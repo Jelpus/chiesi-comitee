@@ -17,6 +17,8 @@ import type {
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const AIR_MATCHES_TABLE = 'chiesi-committee.chiesi_committee_admin.air_doctor_name_matches';
+const AIR_MEDICAL_SERVING_TABLE = 'chiesi-committee.chiesi_committee_serving.air_medical_file_rows';
+const AIR_CLOSEUP_SERVING_TABLE = 'chiesi-committee.chiesi_committee_serving.air_closeup_doctor_mat';
 const AIR_MEDICAL_FILE_TABLE =
   'chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file';
 const CLOSEUP_VIEW =
@@ -30,15 +32,24 @@ let airPageDataCache:
     }
   | null = null;
 let airPageDataPromise: Promise<AirPageData> | null = null;
+let ensureAirDoctorMatchesTablePromise: Promise<void> | null = null;
 
 function numberValue(value: unknown) {
   const numeric = Number(value ?? 0);
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function isMissingServingArtifact(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return code === 404 || /not found/i.test(message);
+}
+
 async function ensureAirDoctorMatchesTable() {
+  if (ensureAirDoctorMatchesTablePromise) return ensureAirDoctorMatchesTablePromise;
+
   const client = getBigQueryClient();
-  await client.query({
+  ensureAirDoctorMatchesTablePromise = client.query({
     query: `
       CREATE TABLE IF NOT EXISTS \`${AIR_MATCHES_TABLE}\` (
         reporting_version_id STRING,
@@ -54,7 +65,9 @@ async function ensureAirDoctorMatchesTable() {
         generated_at TIMESTAMP
       )
     `,
-  });
+  }).then(() => undefined);
+
+  return ensureAirDoctorMatchesTablePromise;
 }
 
 export async function getLatestAirReportingVersion(): Promise<AirReportingVersion | null> {
@@ -240,8 +253,46 @@ async function getOrCreateDoctorMatches(
   });
 }
 
-export async function getAirMedicalFileRows(periodMonth: string): Promise<AirMedicalFileRow[]> {
+function mapAirMedicalFileRows(rows: Array<Record<string, unknown>>): AirMedicalFileRow[] {
+  return rows.map((row) => ({
+    imsId: row.ims_id == null ? null : String(row.ims_id),
+    fullName: row.full_name == null ? null : String(row.full_name),
+    territory: row.territory == null ? null : String(row.territory),
+    district: row.district == null ? null : String(row.district),
+    objetivo: numberValue(row.objetivo),
+    bu: row.bu == null ? null : String(row.bu),
+    accountType: row.account_type == null ? null : String(row.account_type),
+  }));
+}
+
+export async function getAirMedicalFileRows(
+  periodMonth: string,
+  reportingVersionId?: string,
+): Promise<AirMedicalFileRow[]> {
   const client = getBigQueryClient();
+  if (reportingVersionId) {
+    try {
+      const [rows] = await client.query({
+        query: `
+          SELECT
+            ims_id,
+            full_name,
+            territory,
+            district,
+            objetivo,
+            bu,
+            account_type
+          FROM \`${AIR_MEDICAL_SERVING_TABLE}\`
+          WHERE reporting_version_id = @reportingVersionId
+        `,
+        params: { reportingVersionId },
+      });
+      return mapAirMedicalFileRows(rows as Array<Record<string, unknown>>);
+    } catch (error) {
+      if (!isMissingServingArtifact(error)) throw error;
+    }
+  }
+
   const [rows] = await client.query({
     query: `
       SELECT
@@ -266,19 +317,28 @@ export async function getAirMedicalFileRows(periodMonth: string): Promise<AirMed
     params: { periodMonth },
   });
 
-  return (rows as Array<Record<string, unknown>>).map((row) => ({
-    imsId: row.ims_id == null ? null : String(row.ims_id),
-    fullName: row.full_name == null ? null : String(row.full_name),
-    territory: row.territory == null ? null : String(row.territory),
-    district: row.district == null ? null : String(row.district),
-    objetivo: numberValue(row.objetivo),
-    bu: row.bu == null ? null : String(row.bu),
-    accountType: row.account_type == null ? null : String(row.account_type),
-  }));
+  return mapAirMedicalFileRows(rows as Array<Record<string, unknown>>);
 }
 
-export async function getCloseupMarketGroups(periodMonth: string) {
+export async function getCloseupMarketGroups(periodMonth: string, reportingVersionId?: string) {
   const client = getBigQueryClient();
+  if (reportingVersionId) {
+    try {
+      const [rows] = await client.query({
+        query: `
+          SELECT DISTINCT market_group
+          FROM \`${AIR_CLOSEUP_SERVING_TABLE}\`
+          WHERE reporting_version_id = @reportingVersionId
+          ORDER BY market_group
+        `,
+        params: { reportingVersionId },
+      });
+      return (rows as Array<Record<string, unknown>>).map((row) => String(row.market_group ?? '')).filter(Boolean);
+    } catch (error) {
+      if (!isMissingServingArtifact(error)) throw error;
+    }
+  }
+
   const [rows] = await client.query({
     query: `
       SELECT DISTINCT COALESCE(NULLIF(TRIM(market_group), ''), 'Unmapped market') AS market_group
@@ -297,21 +357,67 @@ export async function getCloseupMatDoctors(
   periodMonth: string,
   hcpNames?: string[],
   marketGroup?: string,
+  reportingVersionId?: string,
 ): Promise<AirCloseupDoctor[]> {
   if (hcpNames && hcpNames.length === 0) return [];
 
   const client = getBigQueryClient();
   const filterByNames = hcpNames && hcpNames.length > 0;
   const filterByMarketGroup = marketGroup && marketGroup !== 'all';
-  const hcpNameFilter = filterByNames ? 'AND hcp_name IN UNNEST(@hcpNames)' : '';
-  const marketGroupFilter = filterByMarketGroup
-    ? "AND COALESCE(NULLIF(TRIM(market_group), ''), 'Unmapped market') = @marketGroup"
-    : '';
   const params = {
     periodMonth,
     ...(filterByNames ? { hcpNames } : {}),
     ...(filterByMarketGroup ? { marketGroup } : {}),
   };
+
+  if (reportingVersionId) {
+    const servingFilters = [
+      'reporting_version_id = @reportingVersionId',
+      ...(filterByNames ? ['hcp_name IN UNNEST(@hcpNames)'] : []),
+      ...(filterByMarketGroup ? ['market_group = @marketGroup'] : []),
+    ].join('\n        AND ');
+    try {
+      const [rows] = await client.query({
+        query: `
+          SELECT
+            hcp_name,
+            market_group,
+            visited,
+            market_rx_mat,
+            chiesi_rx_mat
+          FROM \`${AIR_CLOSEUP_SERVING_TABLE}\`
+          WHERE ${servingFilters}
+        `,
+        params: {
+          reportingVersionId,
+          ...(filterByNames ? { hcpNames } : {}),
+          ...(filterByMarketGroup ? { marketGroup } : {}),
+        },
+      });
+
+      return (rows as Array<Record<string, unknown>>)
+        .map((row) => {
+          const marketRxMat = numberValue(row.market_rx_mat);
+          const chiesiRxMat = numberValue(row.chiesi_rx_mat);
+          return {
+            hcpName: String(row.hcp_name ?? ''),
+            marketGroup: String(row.market_group ?? 'Unmapped market'),
+            visited: row.visited == null ? null : Boolean(row.visited),
+            marketRxMat,
+            chiesiRxMat,
+            chiesiShareMat: marketRxMat > 0 ? chiesiRxMat / marketRxMat : 0,
+          };
+        })
+        .filter((row) => row.hcpName);
+    } catch (error) {
+      if (!isMissingServingArtifact(error)) throw error;
+    }
+  }
+
+  const hcpNameFilter = filterByNames ? 'AND hcp_name IN UNNEST(@hcpNames)' : '';
+  const marketGroupFilter = filterByMarketGroup
+    ? "AND COALESCE(NULLIF(TRIM(market_group), ''), 'Unmapped market') = @marketGroup"
+    : '';
   const [availabilityRows] = await client.query({
     query: `
       SELECT COUNT(1) AS hcp_rows
@@ -444,8 +550,8 @@ async function buildAirPageData(options: { marketGroup?: string; includeRawRows?
   }
 
   const [medicalRows, marketGroups] = await Promise.all([
-    getAirMedicalFileRows(reportingVersion.periodMonth),
-    getCloseupMarketGroups(reportingVersion.periodMonth),
+    getAirMedicalFileRows(reportingVersion.periodMonth, reportingVersion.reportingVersionId),
+    getCloseupMarketGroups(reportingVersion.periodMonth, reportingVersion.reportingVersionId),
   ]);
   const closeupMarketGroup =
     selectedMarketGroup !== 'all' && marketGroups.includes(selectedMarketGroup) ? selectedMarketGroup : 'all';
@@ -466,14 +572,29 @@ async function buildAirPageData(options: { marketGroup?: string; includeRawRows?
   ];
   let closeupDoctors =
     doctorsWithoutPersistedMatch.length > 0
-      ? await getCloseupMatDoctors(reportingVersion.periodMonth, undefined, closeupMarketGroup)
-      : await getCloseupMatDoctors(reportingVersion.periodMonth, persistedCloseupNames, closeupMarketGroup);
+      ? await getCloseupMatDoctors(
+          reportingVersion.periodMonth,
+          undefined,
+          closeupMarketGroup,
+          reportingVersion.reportingVersionId,
+        )
+      : await getCloseupMatDoctors(
+          reportingVersion.periodMonth,
+          persistedCloseupNames,
+          closeupMarketGroup,
+          reportingVersion.reportingVersionId,
+        );
   if (
     closeupDoctors.length === 0 &&
     doctorsWithoutPersistedMatch.length === 0 &&
     persistedCloseupNames.length > 0
   ) {
-    closeupDoctors = await getCloseupMatDoctors(reportingVersion.periodMonth, undefined, closeupMarketGroup);
+    closeupDoctors = await getCloseupMatDoctors(
+      reportingVersion.periodMonth,
+      undefined,
+      closeupMarketGroup,
+      reportingVersion.reportingVersionId,
+    );
   }
   const publicData = await publicDataPromise;
 

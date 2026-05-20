@@ -2,6 +2,7 @@ import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 
 const FORM_RESPONSIBLES_TABLE = 'chiesi-committee.chiesi_committee_admin.form_responsibles';
+let ensureFormResponsiblesTablePromise: Promise<void> | null = null;
 
 export const formDefinitions = [
   {
@@ -58,8 +59,10 @@ function getDefinition(formCode: string) {
 }
 
 async function ensureFormResponsiblesTable() {
+  if (ensureFormResponsiblesTablePromise) return ensureFormResponsiblesTablePromise;
+
   const client = getBigQueryClient();
-  await client.query({
+  ensureFormResponsiblesTablePromise = client.query({
     query: `
       CREATE TABLE IF NOT EXISTS \`${FORM_RESPONSIBLES_TABLE}\` (
         form_code STRING NOT NULL,
@@ -75,7 +78,9 @@ async function ensureFormResponsiblesTable() {
         updated_by STRING
       )
     `,
-  });
+  }).then(() => undefined);
+
+  return ensureFormResponsiblesTablePromise;
 }
 
 function rowToFormResponsible(row: Record<string, unknown>): FormResponsibleRow {

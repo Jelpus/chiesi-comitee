@@ -6,6 +6,7 @@ import { getAirPublicPageData } from '@/lib/air/get-air-public-data';
 import { getLatestAirReportingVersion } from '@/lib/air/get-air-data';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 export default async function AirPublicWorkbenchPage({
   searchParams,

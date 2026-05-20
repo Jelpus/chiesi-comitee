@@ -2,6 +2,7 @@ import { AirDashboard } from '@/components/air/air-dashboard';
 import { getAirPageData } from '@/lib/air/get-air-data';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 export default async function AirPage({
   searchParams,

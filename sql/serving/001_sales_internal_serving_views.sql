@@ -25,42 +25,42 @@ FROM `chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_vs_
 -- 2) Enriched monthly grain for app analytics (actual + LY + budget + metadata)
 CREATE OR REPLACE VIEW `chiesi-committee.chiesi_committee_serving.vw_sales_internal_month_enriched` AS
 SELECT
-  p.period_month,
-  p.bu,
-  p.channel,
+  COALESCE(p.period_month, b.period_month) AS period_month,
+  COALESCE(p.bu, b.bu) AS bu,
+  COALESCE(p.channel, b.channel) AS channel,
   p.distribution_channel,
   p.distribution_channel_name,
-  p.sales_group,
-  p.product_id,
-  p.canonical_product_code,
-  p.canonical_product_name,
-  COALESCE(pm.business_unit_name, p.bu) AS business_unit_name,
+  COALESCE(p.sales_group, b.sales_group) AS sales_group,
+  COALESCE(p.product_id, b.product_id) AS product_id,
+  COALESCE(p.canonical_product_code, b.canonical_product_code) AS canonical_product_code,
+  COALESCE(p.canonical_product_name, b.canonical_product_name) AS canonical_product_name,
+  COALESCE(pm.business_unit_name, p.bu, b.bu) AS business_unit_name,
   pm.portfolio_name,
   pm.brand_name,
   pm.subbrand_or_device,
-  p.actual_value,
+  COALESCE(p.actual_value, 0) AS actual_value,
   ly.actual_value AS ly_value,
-  b.budget_value,
+  COALESCE(b.budget_value, 0) AS budget_value,
   COALESCE(p.actual_value, 0) - COALESCE(b.budget_value, 0) AS variance_vs_budget,
-  SAFE_DIVIDE(p.actual_value, NULLIF(b.budget_value, 0)) AS coverage_pct,
+  SAFE_DIVIDE(COALESCE(p.actual_value, 0), NULLIF(b.budget_value, 0)) AS coverage_pct,
   p.row_count,
   p.customer_count
 FROM `chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_active` p
-LEFT JOIN `chiesi-committee.chiesi_committee_admin.product_metadata` pm
-  ON pm.product_id = p.product_id
-LEFT JOIN `chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_active` ly
-  ON ly.product_id = p.product_id
-  AND ly.sales_group = p.sales_group
-  AND ly.bu = p.bu
-  AND ly.channel = p.channel
-  AND ly.distribution_channel = p.distribution_channel
-  AND ly.period_month = DATE_SUB(p.period_month, INTERVAL 1 YEAR)
-LEFT JOIN `chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_vs_budget` b
+FULL OUTER JOIN `chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_vs_budget` b
   ON b.product_id = p.product_id
   AND b.sales_group = p.sales_group
   AND b.bu = p.bu
   AND b.channel = p.channel
-  AND b.period_month = p.period_month;
+  AND b.period_month = p.period_month
+LEFT JOIN `chiesi-committee.chiesi_committee_admin.product_metadata` pm
+  ON pm.product_id = COALESCE(p.product_id, b.product_id)
+LEFT JOIN `chiesi-committee.chiesi_committee_mart.vw_sales_internal_product_month_active` ly
+  ON ly.product_id = COALESCE(p.product_id, b.product_id)
+  AND ly.sales_group = COALESCE(p.sales_group, b.sales_group)
+  AND ly.bu = COALESCE(p.bu, b.bu)
+  AND ly.channel = COALESCE(p.channel, b.channel)
+  AND ly.distribution_channel = p.distribution_channel
+  AND ly.period_month = DATE_SUB(COALESCE(p.period_month, b.period_month), INTERVAL 1 YEAR);
 
 -- 3) Monthly YTD trend (actual, LY, budget, budget run rate)
 CREATE OR REPLACE VIEW `chiesi-committee.chiesi_committee_serving.vw_sales_internal_month_trend_ytd` AS

@@ -149,20 +149,20 @@ budget_agg AS (
 )
 
 SELECT
-  a.period_month,
-  a.bu,
-  a.channel,
-  a.sales_group,
-  a.product_id,
-  a.canonical_product_code,
-  a.canonical_product_name,
-  a.actual_value,
+  COALESCE(a.period_month, b.period_month) AS period_month,
+  COALESCE(a.bu, b.bu) AS bu,
+  COALESCE(a.channel, b.channel) AS channel,
+  COALESCE(a.sales_group, b.sales_group) AS sales_group,
+  COALESCE(a.product_id, b.product_id) AS product_id,
+  COALESCE(a.canonical_product_code, b.canonical_product_code) AS canonical_product_code,
+  COALESCE(a.canonical_product_name, b.canonical_product_name) AS canonical_product_name,
+  COALESCE(a.actual_value, 0) AS actual_value,
   COALESCE(b.budget_value, 0) AS budget_value,
-  a.actual_value - COALESCE(b.budget_value, 0) AS variance_vs_budget,
-  SAFE_DIVIDE(a.actual_value - COALESCE(b.budget_value, 0), NULLIF(b.budget_value, 0)) AS variance_vs_budget_pct,
+  COALESCE(a.actual_value, 0) - COALESCE(b.budget_value, 0) AS variance_vs_budget,
+  SAFE_DIVIDE(COALESCE(a.actual_value, 0) - COALESCE(b.budget_value, 0), NULLIF(b.budget_value, 0)) AS variance_vs_budget_pct,
   a.last_normalized_at
 FROM actual_agg a
-LEFT JOIN budget_agg b
+FULL OUTER JOIN budget_agg b
   ON a.period_month = b.period_month
  AND COALESCE(a.bu,'') = COALESCE(b.bu,'')
  AND COALESCE(a.channel,'') = COALESCE(b.channel,'')

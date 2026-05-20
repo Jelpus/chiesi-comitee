@@ -74,6 +74,7 @@ export async function refreshSalesInternalServingArtifacts(client: BigQuery) {
           sales_group,
           product_id,
           canonical_product_code,
+          canonical_product_name,
           SUM(budget_value) AS budget_value,
           SUM(variance_vs_budget) AS variance_vs_budget,
           SAFE_DIVIDE(SUM(variance_vs_budget), NULLIF(SUM(budget_value), 0)) AS variance_vs_budget_pct
@@ -84,35 +85,36 @@ export async function refreshSalesInternalServingArtifacts(client: BigQuery) {
           channel,
           sales_group,
           product_id,
-          canonical_product_code
+          canonical_product_code,
+          canonical_product_name
       )
       SELECT
-        a.period_month,
-        a.bu,
-        a.channel,
+        COALESCE(a.period_month, b.period_month) AS period_month,
+        COALESCE(a.bu, b.bu) AS bu,
+        COALESCE(a.channel, b.channel) AS channel,
         a.distribution_channel,
         a.distribution_channel_name,
-        a.sales_group,
-        a.product_id,
-        a.canonical_product_code,
-        a.canonical_product_name,
-        COALESCE(pm.business_unit_name, a.bu) AS business_unit_name,
+        COALESCE(a.sales_group, b.sales_group) AS sales_group,
+        COALESCE(a.product_id, b.product_id) AS product_id,
+        COALESCE(a.canonical_product_code, b.canonical_product_code) AS canonical_product_code,
+        COALESCE(a.canonical_product_name, b.canonical_product_name) AS canonical_product_name,
+        COALESCE(pm.business_unit_name, a.bu, b.bu) AS business_unit_name,
         pm.portfolio_name,
         pm.brand_name,
         pm.subbrand_or_device,
-        a.actual_value,
+        COALESCE(a.actual_value, 0) AS actual_value,
         COALESCE(b.budget_value, 0) AS budget_value,
-        COALESCE(b.variance_vs_budget, a.actual_value - COALESCE(b.budget_value, 0)) AS variance_vs_budget,
+        COALESCE(b.variance_vs_budget, COALESCE(a.actual_value, 0) - COALESCE(b.budget_value, 0)) AS variance_vs_budget,
         COALESCE(
           b.variance_vs_budget_pct,
-          SAFE_DIVIDE(a.actual_value - COALESCE(b.budget_value, 0), NULLIF(b.budget_value, 0))
+          SAFE_DIVIDE(COALESCE(a.actual_value, 0) - COALESCE(b.budget_value, 0), NULLIF(b.budget_value, 0))
         ) AS variance_vs_budget_pct,
         ly.actual_value AS ly_value,
         a.row_count,
         a.customer_count,
         a.last_normalized_at
       FROM product_month a
-      LEFT JOIN budget_agg b
+      FULL OUTER JOIN budget_agg b
         ON a.period_month = b.period_month
        AND COALESCE(a.bu,'') = COALESCE(b.bu,'')
        AND COALESCE(a.channel,'') = COALESCE(b.channel,'')
@@ -127,7 +129,7 @@ export async function refreshSalesInternalServingArtifacts(client: BigQuery) {
        AND COALESCE(ly.sales_group,'') = COALESCE(a.sales_group,'')
        AND COALESCE(ly.product_id,'') = COALESCE(a.product_id,'')
       LEFT JOIN product_metadata_dedup pm
-        ON pm.product_id = a.product_id
+        ON pm.product_id = COALESCE(a.product_id, b.product_id)
     `,
   });
 

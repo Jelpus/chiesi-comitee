@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { getAirPageData } from '@/lib/air/get-air-data';
 
+export const maxDuration = 300;
+
 function visitLabel(value: boolean | null) {
   if (value === true) return 'Visited';
   if (value === false) return 'Not visited';

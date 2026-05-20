@@ -11,6 +11,10 @@ const INTERACTIONS = '`chiesi-committee.chiesi_committee_stg.stg_business_excell
 const TFT = '`chiesi-committee.chiesi_committee_stg.vw_business_excellence_salesforce_tft_effective`';
 const STANDARD_DAYS = '`chiesi-committee.chiesi_committee_stg.stg_business_excellence_standard_days`';
 
+type FieldForceRefreshScope = {
+  reportingVersionId?: string;
+};
+
 const TFT_EFFECTIVE_VIEW_SQL = `
 CREATE OR REPLACE VIEW ${TFT} AS
 WITH parsed AS (
@@ -168,7 +172,25 @@ function latestUploadCtes() {
   `;
 }
 
-export async function refreshBusinessExcellenceFieldForceServingArtifacts(client: BigQuery) {
+async function clearServingTable(client: BigQuery, tableName: string, scope: FieldForceRefreshScope) {
+  if (scope.reportingVersionId) {
+    await client.query({
+      query: `
+        DELETE FROM ${SERVING_SCHEMA}.${tableName}
+        WHERE reporting_version_id = @reportingVersionId
+      `,
+      params: { reportingVersionId: scope.reportingVersionId },
+    });
+    return;
+  }
+
+  await client.query({ query: `TRUNCATE TABLE ${SERVING_SCHEMA}.${tableName}` });
+}
+
+export async function refreshBusinessExcellenceFieldForceServingArtifacts(
+  client: BigQuery,
+  scope: FieldForceRefreshScope = {},
+) {
   await client.query({
     query: `
       CREATE SCHEMA IF NOT EXISTS ${SERVING_SCHEMA}
@@ -335,10 +357,64 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
 
   await client.query({
     query: `
-      CREATE OR REPLACE TABLE ${SERVING_SCHEMA}.business_excellence_ff_hcp_month
+      CREATE TABLE IF NOT EXISTS ${SERVING_SCHEMA}.business_excellence_ff_hcp_month (
+        reporting_version_id STRING,
+        period_month DATE,
+        bu STRING,
+        district STRING,
+        territory_name STRING,
+        territory_normalized STRING,
+        potencial STRING,
+        specialty_consolidated STRING,
+        account_type STRING,
+        client_name STRING,
+        doctor_key STRING,
+        onekey_key STRING,
+        ims_key STRING,
+        objective NUMERIC,
+        coverage_effective NUMERIC,
+        adjusted_objective NUMERIC,
+        interactions INT64,
+        in_frequency BOOL,
+        in_frequency_adjusted BOOL,
+        days_standard NUMERIC,
+        days_out NUMERIC,
+        days_adjusted NUMERIC,
+        normalized_at TIMESTAMP
+      )
       PARTITION BY period_month
       CLUSTER BY reporting_version_id, bu, territory_normalized, district
-      AS
+    `,
+  });
+
+  await clearServingTable(client, 'business_excellence_ff_hcp_month', scope);
+  await client.query({
+    query: `
+      INSERT INTO ${SERVING_SCHEMA}.business_excellence_ff_hcp_month (
+        reporting_version_id,
+        period_month,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        account_type,
+        client_name,
+        doctor_key,
+        onekey_key,
+        ims_key,
+        objective,
+        coverage_effective,
+        adjusted_objective,
+        interactions,
+        in_frequency,
+        in_frequency_adjusted,
+        days_standard,
+        days_out,
+        days_adjusted,
+        normalized_at
+      )
       WITH doctor_month AS (
         SELECT
           reporting_version_id,
@@ -358,6 +434,7 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
           MAX(normalized_at) AS normalized_at
         FROM ${SERVING_SCHEMA}.vw_business_excellence_ff_t1_medical_universe
         WHERE doctor_key != ''
+          ${scope.reportingVersionId ? 'AND reporting_version_id = @reportingVersionId' : ''}
         GROUP BY 1,2,3,4,5,6,7,8,9,11
       ),
       interaction_counts AS (
@@ -370,6 +447,8 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
           doctor_key,
           COUNT(DISTINCT interaction_id) AS interactions
         FROM ${SERVING_SCHEMA}.vw_business_excellence_ff_t2_interactions_matched
+        WHERE 1 = 1
+          ${scope.reportingVersionId ? 'AND reporting_version_id = @reportingVersionId' : ''}
         GROUP BY 1,2,3,4,5,6
       )
       SELECT
@@ -410,14 +489,51 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
        AND ed.bu = dm.bu
        AND ed.territory_normalized = dm.territory_normalized
     `,
+    params: scope.reportingVersionId ? { reportingVersionId: scope.reportingVersionId } : undefined,
   });
 
   await client.query({
     query: `
-      CREATE OR REPLACE TABLE ${SERVING_SCHEMA}.business_excellence_ff_hcp_channel_month
+      CREATE TABLE IF NOT EXISTS ${SERVING_SCHEMA}.business_excellence_ff_hcp_channel_month (
+        reporting_version_id STRING,
+        period_month DATE,
+        bu STRING,
+        district STRING,
+        territory_name STRING,
+        territory_normalized STRING,
+        potencial STRING,
+        specialty_consolidated STRING,
+        account_type STRING,
+        client_name STRING,
+        doctor_key STRING,
+        channel STRING,
+        visit_type STRING,
+        interactions INT64
+      )
       PARTITION BY period_month
       CLUSTER BY reporting_version_id, bu, channel, visit_type
-      AS
+    `,
+  });
+
+  await clearServingTable(client, 'business_excellence_ff_hcp_channel_month', scope);
+  await client.query({
+    query: `
+      INSERT INTO ${SERVING_SCHEMA}.business_excellence_ff_hcp_channel_month (
+        reporting_version_id,
+        period_month,
+        bu,
+        district,
+        territory_name,
+        territory_normalized,
+        potencial,
+        specialty_consolidated,
+        account_type,
+        client_name,
+        doctor_key,
+        channel,
+        visit_type,
+        interactions
+      )
       SELECT
         reporting_version_id,
         period_month,
@@ -434,7 +550,10 @@ export async function refreshBusinessExcellenceFieldForceServingArtifacts(client
         visit_type,
         COUNT(DISTINCT interaction_id) AS interactions
       FROM ${SERVING_SCHEMA}.vw_business_excellence_ff_t2_interactions_matched
+      WHERE 1 = 1
+        ${scope.reportingVersionId ? 'AND reporting_version_id = @reportingVersionId' : ''}
       GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
     `,
+    params: scope.reportingVersionId ? { reportingVersionId: scope.reportingVersionId } : undefined,
   });
 }

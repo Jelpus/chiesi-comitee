@@ -2,6 +2,7 @@ import { AirScenarioWorkbench } from '@/components/air/air-scenario-workbench';
 import { getAirPageData } from '@/lib/air/get-air-data';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 export default async function AirPrivateWorkbenchPage({
   searchParams,
