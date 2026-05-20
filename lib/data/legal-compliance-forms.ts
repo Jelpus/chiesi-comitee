@@ -44,6 +44,33 @@ async function queryWithUpdateRateLimitRetry<T>(
   }
 }
 
+async function ensureMissingColumns(
+  tableId: string,
+  columns: Array<{ name: string; type: string }>,
+) {
+  const [projectId, datasetId, tableName] = tableId.split('.');
+  const client = getBigQueryClient();
+  const [rows] = await client.query({
+    query: `
+      SELECT column_name
+      FROM \`${projectId}.${datasetId}.INFORMATION_SCHEMA.COLUMNS\`
+      WHERE table_name = @tableName
+    `,
+    params: { tableName },
+  });
+  const existingColumns = new Set((rows as Array<Record<string, unknown>>).map((row) => String(row.column_name)));
+  const missingColumns = columns.filter((column) => !existingColumns.has(column.name));
+
+  for (const column of missingColumns) {
+    await queryWithUpdateRateLimitRetry(() => client.query({
+      query: `
+        ALTER TABLE \`${tableId}\`
+        ADD COLUMN ${column.name} ${column.type}
+      `,
+    }));
+  }
+}
+
 function toNullableNumber(value: string | number | null | undefined) {
   if (value == null) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -75,36 +102,13 @@ async function ensureLegalInputsTable() {
           )
         `,
       }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${LEGAL_INPUTS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS objective_count NUMERIC
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${LEGAL_INPUTS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS current_count NUMERIC
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${LEGAL_INPUTS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS active_count NUMERIC
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${LEGAL_INPUTS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS additional_amount_mxn NUMERIC
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${LEGAL_INPUTS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS comment STRING
-        `,
-      }));
+      await ensureMissingColumns(LEGAL_INPUTS_TABLE, [
+        { name: 'objective_count', type: 'NUMERIC' },
+        { name: 'current_count', type: 'NUMERIC' },
+        { name: 'active_count', type: 'NUMERIC' },
+        { name: 'additional_amount_mxn', type: 'NUMERIC' },
+        { name: 'comment', type: 'STRING' },
+      ]);
     })();
   }
   await ensureTablePromise;

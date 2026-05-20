@@ -72,6 +72,33 @@ async function queryWithUpdateRateLimitRetry<T>(
   }
 }
 
+async function ensureMissingColumns(
+  tableId: string,
+  columns: Array<{ name: string; type: string }>,
+) {
+  const [projectId, datasetId, tableName] = tableId.split('.');
+  const client = getBigQueryClient();
+  const [rows] = await client.query({
+    query: `
+      SELECT column_name
+      FROM \`${projectId}.${datasetId}.INFORMATION_SCHEMA.COLUMNS\`
+      WHERE table_name = @tableName
+    `,
+    params: { tableName },
+  });
+  const existingColumns = new Set((rows as Array<Record<string, unknown>>).map((row) => String(row.column_name)));
+  const missingColumns = columns.filter((column) => !existingColumns.has(column.name));
+
+  for (const column of missingColumns) {
+    await queryWithUpdateRateLimitRetry(() => client.query({
+      query: `
+        ALTER TABLE \`${tableId}\`
+        ADD COLUMN ${column.name} ${column.type}
+      `,
+    }));
+  }
+}
+
 async function ensureTargetsTable() {
   if (!ensureTargetsTablePromise) {
     ensureTargetsTablePromise = (async () => {
@@ -99,42 +126,14 @@ async function ensureTargetsTable() {
           )
         `,
       }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${TARGETS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS kpi_label STRING
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${TARGETS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS revision_number INT64
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${TARGETS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS is_deleted BOOL
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${TARGETS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS reporting_version_id STRING
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${TARGETS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS period_month DATE
-        `,
-      }));
-      await queryWithUpdateRateLimitRetry(() => client.query({
-        query: `
-          ALTER TABLE \`${TARGETS_TABLE}\`
-          ADD COLUMN IF NOT EXISTS form_fields STRING
-        `,
-      }));
+      await ensureMissingColumns(TARGETS_TABLE, [
+        { name: 'kpi_label', type: 'STRING' },
+        { name: 'revision_number', type: 'INT64' },
+        { name: 'is_deleted', type: 'BOOL' },
+        { name: 'reporting_version_id', type: 'STRING' },
+        { name: 'period_month', type: 'DATE' },
+        { name: 'form_fields', type: 'STRING' },
+      ]);
     })();
   }
   await ensureTargetsTablePromise;

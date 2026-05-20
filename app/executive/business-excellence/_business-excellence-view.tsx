@@ -2879,6 +2879,15 @@ const getCachedLatestPeriod = unstable_cache(
   { revalidate: 60 },
 );
 
+async function optionalBusinessExcellenceData<T>(label: string, promise: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await promise;
+  } catch (error) {
+    console.error(`Business Excellence optional data failed: ${label}`, error);
+    return fallback;
+  }
+}
+
 const getCachedPrivateSellOutData = unstable_cache(
   async (
     reportingVersionId: string,
@@ -2888,9 +2897,11 @@ const getCachedPrivateSellOutData = unstable_cache(
     territory?: string,
   ) => {
     const filters = { periodMonth, marketGroup, manager, territory };
+    const [overview, martSummary] = await Promise.all([
+      getBusinessExcellencePrivateSellOutOverview(reportingVersionId, filters),
+      getBusinessExcellencePrivateSellOutMartSummary(reportingVersionId, marketGroup),
+    ]);
     const [
-      overview,
-      martSummary,
       martRows,
       rinoclenilRows,
       chartPoints,
@@ -2903,19 +2914,17 @@ const getCachedPrivateSellOutData = unstable_cache(
       territoryRows,
       productRows,
     ] = await Promise.all([
-      getBusinessExcellencePrivateSellOutOverview(reportingVersionId, filters),
-      getBusinessExcellencePrivateSellOutMartSummary(reportingVersionId, marketGroup),
-      getBusinessExcellencePrivateSellOutMartRows(reportingVersionId, marketGroup, 500),
-      getBusinessExcellencePrivateSellOutMartRowsByBrand(reportingVersionId, 'rinoclenil', marketGroup),
-      getBusinessExcellencePrivateMarketChartPoints(reportingVersionId),
-      getBusinessExcellencePrivateWeeklyBenchmark(reportingVersionId),
-      getBusinessExcellencePrivateChannelPerformance(reportingVersionId),
-      getBusinessExcellencePrivateDddDimensionRanking(reportingVersionId, 30),
-      getBusinessExcellencePrivatePrescriptionDimensionRanking(reportingVersionId, 30),
-      getBusinessExcellencePrivateBrandSpecialtySignals(reportingVersionId),
-      getBusinessExcellencePrivateManagers(reportingVersionId, filters, 8),
-      getBusinessExcellencePrivateTerritories(reportingVersionId, filters, 8),
-      getBusinessExcellencePrivateProducts(reportingVersionId, filters, 8),
+      optionalBusinessExcellenceData('private sell-out mart rows', getBusinessExcellencePrivateSellOutMartRows(reportingVersionId, marketGroup, 500), []),
+      optionalBusinessExcellenceData('rinoclenil mart rows', getBusinessExcellencePrivateSellOutMartRowsByBrand(reportingVersionId, 'rinoclenil', marketGroup), []),
+      optionalBusinessExcellenceData('private market chart points', getBusinessExcellencePrivateMarketChartPoints(reportingVersionId), []),
+      optionalBusinessExcellenceData('private weekly benchmark', getBusinessExcellencePrivateWeeklyBenchmark(reportingVersionId), null),
+      optionalBusinessExcellenceData('private channel performance', getBusinessExcellencePrivateChannelPerformance(reportingVersionId), null),
+      optionalBusinessExcellenceData('private DDD ranking', getBusinessExcellencePrivateDddDimensionRanking(reportingVersionId, 30), []),
+      optionalBusinessExcellenceData('private prescription ranking', getBusinessExcellencePrivatePrescriptionDimensionRanking(reportingVersionId, 30), []),
+      optionalBusinessExcellenceData('private specialty signals', getBusinessExcellencePrivateBrandSpecialtySignals(reportingVersionId), []),
+      optionalBusinessExcellenceData('private managers', getBusinessExcellencePrivateManagers(reportingVersionId, filters, 8), []),
+      optionalBusinessExcellenceData('private territories', getBusinessExcellencePrivateTerritories(reportingVersionId, filters, 8), []),
+      optionalBusinessExcellenceData('private products', getBusinessExcellencePrivateProducts(reportingVersionId, filters, 8), []),
     ]);
 
     const mergedMartRows = [...martRows, ...rinoclenilRows];
@@ -3232,4 +3241,3 @@ export async function BusinessExcellenceView({
     </section>
   );
 }
-

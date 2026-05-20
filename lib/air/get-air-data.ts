@@ -208,9 +208,34 @@ async function getOrCreateDoctorMatches(
   doctors: AirDoctorProfile[],
   closeupDoctors: AirCloseupDoctor[],
   existingPersistedMatches?: AirDoctorMatch[],
+  options: { allowGenerate?: boolean } = {},
 ) {
+  const persistedMatches = existingPersistedMatches ?? (await getPersistedDoctorMatches(reportingVersion));
+  const persistedByIms = new Map(persistedMatches.map((match) => [match.medicalFileImsId, match]));
+
+  if (!options.allowGenerate) {
+    return doctors.map((doctor) => {
+      const persisted = persistedByIms.get(doctor.imsId);
+      if (persisted) {
+        return {
+          ...persisted,
+          medicalFileFullName: doctor.fullName,
+        };
+      }
+      return {
+        medicalFileImsId: doctor.imsId,
+        medicalFileFullName: doctor.fullName,
+        closeupHcpName: null,
+        matchScore: 0,
+        matchMethod: 'not_evaluated',
+        matchConfidence: 'unmatched',
+        matchedTokens: [],
+        unmatchedTokens: [],
+      } satisfies AirDoctorMatch;
+    });
+  }
+
   if (closeupDoctors.length === 0) {
-    const persistedByIms = new Map((existingPersistedMatches ?? []).map((match) => [match.medicalFileImsId, match]));
     return doctors.map((doctor) => {
       const persisted = persistedByIms.get(doctor.imsId);
       if (persisted) return { ...persisted, medicalFileFullName: doctor.fullName };
@@ -218,8 +243,6 @@ async function getOrCreateDoctorMatches(
     });
   }
 
-  const persistedMatches = existingPersistedMatches ?? (await getPersistedDoctorMatches(reportingVersion));
-  const persistedByIms = new Map(persistedMatches.map((match) => [match.medicalFileImsId, match]));
   // Normal page loads should trust persisted matches, including unmatched rows, so the route stays fast.
   // To refresh unmatched candidates after a new CloseUp load, clear those rows or add a dedicated review action.
   const doctorsWithoutPersistedMatch = doctors.filter((doctor) => !persistedByIms.has(doctor.imsId));
@@ -268,6 +291,7 @@ function mapAirMedicalFileRows(rows: Array<Record<string, unknown>>): AirMedical
 export async function getAirMedicalFileRows(
   periodMonth: string,
   reportingVersionId?: string,
+  options: { allowStagingFallback?: boolean } = {},
 ): Promise<AirMedicalFileRow[]> {
   const client = getBigQueryClient();
   if (reportingVersionId) {
@@ -290,6 +314,7 @@ export async function getAirMedicalFileRows(
       return mapAirMedicalFileRows(rows as Array<Record<string, unknown>>);
     } catch (error) {
       if (!isMissingServingArtifact(error)) throw error;
+      if (!options.allowStagingFallback) return [];
     }
   }
 
@@ -320,7 +345,11 @@ export async function getAirMedicalFileRows(
   return mapAirMedicalFileRows(rows as Array<Record<string, unknown>>);
 }
 
-export async function getCloseupMarketGroups(periodMonth: string, reportingVersionId?: string) {
+export async function getCloseupMarketGroups(
+  periodMonth: string,
+  reportingVersionId?: string,
+  options: { allowStagingFallback?: boolean } = {},
+) {
   const client = getBigQueryClient();
   if (reportingVersionId) {
     try {
@@ -336,6 +365,7 @@ export async function getCloseupMarketGroups(periodMonth: string, reportingVersi
       return (rows as Array<Record<string, unknown>>).map((row) => String(row.market_group ?? '')).filter(Boolean);
     } catch (error) {
       if (!isMissingServingArtifact(error)) throw error;
+      if (!options.allowStagingFallback) return [];
     }
   }
 
@@ -358,6 +388,7 @@ export async function getCloseupMatDoctors(
   hcpNames?: string[],
   marketGroup?: string,
   reportingVersionId?: string,
+  options: { allowStagingFallback?: boolean } = {},
 ): Promise<AirCloseupDoctor[]> {
   if (hcpNames && hcpNames.length === 0) return [];
 
@@ -411,6 +442,7 @@ export async function getCloseupMatDoctors(
         .filter((row) => row.hcpName);
     } catch (error) {
       if (!isMissingServingArtifact(error)) throw error;
+      if (!options.allowStagingFallback) return [];
     }
   }
 
@@ -504,9 +536,23 @@ function sortSegmentedDoctorsForUi(doctors: AirSegmentedDoctor[]) {
   });
 }
 
-export async function getAirPageData(options: { marketGroup?: string; includeRawRows?: boolean } = {}): Promise<AirPageData> {
+export async function getAirPageData(
+  options: {
+    marketGroup?: string;
+    includeRawRows?: boolean;
+    includePublicData?: boolean;
+    allowStagingFallback?: boolean;
+    allowMatchGeneration?: boolean;
+  } = {},
+): Promise<AirPageData> {
   const now = Date.now();
-  const cacheKey = `${options.marketGroup ?? 'all'}:${options.includeRawRows ? 'raw' : 'lean'}`;
+  const cacheKey = [
+    options.marketGroup ?? 'all',
+    options.includeRawRows ? 'raw' : 'lean',
+    options.includePublicData ? 'public' : 'no-public',
+    options.allowStagingFallback ? 'fallback' : 'serving-only',
+    options.allowMatchGeneration ? 'generate-matches' : 'persisted-matches',
+  ].join(':');
   if (airPageDataCache && airPageDataCache.cacheKey === cacheKey && airPageDataCache.expiresAt > now) return airPageDataCache.data;
   if (airPageDataPromise) return airPageDataPromise;
 
@@ -526,7 +572,15 @@ export async function getAirPageData(options: { marketGroup?: string; includeRaw
   return airPageDataPromise;
 }
 
-async function buildAirPageData(options: { marketGroup?: string; includeRawRows?: boolean } = {}): Promise<AirPageData> {
+async function buildAirPageData(
+  options: {
+    marketGroup?: string;
+    includeRawRows?: boolean;
+    includePublicData?: boolean;
+    allowStagingFallback?: boolean;
+    allowMatchGeneration?: boolean;
+  } = {},
+): Promise<AirPageData> {
   const reportingVersion = await getLatestAirReportingVersion();
   const warnings: string[] = [];
   const selectedMarketGroup = options.marketGroup ?? 'all';
@@ -550,15 +604,21 @@ async function buildAirPageData(options: { marketGroup?: string; includeRawRows?
   }
 
   const [medicalRows, marketGroups] = await Promise.all([
-    getAirMedicalFileRows(reportingVersion.periodMonth, reportingVersion.reportingVersionId),
-    getCloseupMarketGroups(reportingVersion.periodMonth, reportingVersion.reportingVersionId),
+    getAirMedicalFileRows(reportingVersion.periodMonth, reportingVersion.reportingVersionId, {
+      allowStagingFallback: options.allowStagingFallback ?? false,
+    }),
+    getCloseupMarketGroups(reportingVersion.periodMonth, reportingVersion.reportingVersionId, {
+      allowStagingFallback: options.allowStagingFallback ?? false,
+    }),
   ]);
   const closeupMarketGroup =
     selectedMarketGroup !== 'all' && marketGroups.includes(selectedMarketGroup) ? selectedMarketGroup : 'all';
-  const publicDataPromise = getAirPublicPageData({
-    periodMonth: reportingVersion.periodMonth,
-    marketGroup: selectedMarketGroup,
-  });
+  const publicDataPromise = options.includePublicData
+    ? getAirPublicPageData({
+        periodMonth: reportingVersion.periodMonth,
+        marketGroup: selectedMarketGroup,
+      })
+    : Promise.resolve(undefined);
   const callPlan = calculateAirCallPlanMetrics(medicalRows);
   const persistedMatches = await getPersistedDoctorMatches(reportingVersion);
   const persistedByIms = new Map(persistedMatches.map((match) => [match.medicalFileImsId, match]));
@@ -577,12 +637,14 @@ async function buildAirPageData(options: { marketGroup?: string; includeRawRows?
           undefined,
           closeupMarketGroup,
           reportingVersion.reportingVersionId,
+          { allowStagingFallback: options.allowStagingFallback ?? false },
         )
       : await getCloseupMatDoctors(
           reportingVersion.periodMonth,
           persistedCloseupNames,
           closeupMarketGroup,
           reportingVersion.reportingVersionId,
+          { allowStagingFallback: options.allowStagingFallback ?? false },
         );
   if (
     closeupDoctors.length === 0 &&
@@ -594,6 +656,7 @@ async function buildAirPageData(options: { marketGroup?: string; includeRawRows?
       undefined,
       closeupMarketGroup,
       reportingVersion.reportingVersionId,
+      { allowStagingFallback: options.allowStagingFallback ?? false },
     );
   }
   const publicData = await publicDataPromise;
@@ -604,7 +667,9 @@ async function buildAirPageData(options: { marketGroup?: string; includeRawRows?
   }
   if (callPlan.issues.length > 0) warnings.push(...callPlan.issues);
 
-  const matches = await getOrCreateDoctorMatches(reportingVersion, callPlan.doctors, closeupDoctors, persistedMatches);
+  const matches = await getOrCreateDoctorMatches(reportingVersion, callPlan.doctors, closeupDoctors, persistedMatches, {
+    allowGenerate: options.allowMatchGeneration ?? false,
+  });
   const matchedCloseupNames = new Set(
     matches
       .map((match) => match.closeupHcpName)
