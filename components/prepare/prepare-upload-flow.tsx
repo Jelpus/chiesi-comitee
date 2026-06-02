@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, UploadCloud, XCircle } from 'lucide-react';
 import {
   confirmReusePreviousUpload,
@@ -11,6 +12,7 @@ import {
 } from '@/app/prepare/actions';
 import { SourceAsOfMonthField } from '@/components/prepare/source-as-of-month-field';
 import type { PrepareReportingVersion, PrepareRequirement } from '@/lib/data/prepare';
+import { getExpectedUploadColumnGroups } from '@/lib/uploads/expected-columns';
 
 type PrepareUploadFlowProps = {
   requirement: PrepareRequirement;
@@ -27,13 +29,6 @@ type ProgressModalState = {
   finalState: 'running' | 'waiting' | 'success' | 'error';
 };
 
-type UploadWorkflowStep = 'process' | 'normalize' | 'publish' | 'done';
-
-type ActiveUploadWorkflow = {
-  uploadId: string;
-  nextStep: UploadWorkflowStep;
-};
-
 type SignedUploadResponse = {
   ok: boolean;
   uploadId?: string;
@@ -44,6 +39,7 @@ type SignedUploadResponse = {
 };
 
 const uploadPublishSteps = [
+  'Validar columnas del archivo',
   'Subir archivo a almacenamiento',
   'Registrar carga',
   'Procesar filas',
@@ -51,35 +47,12 @@ const uploadPublishSteps = [
   'Publicar informacion',
 ];
 
-function formatUploadStepError(step: string, message: string, uploadId?: string) {
-  const normalized = message.toLowerCase();
-  const isRuntimeTransportError =
-    normalized.includes('unexpected response') ||
-    normalized.includes('received from the server') ||
-    normalized.includes('failed to fetch') ||
-    normalized.includes('networkerror') ||
-    normalized.includes('runtime error') ||
-    normalized.includes('out of available memory');
-
-  if (!isRuntimeTransportError) {
-    return `Fallo en "${step}": ${message}`;
-  }
-
-  const uploadHint = uploadId
-    ? ` El upload ${uploadId} ya quedo registrado; los pasos anteriores aparecen completados.`
-    : '';
-
-  const likelyCause = step === 'Procesar filas'
-    ? 'En este paso se descarga y parsea el archivo para cargar RAW; con archivos grandes normalmente es memoria durante la lectura del Excel/CSV.'
-    : step === 'Publicar informacion'
-      ? 'En este paso se publican los datos finales; normalmente es memoria o tiempo durante la publicacion.'
-      : 'Normalmente es memoria o tiempo durante el proceso.';
-
-  return `Fallo en "${step}": Vercel interrumpio la funcion antes de devolver un detalle controlado.${uploadHint} ${likelyCause} Detalle tecnico: ${message}`;
-}
-
 function isProductionVersion(version: PrepareReportingVersion) {
   return version.status === 'ready_to_show' || version.status === 'closed';
+}
+
+function uploadHandoffMessage(uploadId: string) {
+  return `Gracias. El archivo fue recibido y cumple con las columnas esperadas. Upload ${uploadId}. Si el procesamiento no termino en Prepare, lo completaremos desde Admin / Uploads.`;
 }
 
 function isDddLike(moduleCode: string) {
@@ -103,6 +76,72 @@ function normalizeHeaderCandidate(value: unknown) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+function isConcreteExpectedColumn(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.length > 0 &&
+    !normalized.includes('...') &&
+    !normalized.startsWith('columnas ') &&
+    !normalized.startsWith('filas ') &&
+    !normalized.startsWith('secciones ')
+  );
+}
+
+function getRequiredColumnGroups(moduleCode: string) {
+  return getExpectedUploadColumnGroups(moduleCode)
+    .filter((group) => !group.label.toLowerCase().includes('hojas requeridas'))
+    .map((group) => ({
+      label: group.label,
+      columns: group.columns.filter(isConcreteExpectedColumn),
+    }))
+    .filter((group) => group.columns.length > 0);
+}
+
+async function readHeaderCells(file: File, selectedSheetName: string, selectedHeaderRow: string) {
+  const xlsx = await import('xlsx');
+  const workbook = xlsx.read(await file.arrayBuffer(), { type: 'array' });
+  const sheetName = isCsvFileName(file.name)
+    ? workbook.SheetNames[0]
+    : selectedSheetName || workbook.SheetNames[0];
+  const sheet = sheetName ? workbook.Sheets[sheetName] : null;
+
+  if (!sheetName || !sheet) {
+    throw new Error(`No se encontro la hoja "${selectedSheetName || 'seleccionada'}" en el archivo.`);
+  }
+
+  const headerRowNumber = Math.max(1, Number(selectedHeaderRow) || 1);
+  const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    raw: false,
+    blankrows: false,
+    defval: '',
+  });
+  const headerCells = rows[headerRowNumber - 1] ?? [];
+  return headerCells.map((cell) => String(cell ?? '').trim()).filter(Boolean);
+}
+
+async function validateExpectedColumns(file: File, moduleCode: string, selectedSheetName: string, selectedHeaderRow: string) {
+  const requiredGroups = getRequiredColumnGroups(moduleCode);
+  if (requiredGroups.length === 0) return;
+
+  const headers = await readHeaderCells(file, selectedSheetName, selectedHeaderRow);
+  if (headers.length === 0) {
+    throw new Error('No se encontraron encabezados en la fila seleccionada.');
+  }
+
+  const normalizedHeaders = new Set(headers.map(normalizeHeaderCandidate).filter(Boolean));
+  const missingGroups = requiredGroups.filter((group) => (
+    !group.columns.some((column) => normalizedHeaders.has(normalizeHeaderCandidate(column)))
+  ));
+
+  if (missingGroups.length > 0) {
+    const detail = missingGroups
+      .map((group) => `${group.label}: ${group.columns.join(' / ')}`)
+      .join('; ');
+    throw new Error(`El archivo no cumple con las columnas esperadas. Revisa estos grupos: ${detail}.`);
+  }
+}
+
 function detectLexicompHeaderRowFromSheet(xlsx: typeof import('xlsx'), sheet: import('xlsx').WorkSheet) {
   if (!sheet['!ref']) return null;
   const requiredHeaders = ['DISTRIBUIDOR', 'ANO', 'MES', 'Piezas Vendidas'].map(normalizeHeaderCandidate);
@@ -124,34 +163,6 @@ function detectLexicompHeaderRowFromSheet(xlsx: typeof import('xlsx'), sheet: im
   return null;
 }
 
-function getResumeWorkflowStep(status?: string): UploadWorkflowStep | null {
-  if (!status) return null;
-  if (['uploaded', 'error', 'parsing', 'loading_raw'].includes(status)) return 'process';
-  if (['raw_loaded', 'normalizing'].includes(status)) return 'normalize';
-  if (['normalized', 'publishing'].includes(status)) return 'publish';
-  return null;
-}
-
-function workflowStepIndex(step: UploadWorkflowStep) {
-  if (step === 'process') return 2;
-  if (step === 'normalize') return 3;
-  if (step === 'publish') return 4;
-  return 4;
-}
-
-function workflowResumeDetail(step: UploadWorkflowStep, uploadId: string) {
-  if (step === 'process') {
-    return `Carga ${uploadId} ya registrada. Pulsa continuar para procesar filas.`;
-  }
-  if (step === 'normalize') {
-    return `Carga ${uploadId} ya tiene filas RAW. Pulsa continuar para normalizar y validar datos.`;
-  }
-  if (step === 'publish') {
-    return `Carga ${uploadId} ya esta normalizada. Pulsa continuar para publicar la informacion.`;
-  }
-  return `Carga ${uploadId} lista.`;
-}
-
 function initialProgress(): ProgressModalState {
   return {
     open: false,
@@ -166,15 +177,9 @@ function initialProgress(): ProgressModalState {
 function ProgressModal({
   state,
   onClose,
-  onContinue,
-  continueLabel = 'Continuar',
-  continueDisabled = false,
 }: {
   state: ProgressModalState;
   onClose: () => void;
-  onContinue?: () => void;
-  continueLabel?: string;
-  continueDisabled?: boolean;
 }) {
   if (!state.open) return null;
 
@@ -203,7 +208,7 @@ function ProgressModal({
 
         <div className="space-y-3 p-6">
           {state.steps.map((step, index) => {
-            const isDone = state.finalState === 'success' || index < state.activeStep;
+            const isDone = state.finalState === 'success' ? index <= state.activeStep : index < state.activeStep;
             const isActive = state.finalState === 'running' && index === state.activeStep;
             const isWaitingNext = state.finalState === 'waiting' && index === state.activeStep;
             const isError = state.finalState === 'error' && index === state.activeStep;
@@ -242,21 +247,15 @@ function ProgressModal({
             </p>
           ) : null}
 
-          {state.finalState === 'waiting' && onContinue ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold leading-5 text-slate-600">
-                El paso anterior termino. Pulsa continuar para ejecutar el siguiente proceso.
-              </p>
-              <button
-                type="button"
-                onClick={onContinue}
-                disabled={continueDisabled}
-                className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-slate-800 disabled:opacity-50"
-              >
-                {continueDisabled ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {continueLabel}
-              </button>
-            </div>
+          {state.finalState === 'success' ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-slate-800"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Entendido
+            </button>
           ) : null}
         </div>
       </section>
@@ -265,6 +264,7 @@ function ProgressModal({
 }
 
 export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }: PrepareUploadFlowProps) {
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
   const [isInspecting, startInspectTransition] = useTransition();
@@ -272,7 +272,6 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [progressModal, setProgressModal] = useState<ProgressModalState>(initialProgress);
-  const [activeUploadWorkflow, setActiveUploadWorkflow] = useState<ActiveUploadWorkflow | null>(null);
 
   const production = isProductionVersion(selectedVersion);
   const defaults = requirement.inferredDefaults;
@@ -285,16 +284,6 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     defaults.selectedSheetName ? 'Agrega un archivo para continuar...' : '',
   );
   const shouldShowSheetConfig = Boolean(selectedFile);
-  const resumableStep = getResumeWorkflowStep(requirement.currentUpload?.status);
-  const canResumeCurrentUpload = Boolean(requirement.currentUpload?.uploadId && resumableStep);
-  const continueLabel =
-    activeUploadWorkflow?.nextStep === 'process'
-      ? 'Procesar filas'
-      : activeUploadWorkflow?.nextStep === 'normalize'
-        ? 'Normalizar'
-        : activeUploadWorkflow?.nextStep === 'publish'
-          ? 'Publicar'
-          : 'Continuar';
 
   function openProgressModal(input: Omit<ProgressModalState, 'open' | 'finalState'>) {
     setProgressModal({
@@ -320,31 +309,6 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       detail,
       finalState,
     }));
-  }
-
-  function waitForNextStep(activeStep: number, detail: string) {
-    setProgressModal((current) => ({
-      ...current,
-      activeStep,
-      detail,
-      finalState: 'waiting',
-    }));
-  }
-
-  function resumeCurrentUpload() {
-    const uploadId = requirement.currentUpload?.uploadId;
-    if (!uploadId || !resumableStep) return;
-
-    setMessage(null);
-    setError(null);
-    setActiveUploadWorkflow({ uploadId, nextStep: resumableStep });
-    openProgressModal({
-      title: 'Continuar carga',
-      detail: workflowResumeDetail(resumableStep, uploadId),
-      steps: uploadPublishSteps,
-      activeStep: workflowStepIndex(resumableStep),
-    });
-    waitForNextStep(workflowStepIndex(resumableStep), workflowResumeDetail(resumableStep, uploadId));
   }
 
   async function inspectWorkbook(file: File) {
@@ -399,7 +363,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         setSelectedSheetName(suggestedSheetName);
         setSelectedHeaderRow(String(suggestedHeaderRow));
         setInspectMessage(`Hojas detectadas: ${sheetNames.length}. Se preselecciono la mejor sugerencia.`);
-        finishProgressModal('success', 'Archivo leido correctamente. Revisa la hoja y la fila antes de publicar.');
+        finishProgressModal('success', 'Archivo leido correctamente. Revisa la hoja y la fila antes de subirlo.');
       } catch (inspectError) {
         const errorMessage =
           inspectError instanceof Error
@@ -470,7 +434,6 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   function runUpload(formData: FormData) {
     setMessage(null);
     setError(null);
-    setActiveUploadWorkflow(null);
     if (!selectedFile) {
       setError('Selecciona un archivo antes de continuar.');
       return;
@@ -480,7 +443,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
     openProgressModal({
       title: 'Publicando archivo',
-      detail: 'Paso 1 de 5: subiendo el archivo al almacenamiento.',
+      detail: 'Paso 1 de 6: validando columnas del archivo.',
       steps: uploadPublishSteps,
       activeStep: 0,
     });
@@ -490,90 +453,71 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       let activeUploadId: string | undefined;
       try {
         currentStep = uploadPublishSteps[0];
-        updateProgressStep(0, 'Paso 1 de 5: subiendo el archivo al almacenamiento.');
+        updateProgressStep(0, 'Paso 1 de 6: validando columnas del archivo.');
+        await validateExpectedColumns(
+          selectedFile,
+          requirement.module.moduleCode,
+          selectedSheetName,
+          selectedHeaderRow,
+        );
+
+        currentStep = uploadPublishSteps[1];
+        updateProgressStep(1, 'Paso 2 de 6: subiendo el archivo al almacenamiento.');
         const directUpload = await uploadFileDirectly(selectedFile);
         formData.set('uploadId', directUpload.uploadId);
         formData.set('storagePath', directUpload.storagePath);
         formData.set('sourceFileName', directUpload.sourceFileName);
         formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
 
-        currentStep = uploadPublishSteps[1];
-        updateProgressStep(1, 'Paso 2 de 5: registrando la carga y guardando metadatos.');
+        currentStep = uploadPublishSteps[2];
+        updateProgressStep(2, 'Paso 3 de 6: registrando la carga y guardando metadatos.');
         const created = await prepareCreateUploadRecord(formData);
         if (!created.ok || !created.uploadId) {
           throw new Error(created.message);
         }
         activeUploadId = created.uploadId;
-        setActiveUploadWorkflow({ uploadId: activeUploadId, nextStep: 'process' });
-        waitForNextStep(
-          2,
-          `Carga registrada correctamente. Upload ${activeUploadId}. Pulsa continuar para procesar filas.`,
-        );
-      } catch (uploadError) {
-        const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
-        const detailedError = formatUploadStepError(currentStep, errorMessage, activeUploadId);
-        setError(detailedError);
-        finishProgressModal('error', detailedError);
-      }
-    });
-  }
 
-  function continueUploadWorkflow() {
-    if (!activeUploadWorkflow || activeUploadWorkflow.nextStep === 'done') return;
-
-    startTransition(async () => {
-      let currentStep = uploadPublishSteps[2];
-      try {
-        if (activeUploadWorkflow.nextStep === 'process') {
-          currentStep = uploadPublishSteps[2];
-          updateProgressStep(2, 'Paso 3 de 5: leyendo el archivo y cargando filas RAW.');
-          const processed = await prepareProcessUpload(activeUploadWorkflow.uploadId);
-        if (!processed.ok) {
-          throw new Error(processed.message);
-        }
-          setActiveUploadWorkflow({ uploadId: activeUploadWorkflow.uploadId, nextStep: 'normalize' });
-          waitForNextStep(
-            3,
-            'Filas procesadas correctamente. Pulsa continuar para normalizar y validar datos.',
-          );
-          return;
-        }
-
-        if (activeUploadWorkflow.nextStep === 'normalize') {
-          currentStep = uploadPublishSteps[3];
-          updateProgressStep(3, 'Paso 4 de 5: normalizando datos y revisando validaciones.');
-          const normalized = await prepareNormalizeUpload(activeUploadWorkflow.uploadId);
-        if (!normalized.ok) {
-          throw new Error(normalized.message);
-        }
-          setActiveUploadWorkflow({ uploadId: activeUploadWorkflow.uploadId, nextStep: 'publish' });
-          waitForNextStep(
-            4,
-            'Datos normalizados y validados correctamente. Pulsa continuar para publicar la informacion.',
-          );
-          return;
-        }
+        currentStep = uploadPublishSteps[3];
+        updateProgressStep(3, 'Paso 4 de 6: leyendo el archivo y cargando filas RAW.');
+        const processed = await prepareProcessUpload(activeUploadId);
+        if (!processed.ok) throw new Error(processed.message);
 
         currentStep = uploadPublishSteps[4];
-        updateProgressStep(4, 'Paso 5 de 5: publicando la informacion para la version seleccionada.');
-        const result = await preparePublishUpload(activeUploadWorkflow.uploadId, requirement.module.areaCode);
+        updateProgressStep(4, 'Paso 5 de 6: normalizando datos y revisando validaciones.');
+        const normalized = await prepareNormalizeUpload(activeUploadId);
+        if (!normalized.ok) throw new Error(normalized.message);
 
-        if (result.ok) {
-          setMessage(result.message);
+        currentStep = uploadPublishSteps[5];
+        updateProgressStep(5, 'Paso 6 de 6: publicando la informacion para la version seleccionada.');
+        const published = await preparePublishUpload(activeUploadId, requirement.module.areaCode);
+        if (!published.ok) throw new Error(published.message);
+
+        setMessage(published.message);
+        formRef.current?.reset();
+        setSelectedFile(null);
+        setDetectedSheetNames([]);
+        finishProgressModal('success', published.message);
+        onCompleted?.();
+        router.refresh();
+      } catch (uploadError) {
+        const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
+        if (activeUploadId) {
+          const handoffMessage = uploadHandoffMessage(activeUploadId);
+          setMessage(handoffMessage);
           formRef.current?.reset();
           setSelectedFile(null);
           setDetectedSheetNames([]);
-          setActiveUploadWorkflow({ uploadId: activeUploadWorkflow.uploadId, nextStep: 'done' });
-          finishProgressModal('success', result.message);
+          setProgressModal((current) => ({
+            ...current,
+            activeStep: 2,
+            detail: handoffMessage,
+            finalState: 'success',
+          }));
           onCompleted?.();
-        } else {
-          const detailedError = formatUploadStepError(currentStep, result.message, activeUploadWorkflow.uploadId);
-          setError(detailedError);
-          finishProgressModal('error', detailedError);
+          return;
         }
-      } catch (workflowError) {
-        const errorMessage = workflowError instanceof Error ? workflowError.message : 'No se pudo completar la carga.';
-        const detailedError = formatUploadStepError(currentStep, errorMessage, activeUploadWorkflow.uploadId);
+
+        const detailedError = `Fallo en "${currentStep}": ${errorMessage}`;
         setError(detailedError);
         finishProgressModal('error', detailedError);
       }
@@ -610,6 +554,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         setMessage(result.message);
         finishProgressModal('success', result.message);
         onCompleted?.();
+        router.refresh();
       } else {
         setError(result.message);
         finishProgressModal('error', result.message);
@@ -619,23 +564,14 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
   return (
     <div className="space-y-4">
-      {canResumeCurrentUpload && requirement.currentUpload ? (
+      {requirement.currentUpload?.status === 'uploaded' ? (
         <div className="rounded-[22px] border border-blue-200 bg-blue-50 p-4">
           <p className="text-sm font-bold text-blue-950">
-            Hay una carga iniciada para esta version.
+            Hay una carga registrada para esta version.
           </p>
           <p className="mt-1 text-xs leading-5 text-blue-800">
-            Upload {requirement.currentUpload.uploadId} · estado actual: {requirement.currentUpload.status}. Puedes continuar desde el paso pendiente sin volver a subir el archivo.
+            Upload {requirement.currentUpload.uploadId}. Si el flujo no termino en Prepare, se puede completar desde Admin / Uploads.
           </p>
-          <button
-            type="button"
-            onClick={resumeCurrentUpload}
-            disabled={isPending}
-            className="mt-3 inline-flex items-center gap-2 rounded-full bg-blue-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white transition hover:bg-blue-900 disabled:opacity-50"
-          >
-            {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Continuar carga iniciada
-          </button>
         </div>
       ) : null}
 
@@ -767,7 +703,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           
           <button
             type="submit"
-            disabled={isPending || isInspecting || Boolean(activeUploadWorkflow && activeUploadWorkflow.nextStep !== 'done')}
+            disabled={isPending || isInspecting}
             className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 disabled:opacity-50"
           >
             {isPending || isInspecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
@@ -781,9 +717,6 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
       <ProgressModal
         state={progressModal}
-        onContinue={continueUploadWorkflow}
-        continueLabel={continueLabel}
-        continueDisabled={isPending}
         onClose={() => setProgressModal((current) => ({ ...current, open: false }))}
       />
     </div>

@@ -570,9 +570,14 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       confirmedBy,
     });
 
-    await processUpload(uploadId);
-    await normalizeExistingUpload(uploadId);
-    await publishUpload(uploadId);
+    let reuseCompleted = true;
+    try {
+      await processUpload(uploadId);
+      await normalizeExistingUpload(uploadId);
+      await publishUpload(uploadId);
+    } catch {
+      reuseCompleted = false;
+    }
 
     const client = getBigQueryClient();
     await client.query({
@@ -626,7 +631,9 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
         dddSource,
         originalUploadId,
         confirmedBy,
-        notes: `Archivo reutilizado desde /prepare. Nuevo upload publicado: ${uploadId}`,
+        notes: reuseCompleted
+          ? `Archivo reutilizado desde /prepare. Nuevo upload publicado: ${uploadId}`
+          : `Archivo reutilizado desde /prepare. Nuevo upload registrado pendiente de completar: ${uploadId}`,
       },
     });
 
@@ -639,7 +646,9 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       rowsTotal: result.rowsTotal,
       rowsValid: result.rowsValid,
       rowsError: result.rowsError,
-      message: 'Archivo anterior reutilizado, validado y publicado para esta version.',
+      message: reuseCompleted
+        ? 'Archivo anterior reutilizado, validado y publicado para esta version.'
+        : 'Gracias. El archivo anterior quedo registrado para esta version. Si el procesamiento no termino en Prepare, lo completaremos desde Admin / Uploads.',
       errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
     };
 

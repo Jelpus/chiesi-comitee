@@ -230,7 +230,12 @@ function resolveRequirementStatus(currentUpload: PrepareUploadRow | null, reuse:
 }
 
 function buildSummary(areaCode: string, requirements: PrepareRequirement[]): PrepareAreaSummary {
-  const completed = requirements.filter((item) => item.status === 'published' || item.status === 'reused').length;
+  const completed = requirements.filter((item) => (
+    item.status === 'uploaded' ||
+    item.status === 'validated' ||
+    item.status === 'published' ||
+    item.status === 'reused'
+  )).length;
   const errorModules = requirements.filter((item) => item.status === 'error').length;
   const reusedModules = requirements.filter((item) => item.status === 'reused').length;
   const totalModules = requirements.length;

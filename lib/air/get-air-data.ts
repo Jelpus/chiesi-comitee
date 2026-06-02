@@ -4,6 +4,7 @@ import { calculateAirCallPlanMetrics } from '@/lib/air/air-metrics';
 import { fuzzyMatchDoctors } from '@/lib/air/fuzzy-match-doctors';
 import { getAirPublicPageData } from '@/lib/air/get-air-public-data';
 import { segmentDoctors } from '@/lib/air/segment-doctors';
+import { refreshAirServingArtifacts } from '@/lib/serving/refresh-air-serving';
 import type {
   AirCloseupDoctor,
   AirDoctorMatch,
@@ -33,6 +34,7 @@ let airPageDataCache:
   | null = null;
 let airPageDataPromise: Promise<AirPageData> | null = null;
 let ensureAirDoctorMatchesTablePromise: Promise<void> | null = null;
+const airServingRefreshPromiseByVersion = new Map<string, Promise<void>>();
 
 function numberValue(value: unknown) {
   const numeric = Number(value ?? 0);
@@ -603,7 +605,7 @@ async function buildAirPageData(
     };
   }
 
-  const [medicalRows, marketGroups] = await Promise.all([
+  let [medicalRows, marketGroups] = await Promise.all([
     getAirMedicalFileRows(reportingVersion.periodMonth, reportingVersion.reportingVersionId, {
       allowStagingFallback: options.allowStagingFallback ?? false,
     }),
@@ -611,6 +613,24 @@ async function buildAirPageData(
       allowStagingFallback: options.allowStagingFallback ?? false,
     }),
   ]);
+
+  if (!options.allowStagingFallback && (medicalRows.length === 0 || marketGroups.length === 0)) {
+    let refreshPromise = airServingRefreshPromiseByVersion.get(reportingVersion.reportingVersionId);
+    if (!refreshPromise) {
+      refreshPromise = refreshAirServingArtifacts(getBigQueryClient(), {
+        reportingVersionId: reportingVersion.reportingVersionId,
+      }).finally(() => {
+        airServingRefreshPromiseByVersion.delete(reportingVersion.reportingVersionId);
+      });
+      airServingRefreshPromiseByVersion.set(reportingVersion.reportingVersionId, refreshPromise);
+    }
+    await refreshPromise;
+    [medicalRows, marketGroups] = await Promise.all([
+      getAirMedicalFileRows(reportingVersion.periodMonth, reportingVersion.reportingVersionId),
+      getCloseupMarketGroups(reportingVersion.periodMonth, reportingVersion.reportingVersionId),
+    ]);
+  }
+
   const closeupMarketGroup =
     selectedMarketGroup !== 'all' && marketGroups.includes(selectedMarketGroup) ? selectedMarketGroup : 'all';
   const publicDataPromise = options.includePublicData
@@ -620,7 +640,7 @@ async function buildAirPageData(
       })
     : Promise.resolve(undefined);
   const callPlan = calculateAirCallPlanMetrics(medicalRows);
-  const persistedMatches = await getPersistedDoctorMatches(reportingVersion);
+  let persistedMatches = await getPersistedDoctorMatches(reportingVersion);
   const persistedByIms = new Map(persistedMatches.map((match) => [match.medicalFileImsId, match]));
   const doctorsWithoutPersistedMatch = callPlan.doctors.filter((doctor) => !persistedByIms.has(doctor.imsId));
   const persistedCloseupNames = [
@@ -661,8 +681,22 @@ async function buildAirPageData(
   }
   const publicData = await publicDataPromise;
 
+  if (persistedMatches.length === 0 && callPlan.doctors.length > 0 && closeupDoctors.length > 0) {
+    let refreshPromise = airServingRefreshPromiseByVersion.get(reportingVersion.reportingVersionId);
+    if (!refreshPromise) {
+      refreshPromise = refreshAirServingArtifacts(getBigQueryClient(), {
+        reportingVersionId: reportingVersion.reportingVersionId,
+      }).finally(() => {
+        airServingRefreshPromiseByVersion.delete(reportingVersion.reportingVersionId);
+      });
+      airServingRefreshPromiseByVersion.set(reportingVersion.reportingVersionId, refreshPromise);
+    }
+    await refreshPromise;
+    persistedMatches = await getPersistedDoctorMatches(reportingVersion);
+  }
+
   if (medicalRows.length === 0) warnings.push('No AIR medical file rows were found for the current reporting period.');
-  if (closeupDoctors.length === 0) {
+  if (marketGroups.length === 0) {
     warnings.push('No CloseUp physicians with hcp_name were found in the MAT window. Matching and productivity will show as unmatched.');
   }
   if (callPlan.issues.length > 0) warnings.push(...callPlan.issues);

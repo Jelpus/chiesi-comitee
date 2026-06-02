@@ -7,6 +7,7 @@ const SERVING_SCHEMA = `\`${SERVING_PROJECT}.${SERVING_DATASET}\``;
 
 const REPORTING_VERSIONS = '`chiesi-committee.chiesi_committee_admin.reporting_versions`';
 const RAW_UPLOADS = '`chiesi-committee.chiesi_committee_raw.uploads`';
+const AIR_DOCTOR_NAME_MATCHES = '`chiesi-committee.chiesi_committee_admin.air_doctor_name_matches`';
 const MEDICAL_FILE = '`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file`';
 const CLOSEUP_VIEW = '`chiesi-committee.chiesi_committee_stg.vw_business_excellence_closeup_enriched`';
 const GOB360_PRODUCT_MAPPING = '`chiesi-committee.chiesi_committee_admin.gob360_product_mapping`';
@@ -116,6 +117,24 @@ async function ensureAirServingTables(client: BigQuery) {
       CLUSTER BY reporting_version_id, market_group, territory
     `,
   });
+
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS ${AIR_DOCTOR_NAME_MATCHES} (
+        reporting_version_id STRING,
+        period_month DATE,
+        medical_file_ims_id STRING,
+        medical_file_full_name STRING,
+        closeup_hcp_name STRING,
+        match_score FLOAT64,
+        match_method STRING,
+        match_confidence STRING,
+        matched_tokens ARRAY<STRING>,
+        unmatched_tokens ARRAY<STRING>,
+        generated_at TIMESTAMP
+      )
+    `,
+  });
 }
 
 async function clearTable(client: BigQuery, tableName: string, scope: AirRefreshScope) {
@@ -223,6 +242,176 @@ export async function refreshAirServingArtifacts(client: BigQuery, scope: AirRef
         ON c.period_month BETWEEN DATE_SUB(rv.period_month, INTERVAL 11 MONTH) AND rv.period_month
        AND NULLIF(TRIM(c.hcp_name), '') IS NOT NULL
       GROUP BY rv.reporting_version_id, rv.period_month, c.hcp_name, market_group
+    `,
+    params: scope.reportingVersionId ? { reportingVersionId: scope.reportingVersionId } : undefined,
+  });
+
+  await client.query({
+    query: `
+      DELETE FROM ${AIR_DOCTOR_NAME_MATCHES}
+      ${scope.reportingVersionId ? 'WHERE reporting_version_id = @reportingVersionId' : 'WHERE TRUE'}
+    `,
+    params: scope.reportingVersionId ? { reportingVersionId: scope.reportingVersionId } : undefined,
+  });
+  await client.query({
+    query: `
+      INSERT INTO ${AIR_DOCTOR_NAME_MATCHES} (
+        reporting_version_id,
+        period_month,
+        medical_file_ims_id,
+        medical_file_full_name,
+        closeup_hcp_name,
+        match_score,
+        match_method,
+        match_confidence,
+        matched_tokens,
+        unmatched_tokens,
+        generated_at
+      )
+      WITH medical_rows AS (
+        SELECT
+          reporting_version_id,
+          period_month,
+          COALESCE(
+            NULLIF(TRIM(ims_id), ''),
+            CONCAT(
+              'name:',
+              TRIM(REGEXP_REPLACE(
+                REGEXP_REPLACE(NORMALIZE_AND_CASEFOLD(full_name, NFD), r'\\pM', ''),
+                r'[^a-z0-9]+',
+                ' '
+              ))
+            )
+          ) AS medical_file_ims_id,
+          NULLIF(TRIM(full_name), '') AS medical_file_full_name
+        FROM ${SERVING_SCHEMA}.air_medical_file_rows
+        WHERE NULLIF(TRIM(full_name), '') IS NOT NULL
+          ${scope.reportingVersionId ? 'AND reporting_version_id = @reportingVersionId' : ''}
+      ),
+      medical_base AS (
+        SELECT
+          reporting_version_id,
+          ANY_VALUE(period_month) AS period_month,
+          medical_file_ims_id,
+          ANY_VALUE(medical_file_full_name) AS medical_file_full_name
+        FROM medical_rows
+        GROUP BY reporting_version_id, medical_file_ims_id
+      ),
+      medical_tokens AS (
+        SELECT
+          *,
+          ARRAY(
+            SELECT DISTINCT token
+            FROM UNNEST(SPLIT(TRIM(REGEXP_REPLACE(
+              REGEXP_REPLACE(NORMALIZE_AND_CASEFOLD(medical_file_full_name, NFD), r'\\pM', ''),
+              r'[^a-z0-9]+',
+              ' '
+            )), ' ')) AS token
+            WHERE LENGTH(token) > 1
+              AND token NOT IN ('de', 'del', 'la', 'las', 'los', 'y')
+          ) AS tokens
+        FROM medical_base
+      ),
+      closeup_tokens AS (
+        SELECT
+          reporting_version_id,
+          period_month,
+          hcp_name,
+          ARRAY(
+            SELECT DISTINCT token
+            FROM UNNEST(SPLIT(TRIM(REGEXP_REPLACE(
+              REGEXP_REPLACE(NORMALIZE_AND_CASEFOLD(hcp_name, NFD), r'\\pM', ''),
+              r'[^a-z0-9]+',
+              ' '
+            )), ' ')) AS token
+            WHERE LENGTH(token) > 1
+              AND token NOT IN ('de', 'del', 'la', 'las', 'los', 'y')
+          ) AS tokens
+        FROM ${SERVING_SCHEMA}.air_closeup_doctor_mat
+        WHERE NULLIF(TRIM(hcp_name), '') IS NOT NULL
+          ${scope.reportingVersionId ? 'AND reporting_version_id = @reportingVersionId' : ''}
+      ),
+      medical_token_rows AS (
+        SELECT
+          reporting_version_id,
+          period_month,
+          medical_file_ims_id,
+          medical_file_full_name,
+          tokens,
+          token
+        FROM medical_tokens, UNNEST(tokens) AS token
+      ),
+      closeup_token_rows AS (
+        SELECT
+          reporting_version_id,
+          period_month,
+          hcp_name,
+          tokens,
+          token
+        FROM closeup_tokens, UNNEST(tokens) AS token
+      ),
+      scored AS (
+        SELECT
+          m.reporting_version_id,
+          ANY_VALUE(m.period_month) AS period_month,
+          m.medical_file_ims_id,
+          ANY_VALUE(m.medical_file_full_name) AS medical_file_full_name,
+          c.hcp_name AS closeup_hcp_name,
+          ARRAY_AGG(DISTINCT m.token ORDER BY m.token) AS matched_tokens,
+          ARRAY_LENGTH(ANY_VALUE(m.tokens)) AS medical_token_count,
+          ARRAY_LENGTH(ANY_VALUE(c.tokens)) AS closeup_token_count,
+          COUNT(DISTINCT m.token) AS common_token_count,
+          SAFE_DIVIDE(
+            2 * COUNT(DISTINCT m.token),
+            ARRAY_LENGTH(ANY_VALUE(m.tokens)) + ARRAY_LENGTH(ANY_VALUE(c.tokens))
+          ) AS match_score
+        FROM medical_token_rows m
+        JOIN closeup_token_rows c
+          ON c.reporting_version_id = m.reporting_version_id
+         AND c.token = m.token
+        GROUP BY
+          m.reporting_version_id,
+          m.medical_file_ims_id,
+          c.hcp_name
+        HAVING common_token_count >= 2
+      ),
+      best_match AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY reporting_version_id, medical_file_ims_id
+            ORDER BY match_score DESC, common_token_count DESC, closeup_token_count ASC, closeup_hcp_name
+          ) AS rn
+        FROM scored
+        WHERE match_score >= 0.8
+      )
+      SELECT
+        m.reporting_version_id,
+        m.period_month,
+        m.medical_file_ims_id,
+        m.medical_file_full_name,
+        b.closeup_hcp_name,
+        COALESCE(ROUND(b.match_score, 3), 0) AS match_score,
+        'bigquery_token_overlap' AS match_method,
+        CASE
+          WHEN b.match_score >= 0.92 THEN 'high'
+          WHEN b.match_score >= 0.82 THEN 'medium'
+          WHEN b.match_score >= 0.8 THEN 'low'
+          ELSE 'unmatched'
+        END AS match_confidence,
+        COALESCE(b.matched_tokens, []) AS matched_tokens,
+        ARRAY(
+          SELECT token
+          FROM UNNEST(m.tokens) AS token
+          WHERE b.matched_tokens IS NULL OR token NOT IN UNNEST(b.matched_tokens)
+          ORDER BY token
+        ) AS unmatched_tokens,
+        CURRENT_TIMESTAMP() AS generated_at
+      FROM medical_tokens m
+      LEFT JOIN best_match b
+        ON b.reporting_version_id = m.reporting_version_id
+       AND b.medical_file_ims_id = m.medical_file_ims_id
+       AND b.rn = 1
     `,
     params: scope.reportingVersionId ? { reportingVersionId: scope.reportingVersionId } : undefined,
   });
