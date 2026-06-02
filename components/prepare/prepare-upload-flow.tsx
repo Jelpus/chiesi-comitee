@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, UploadCloud, XCircle } from 'lucide-react';
 import {
   confirmReusePreviousUpload,
+  notifyPrepareUploadReceived,
   prepareCreateUploadRecord,
   prepareNormalizeUpload,
   prepareProcessUpload,
@@ -503,6 +504,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
         if (activeUploadId) {
           const handoffMessage = uploadHandoffMessage(activeUploadId);
+          await notifyPrepareUploadReceived(activeUploadId);
           setMessage(handoffMessage);
           formRef.current?.reset();
           setSelectedFile(null);

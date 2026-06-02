@@ -36,6 +36,7 @@ type PrepareIncidentResult = {
 };
 
 const PREPARE_INCIDENT_RECIPIENT = 'guillermo@jelpus.com';
+const PREPARE_UPLOAD_NOTIFICATION_RECIPIENT = 'guillermo@jelpus.com';
 
 function normalizeDddSource(value: unknown) {
   return String(value ?? '').trim().toLowerCase();
@@ -143,6 +144,74 @@ function revalidatePrepare(areaCode: string) {
   revalidatePath('/admin/uploads');
   revalidatePath('/admin/uploads/logs');
   revalidatePath('/executive');
+}
+
+async function getPrepareUploadNotificationContext(uploadId: string) {
+  const client = getBigQueryClient();
+  const [rows] = await client.query({
+    query: `
+      SELECT
+        u.upload_id,
+        CAST(u.period_month AS STRING) AS period_month,
+        u.module_code,
+        COALESCE(m.module_name, u.module_code) AS module_name,
+        u.source_file_name,
+        u.status
+      FROM \`${UPLOADS_TABLE}\` AS u
+      LEFT JOIN \`${DIM_MODULE_TABLE}\` AS m
+        ON m.module_code = u.module_code
+      WHERE u.upload_id = @uploadId
+      LIMIT 1
+    `,
+    params: { uploadId },
+  });
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  if (!row) return null;
+  return {
+    uploadId: String(row.upload_id ?? uploadId),
+    periodMonth: String(row.period_month ?? ''),
+    moduleCode: String(row.module_code ?? ''),
+    moduleName: String(row.module_name ?? row.module_code ?? ''),
+    sourceFileName: String(row.source_file_name ?? ''),
+    databaseStatus: String(row.status ?? ''),
+  };
+}
+
+async function notifyPrepareUploadStatus(uploadId: string, statusLabel: 'Uploaded' | 'Published') {
+  try {
+    const context = await getPrepareUploadNotificationContext(uploadId);
+    if (!context) return;
+
+    const period = context.periodMonth || 'N/A';
+    const fileName = context.sourceFileName || 'N/A';
+    const moduleName = context.moduleName || context.moduleCode || 'N/A';
+
+    await sendSendGridEmail({
+      to: PREPARE_UPLOAD_NOTIFICATION_RECIPIENT,
+      subject: `Prepare upload ${statusLabel}: ${moduleName} - ${period}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+          <h1 style="margin:0 0 12px;font-size:20px;">Prepare upload ${escapeHtml(statusLabel)}</h1>
+          <p style="margin:0 0 16px;">
+            Para el periodo <strong>${escapeHtml(period)}</strong>, se ha cargado el archivo
+            <strong>${escapeHtml(fileName)}</strong> del modulo <strong>${escapeHtml(moduleName)}</strong>.
+            Status actual: <strong>${escapeHtml(statusLabel)}</strong>.
+          </p>
+          <table style="border-collapse:collapse;width:100%;font-size:14px;">
+            <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Upload ID</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(context.uploadId)}</td></tr>
+            <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Modulo code</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(context.moduleCode)}</td></tr>
+            <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Status BQ</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(context.databaseStatus || 'N/A')}</td></tr>
+          </table>
+        </div>
+      `,
+    });
+  } catch (error) {
+    console.warn('[prepare] upload status email failed', {
+      uploadId,
+      statusLabel,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function validatePrepareUploadRequest(formData: FormData) {
@@ -409,6 +478,7 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
     await normalizeExistingUpload(uploadId);
     await publishUpload(uploadId);
     const result = await getUploadResult(uploadId);
+    await notifyPrepareUploadStatus(uploadId, 'Published');
     revalidatePrepare(areaCode);
     return {
       ok: true,
@@ -519,6 +589,7 @@ export async function preparePublishUpload(uploadId: string, areaCode: string): 
   try {
     await publishUpload(uploadId);
     const result = await getUploadResult(uploadId);
+    await notifyPrepareUploadStatus(uploadId, 'Published');
     revalidatePrepare(areaCode);
     return {
       ok: true,
@@ -638,6 +709,7 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
     });
 
     const result = await getUploadResult(uploadId);
+    await notifyPrepareUploadStatus(uploadId, reuseCompleted ? 'Published' : 'Uploaded');
     revalidatePrepare(areaCode);
     return {
       ok: true,
@@ -657,6 +729,36 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       ok: false,
       status: 'error',
       message: error instanceof Error ? error.message : 'No se pudo confirmar la reutilización.',
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export async function notifyPrepareUploadReceived(uploadId: string): Promise<PrepareActionResult> {
+  try {
+    const normalizedUploadId = String(uploadId ?? '').trim();
+    if (!normalizedUploadId) {
+      throw new Error('uploadId es obligatorio para notificar la carga.');
+    }
+
+    const result = await getUploadResult(normalizedUploadId);
+    await notifyPrepareUploadStatus(normalizedUploadId, 'Uploaded');
+    return {
+      ok: true,
+      status: result.status,
+      uploadId: normalizedUploadId,
+      rowsTotal: result.rowsTotal,
+      rowsValid: result.rowsValid,
+      rowsError: result.rowsError,
+      message: 'Notificacion de carga enviada.',
+      errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      uploadId,
+      message: error instanceof Error ? error.message : 'No se pudo enviar la notificacion de carga.',
       errors: [error instanceof Error ? error.message : String(error)],
     };
   }
