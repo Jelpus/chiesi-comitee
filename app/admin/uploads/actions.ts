@@ -131,6 +131,48 @@ const LEXICOMP_MODULE_CODE = 'business_excellence_recompra_lexicomp';
 const LEXICOMP_REQUIRED_HEADERS = ['DISTRIBUIDOR', 'ANO', 'MES', 'Piezas Vendidas'];
 const LEXICOMP_DETAIL_SHEET = 'DETALLE DESPLAZAMIENTO';
 
+function isCommercialOperationsDsoModule(moduleCode: string) {
+    return (
+        moduleCode === 'commercial_operations_dso' ||
+        moduleCode === 'commercial_operations_days_sales_outstanding' ||
+        moduleCode === 'dso'
+    );
+}
+
+function isCommercialOperationsDeliveryOrdersModule(moduleCode: string) {
+    return (
+        moduleCode === 'commercial_operations_government_orders' ||
+        moduleCode === 'government_orders' ||
+        moduleCode === 'commercial_operations_private_orders' ||
+        moduleCode === 'private_orders'
+    );
+}
+
+function isCommercialOperationsStocksModule(moduleCode: string) {
+    return moduleCode === 'commercial_operations_stocks' || moduleCode === 'stocks';
+}
+
+function isCommercialOperationsIncidenciasModule(moduleCode: string) {
+    return (
+        moduleCode === 'commercial_operations_incidencias' ||
+        moduleCode === 'commercial_operations_otif' ||
+        moduleCode === 'otif'
+    );
+}
+
+function isCommercialOperationsSanctionsModule(moduleCode: string) {
+    return moduleCode === 'commercial_operations_sanctions' || moduleCode === 'sanctions';
+}
+
+function isCommercialOperationsGovernmentContractProgressModule(moduleCode: string) {
+    return (
+        moduleCode === 'commercial_operations_government_contract_progress' ||
+        moduleCode === 'government_contract_progress' ||
+        moduleCode === 'contract_progress' ||
+        moduleCode === 'pcfp'
+    );
+}
+
 function findLexicompDetailSheet(sheetNames: string[]) {
     return sheetNames.find((sheetName) => sheetName.trim().toUpperCase() === LEXICOMP_DETAIL_SHEET) ?? null;
 }
@@ -352,6 +394,36 @@ function hasHeaderContaining(rows: ParsedUploadRow[], tokens: string[]) {
         }
     }
     return false;
+}
+
+function hasNumericAlias(rows: ParsedUploadRow[], aliases: string[]) {
+    return rows.some((row) => asNumber(getRowValue(row.payload, aliases)) != null);
+}
+
+function hasTextAlias(rows: ParsedUploadRow[], aliases: string[]) {
+    return rows.some((row) => String(getRowValue(row.payload, aliases) ?? '').trim().length > 0);
+}
+
+function isMonthLikeHeader(value: string) {
+    const normalized = normalizeRowKey(value);
+    if (!normalized) return false;
+    const numericHeader = Number(normalized);
+    if (/^\d{5}$/.test(normalized) && Number.isFinite(numericHeader) && numericHeader >= 30000 && numericHeader <= 60000) {
+        return true;
+    }
+    if (/^20\d{6}/.test(normalized)) return true;
+    return /^(jan|january|ene|enero|feb|february|febrero|mar|march|marzo|apr|april|abr|abril|may|mayo|jun|june|junio|jul|july|julio|aug|ago|august|agosto|sep|sept|september|septiembre|oct|october|octubre|nov|november|noviembre|dec|dic|december|diciembre)\d{2,4}$/.test(normalized) ||
+        /^(jan|january|ene|enero|feb|february|febrero|mar|march|marzo|apr|april|abr|abril|may|mayo|jun|june|junio|jul|july|julio|aug|ago|august|agosto|sep|sept|september|septiembre|oct|october|octubre|nov|november|noviembre|dec|dic|december|diciembre)$/.test(normalized) ||
+        /\d{4}(jan|january|ene|enero|feb|february|febrero|mar|march|marzo|apr|april|abr|abril|may|mayo|jun|june|junio|jul|july|julio|aug|ago|august|agosto|sep|sept|september|septiembre|oct|october|octubre|nov|november|noviembre|dec|dic|december|diciembre)/.test(normalized);
+}
+
+function hasNumericMonthColumn(rows: ParsedUploadRow[]) {
+    return rows.some((row) =>
+        Object.entries(row.payload).some(([key, value]) => {
+            if (key.startsWith('column_')) return false;
+            return isMonthLikeHeader(key) && asNumber(value) != null;
+        }),
+    );
 }
 
 function asNumber(value: unknown) {
@@ -737,11 +809,7 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         return { ok: true, checked: sampleRows.length };
     }
 
-    if (
-        moduleCode === 'commercial_operations_dso' ||
-        moduleCode === 'commercial_operations_days_sales_outstanding' ||
-        moduleCode === 'dso'
-    ) {
+    if (isCommercialOperationsDsoModule(moduleCode)) {
         const monthTokens = new Set([
             'jan',
             'feb',
@@ -788,6 +856,104 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         }
 
         return { ok: true, checked: rowsToCheck.length };
+    }
+
+    if (isCommercialOperationsDeliveryOrdersModule(moduleCode)) {
+        const hasPrivateLayout =
+            hasTextAlias(sampleRows, ['Material']) &&
+            hasTextAlias(sampleRows, ['Order date']) &&
+            hasNumericAlias(sampleRows, ['Cantidad de pedido', 'pzas', 'NO. PIEZAS ENTREGADAS']);
+        const hasGovernmentLayout =
+            hasTextAlias(sampleRows, ['MEDICAMENTO', 'Producto']) &&
+            hasTextAlias(sampleRows, ['FECHA PEDIDO SAP', 'FECHA DE PEDIDO']) &&
+            hasNumericAlias(sampleRows, [
+                'CANTIDAD ENTREGADA',
+                'CANTIDAD SUMINISTRADA',
+                'CONFIRMADAS',
+                'CANTIDAD TOTAL DEL PEDIDO',
+                'CANTIDAD FACTURADA',
+            ]);
+
+        if (!hasPrivateLayout && !hasGovernmentLayout) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Commercial Operations Orders: expected private order columns (Material, Order date, numeric quantity) or government order columns (MEDICAMENTO, FECHA PEDIDO, numeric quantity).',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (isCommercialOperationsStocksModule(moduleCode)) {
+        const hasProduct = hasTextAlias(sampleRows, ['Producto', 'MEDICAMENTO']);
+        const hasMonthlyValues = hasNumericMonthColumn(sampleRows);
+
+        if (!hasProduct || !hasMonthlyValues) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Commercial Operations Stocks: expected Producto/MEDICAMENTO and numeric monthly columns.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (isCommercialOperationsIncidenciasModule(moduleCode)) {
+        const hasPeriod = hasTextAlias(sampleRows, ['Mes', 'Month', 'Order date', 'Order Date', 'Fecha de pedido']);
+        const hasOrder = hasTextAlias(sampleRows, ['Orden', 'Order', 'Referencia cliente']);
+        const hasOtif = hasTextAlias(sampleRows, ['OTIF']) || hasNumericAlias(sampleRows, ['NO. PIEZAS ENTREGADAS']);
+
+        if (!hasPeriod || !hasOrder || !hasOtif) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Commercial Operations OTIF/Incidencias: expected period/order columns and OTIF or delivered pieces.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (isCommercialOperationsSanctionsModule(moduleCode)) {
+        const hasProvisionPeriod =
+            hasTextAlias(sampleRows, ['MES DE PROVISION', 'MES DE PROVISIÓN', 'Mes de Provision', 'Mes de Provisión']) &&
+            hasTextAlias(sampleRows, ['AÑO DE PROVISION', 'AÑO DE PROVISIÓN', 'ANO DE PROVISION', 'ANO DE PROVISIÓN', 'AÑO', 'ANO', 'Year']);
+        const hasSanctionDetail =
+            hasTextAlias(sampleRows, ['RESPONSABLE DE SANCION', 'RESPONSABLE DE SANCIÓN', 'GRUPO CLIENTE', 'MEDICAMENTO']) ||
+            hasNumericAlias(sampleRows, ['SANCION ESTIMADA', 'SANCIÓN ESTIMADA', 'Monto Sancion', 'Monto Sanción']);
+
+        if (!hasProvisionPeriod || !hasSanctionDetail) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Commercial Operations Sanctions: expected provision period and sanction detail columns.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
+    }
+
+    if (isCommercialOperationsGovernmentContractProgressModule(moduleCode)) {
+        const hasProduct = hasTextAlias(sampleRows, ['PRODUCTO', 'Producto']);
+        const hasContract = hasTextAlias(sampleRows, ['LLAVE', 'Llave', 'NUMERO DE CONTRATO', 'NÚMERO DE CONTRATO']);
+        const hasMonthlyValues = hasNumericMonthColumn(sampleRows);
+
+        if (!hasProduct || !hasContract || !hasMonthlyValues) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Government Contract Progress: expected product, contract identifiers, and numeric monthly progress columns.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
     }
 
     return { ok: true, checked: sampleRows.length };
@@ -1431,14 +1597,15 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
                 const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
 
                 for (const row of rows) {
-                    const hasAnyCellValue = row.actualCellCount > 0;
-                    if (!hasAnyCellValue) continue;
-
                     const rowNumber = Number.isFinite(row.number) && row.number > 0 ? row.number : 0;
                     if (rowNumber <= 0) continue;
                     if (rowNumber < headerRow) continue;
 
+                    const hasAnyCellValue = row.actualCellCount > 0;
                     if (rowNumber === headerRow) {
+                        if (!hasAnyCellValue) {
+                            throw new Error(`Header row ${headerRow} is empty in XLSX sheet "${worksheetName || targetSheetName}".`);
+                        }
                         const headerCount = Math.max(
                             row.cellCount,
                             Array.isArray(row.values) ? row.values.length - 1 : 0,
@@ -1453,6 +1620,7 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
                         continue;
                     }
 
+                    if (!hasAnyCellValue) continue;
                     if (headers.length === 0) continue;
 
                     const payload: Record<string, unknown> = {};
@@ -1485,6 +1653,10 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
                 }
             }
 
+            if (rowCount === 0) {
+                throw new Error(`No rows were parsed from XLSX sheet "${worksheetName || targetSheetName}" after header row ${headerRow}. Check selected sheet and header row.`);
+            }
+
             const sampleCheck = validateSampleRows(params.moduleCode, sampleRows);
             if (!sampleCheck.ok) {
                 throw new Error(sampleCheck.message);
@@ -1499,9 +1671,129 @@ async function writeStreamingXlsxRawRowsNdjsonToGcsFromGcs(params: {
         if (!matchedSheet) {
             throw new Error(`Sheet "${targetSheetName}" was not found in the XLSX file.`);
         }
-        if (rowCount === 0) {
-            throw new Error('No rows were parsed from source file. Check selected sheet and header row.');
+    } catch (error) {
+        writeStream.destroy(error instanceof Error ? error : new Error(String(error)));
+        readStream.destroy(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+    }
+
+    writeStream.end();
+    await new Promise<void>((resolve, reject) => {
+        writeStream.on('finish', () => resolve());
+        writeStream.on('error', (error) => reject(error));
+    });
+
+    return {
+        gcsUri: `gs://${bucketName}/${ndjsonObjectPath}`,
+        bucketName,
+        ndjsonObjectPath,
+        rowCount,
+        sampleRowsChecked,
+    };
+}
+
+async function writeStreamingXlsxMatrixRowsNdjsonToGcsFromGcs(params: {
+    uploadId: string;
+    moduleCode: string;
+    storagePath: string;
+    sheetName: string;
+}) {
+    const { bucketName, objectPath } = parseGcsPath(params.storagePath);
+    const storageClient = getStorageClient();
+    const bucket = storageClient.bucket(bucketName);
+    const sourceFile = bucket.file(objectPath);
+    const ndjsonObjectPath = `${objectPath}.raw_rows.ndjson`;
+    const targetFile = bucket.file(ndjsonObjectPath);
+    const readStream = sourceFile.createReadStream();
+    const writeStream = targetFile.createWriteStream({
+        resumable: false,
+        contentType: 'application/x-ndjson',
+    });
+    const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
+        entries: 'emit',
+        sharedStrings: 'cache',
+        hyperlinks: 'ignore',
+        styles: 'ignore',
+        worksheets: 'emit',
+    });
+
+    const targetSheetName = params.sheetName.trim();
+    let rowCount = 0;
+    let sampleRowsChecked = 0;
+    let matchedSheet = false;
+    let parsedAnySheet = false;
+    const sampleRows: ParsedUploadRow[] = [];
+
+    try {
+        for await (const worksheetReader of workbookReader) {
+            parsedAnySheet = true;
+            const worksheetName = String((worksheetReader as { name?: unknown }).name ?? '').trim();
+            if (targetSheetName && worksheetName && worksheetName !== targetSheetName) {
+                continue;
+            }
+
+            matchedSheet = true;
+            for await (const rowOrRows of worksheetReader as AsyncIterable<ExcelJS.Row | ExcelJS.Row[]>) {
+                const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
+
+                for (const row of rows) {
+                    const hasAnyCellValue = row.actualCellCount > 0;
+                    if (!hasAnyCellValue) continue;
+
+                    const rowNumber = Number.isFinite(row.number) && row.number > 0 ? row.number : 0;
+                    if (rowNumber <= 0) continue;
+
+                    const columnCount = Math.max(
+                        row.cellCount,
+                        Array.isArray(row.values) ? row.values.length - 1 : 0,
+                    );
+                    const payload: Record<string, unknown> = {};
+                    let hasValue = false;
+
+                    for (let colIndex = 1; colIndex <= columnCount; colIndex += 1) {
+                        const normalizedValue = normalizeExcelJsCellForRaw(row.getCell(colIndex).value);
+                        if (normalizedValue != null && normalizedValue !== '') hasValue = true;
+                        payload[`column_${colIndex}`] = normalizedValue;
+                    }
+                    if (!hasValue) continue;
+
+                    rowCount += 1;
+                    const parsedRow = { rowNumber, payload };
+                    if (sampleRows.length < 60) sampleRows.push(parsedRow);
+
+                    const rawPayload = {
+                        upload_id: params.uploadId,
+                        raw_row_id: `${params.uploadId}_${rowNumber}`,
+                        row_number: rowNumber,
+                        row_payload_json: payload,
+                        validation_status: 'pending',
+                        validation_error_json: [],
+                        sheet_name: worksheetName || targetSheetName || 'XLSX',
+                    };
+
+                    if (!writeStream.write(`${JSON.stringify(rawPayload)}\n`)) {
+                        await once(writeStream, 'drain');
+                    }
+                }
+            }
+            break;
         }
+
+        if (!parsedAnySheet) {
+            throw new Error('No sheets/tabs were detected in the XLSX file.');
+        }
+        if (!matchedSheet) {
+            throw new Error(`Sheet "${targetSheetName}" was not found in the XLSX file.`);
+        }
+        if (rowCount === 0) {
+            throw new Error('No rows were parsed from source file. Check selected sheet.');
+        }
+
+        const sampleCheck = validateSampleRows(params.moduleCode, sampleRows);
+        if (!sampleCheck.ok) {
+            throw new Error(sampleCheck.message);
+        }
+        sampleRowsChecked = sampleCheck.checked;
     } catch (error) {
         writeStream.destroy(error instanceof Error ? error : new Error(String(error)));
         readStream.destroy(error instanceof Error ? error : new Error(String(error)));
@@ -2345,7 +2637,14 @@ export async function processUpload(uploadId: string) {
             sampleRowsChecked = tempFile.sampleRowsChecked;
         } else {
             const shouldValidateSamples = moduleCode !== LEXICOMP_MODULE_CODE;
-            tempFile = isXlsxPath(context.storagePath) && moduleCode !== LEXICOMP_MODULE_CODE
+            tempFile = isCommercialOperationsDsoModule(moduleCode) && isXlsxPath(context.storagePath)
+                ? await writeStreamingXlsxMatrixRowsNdjsonToGcsFromGcs({
+                    uploadId,
+                    moduleCode,
+                    storagePath: context.storagePath,
+                    sheetName: effectiveSheetName,
+                })
+                : isXlsxPath(context.storagePath) && moduleCode !== LEXICOMP_MODULE_CODE
                 ? await writeStreamingXlsxRawRowsNdjsonToGcsFromGcs({
                     uploadId,
                     moduleCode,

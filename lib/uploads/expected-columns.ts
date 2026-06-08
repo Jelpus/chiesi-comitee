@@ -192,6 +192,26 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
     { label: 'Responsable y cliente', columns: ['RESPONSABLE DE SANCION', 'GRUPO CLIENTE'] },
     { label: 'Producto y sancion', columns: ['MEDICAMENTO', 'SANCION ESTIMADA', 'MOTIVO DE SANCION'] },
   ],
+  commercial_operations_government_contract_progress: [
+    { label: 'Contrato', columns: ['LLAVE', 'NUMERO DE CONTRATO', 'TIPO DE CONTRATO'] },
+    { label: 'Producto', columns: ['PRODUCTO', 'CLAVE DE CB'] },
+    { label: 'Avance', columns: ['Columnas mensuales con cantidades entregadas', 'TOTAL 2025', 'TOTAL 2026'] },
+  ],
+  government_contract_progress: [
+    { label: 'Contrato', columns: ['LLAVE', 'NUMERO DE CONTRATO', 'TIPO DE CONTRATO'] },
+    { label: 'Producto', columns: ['PRODUCTO', 'CLAVE DE CB'] },
+    { label: 'Avance', columns: ['Columnas mensuales con cantidades entregadas', 'TOTAL 2025', 'TOTAL 2026'] },
+  ],
+  contract_progress: [
+    { label: 'Contrato', columns: ['LLAVE', 'NUMERO DE CONTRATO', 'TIPO DE CONTRATO'] },
+    { label: 'Producto', columns: ['PRODUCTO', 'CLAVE DE CB'] },
+    { label: 'Avance', columns: ['Columnas mensuales con cantidades entregadas', 'TOTAL 2025', 'TOTAL 2026'] },
+  ],
+  pcfp: [
+    { label: 'Contrato', columns: ['LLAVE', 'NUMERO DE CONTRATO', 'TIPO DE CONTRATO'] },
+    { label: 'Producto', columns: ['PRODUCTO', 'CLAVE DE CB'] },
+    { label: 'Avance', columns: ['Columnas mensuales con cantidades entregadas', 'TOTAL 2025', 'TOTAL 2026'] },
+  ],
   stocks: [
     { label: 'Producto', columns: ['Producto', 'MEDICAMENTO'] },
     { label: 'Clasificacion', columns: ['Tipo Negocio', 'Mercado', 'Cliente'] },
