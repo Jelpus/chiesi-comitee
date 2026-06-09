@@ -9,6 +9,7 @@ import {
   markReportingVersionReady,
   notifyReportingVersionReadyValidation,
   requestReportingVersionInfo,
+  requestReportingVersionReminder,
   sendReadyValidationTestEmail,
 } from '@/app/admin/versions/actions';
 import { AdminStatusBadge } from '@/components/ui/admin-status-badge';
@@ -294,6 +295,34 @@ export function VersionsTable({ rows }: VersionsTableProps) {
                           }}
                         >
                           {rowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Request Info'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={rowBusy}
+                          className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-amber-700 transition hover:border-amber-400 disabled:opacity-50"
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Send Reminder emails only for pending uploads and forms in ${formatPeriod(row.periodMonth)}?`,
+                            );
+                            if (!confirmed) return;
+                            setMessage('');
+                            setBusyKey(row.reportingVersionId);
+                            startTransition(async () => {
+                              try {
+                                const result = await requestReportingVersionReminder({
+                                  reportingVersionId: row.reportingVersionId,
+                                  periodMonth: row.periodMonth,
+                                });
+                                setMessage(`Reminder sent to ${result.sent} owner(s) with pending items.`);
+                              } catch (error) {
+                                setMessage(error instanceof Error ? error.message : 'Failed to send Reminder emails.');
+                              } finally {
+                                setBusyKey(null);
+                              }
+                            });
+                          }}
+                        >
+                          {rowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Reminder'}
                         </button>
                         <button
                           type="button"

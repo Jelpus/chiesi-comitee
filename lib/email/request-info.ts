@@ -42,6 +42,29 @@ export type ReadyValidationRecipient = {
   emailOwner: string;
 };
 
+export type ReminderRecipient = {
+  ownerName: string;
+  emailOwner: string;
+  modules: Array<{
+    moduleCode: string;
+    moduleName: string;
+    areaCode: string;
+    status: string;
+  }>;
+  forms: Array<{
+    formCode: string;
+    formLabel: string;
+    formPath: string;
+    status: string;
+  }>;
+};
+
+export type ReminderSummaryEmailInput = {
+  recipients: ReminderRecipient[];
+  periodLabel: string;
+  sentCount: number;
+};
+
 const ALWAYS_CC = 'j.arevalo@chiesi.com';
 const SUMMARY_TO = 'j.arevalo@chiesi.com';
 const SUMMARY_CC = 'guillermo@jelpus.com';
@@ -203,6 +226,213 @@ export async function sendReadyValidationEmail(input: {
     to: input.recipient.emailOwner,
     cc: [ALWAYS_CC],
     subject: `Validación de información para Committee - ${input.periodLabel}`,
+    html,
+  });
+}
+
+function renderReminderItems(items: string[]) {
+  const rows = items
+    .map((item) => `
+      <li style="margin:0 0 8px;font-size:15px;line-height:1.5;color:#0f172a;">
+        ${escapeHtml(item)}
+      </li>
+    `)
+    .join('');
+
+  return rows || `
+    <li style="margin:0 0 8px;font-size:15px;line-height:1.5;color:#64748b;">
+      Sin pendientes registrados.
+    </li>
+  `;
+}
+
+export async function sendReminderEmail(input: {
+  recipient: ReminderRecipient;
+  periodLabel: string;
+  periodMonth: string;
+  reportingVersionId: string;
+}) {
+  const ownerName = input.recipient.ownerName || 'Equipo';
+  const moduleNames = input.recipient.modules.map((module) => module.moduleName);
+  const formNames = input.recipient.forms.map((form) => form.formLabel);
+  const baseUrl = getBaseUrl();
+  const prepareAreas = [...new Set(input.recipient.modules.map((module) => module.areaCode).filter(Boolean))];
+  const prepareHref = prepareAreas.length === 1
+    ? `${baseUrl}/prepare/${encodeURIComponent(prepareAreas[0])}?version=${encodeURIComponent(input.reportingVersionId)}`
+    : `${baseUrl}/prepare?version=${encodeURIComponent(input.reportingVersionId)}`;
+
+  const formLinks = input.recipient.forms
+    .map((form) => {
+      const href = `${baseUrl}${form.formPath}?period=${encodeURIComponent(input.periodMonth)}`;
+      return `
+        <p style="margin:0 0 8px;">
+          <a href="${escapeHtml(href)}" style="color:#0f172a;font-weight:700;text-decoration:underline;">
+            ${escapeHtml(form.formLabel)}
+          </a>
+        </p>
+      `;
+    })
+    .join('');
+
+  const html = `
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Reminder de informacion pendiente</title>
+      </head>
+      <body style="margin:0;background:#f6f8fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f8fb;padding:28px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:720px;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden;">
+                <tr>
+                  <td style="background:#0f172a;color:#ffffff;padding:24px 28px;">
+                    <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#cbd5e1;">Chiesi Operational Committee</p>
+                    <h1 style="margin:10px 0 0;font-size:22px;line-height:1.25;">Recordatorio de informacion pendiente</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:28px;">
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Estimado/a ${escapeHtml(ownerName)},</p>
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      La fecha de la reunion de Committee se aproxima. Te invitamos a completar cuanto antes la informacion pendiente asignada a ti para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
+                    </p>
+                    ${moduleNames.length > 0 ? `
+                      <p style="margin:18px 0 10px;font-size:15px;line-height:1.6;font-weight:700;">Modulos de carga pendientes:</p>
+                      <ul style="margin:0 0 16px;padding-left:22px;">
+                        ${renderReminderItems(moduleNames)}
+                      </ul>
+                      <p style="margin:0 0 18px;">
+                        <a href="${escapeHtml(prepareHref)}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:999px;padding:12px 18px;font-size:14px;font-weight:700;">
+                          Ir a carga de archivos
+                        </a>
+                      </p>
+                    ` : ''}
+                    ${formNames.length > 0 ? `
+                      <p style="margin:18px 0 10px;font-size:15px;line-height:1.6;font-weight:700;">Formularios pendientes:</p>
+                      <ul style="margin:0 0 16px;padding-left:22px;">
+                        ${renderReminderItems(formNames)}
+                      </ul>
+                      ${formLinks ? `<div style="margin:0 0 18px;">${formLinks}</div>` : ''}
+                    ` : ''}
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      Si tienes alguna duda o problema en la carga, favor de contactar a
+                      <a href="mailto:guillermo@jelpus.com" style="color:#0f172a;font-weight:700;text-decoration:underline;">guillermo@jelpus.com</a>
+                      para recibir soporte personalizado.
+                    </p>
+                    <p style="margin:24px 0 0;font-size:15px;line-height:1.6;">
+                      Muchas gracias,<br />
+                      <strong>Chiesi Operational Committee</strong>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  await sendSendGridEmail({
+    to: input.recipient.emailOwner,
+    cc: [ALWAYS_CC],
+    subject: `Reminder de informacion pendiente - ${input.periodLabel}`,
+    html,
+  });
+}
+
+function renderReminderSummaryRows(recipients: ReminderRecipient[]) {
+  const rows = recipients
+    .map((recipient) => {
+      const ownerName = recipient.ownerName || 'Equipo';
+      const pendingItems = [
+        ...recipient.modules.map((module) => module.moduleName),
+        ...recipient.forms.map((form) => form.formLabel),
+      ];
+      const pendingText = pendingItems.length > 0
+        ? pendingItems.map((item) => escapeHtml(item)).join('<br />')
+        : 'Sin pendientes registrados';
+
+      return `
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#0f172a;vertical-align:top;">
+            <strong>${escapeHtml(ownerName)}</strong><br />
+            <span style="color:#64748b;">${escapeHtml(recipient.emailOwner)}</span>
+          </td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#0f172a;line-height:1.5;vertical-align:top;">
+            ${pendingText}
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return rows || `
+    <tr>
+      <td colspan="2" style="padding:12px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#64748b;text-align:center;">
+        No se enviaron recordatorios.
+      </td>
+    </tr>
+  `;
+}
+
+export async function sendReminderSummaryEmail(input: ReminderSummaryEmailInput) {
+  const html = `
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Resumen de recordatorios enviados</title>
+      </head>
+      <body style="margin:0;background:#f6f8fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f8fb;padding:28px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:760px;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden;">
+                <tr>
+                  <td style="background:#0f172a;color:#ffffff;padding:24px 28px;">
+                    <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#cbd5e1;">Chiesi Operational Committee</p>
+                    <h1 style="margin:10px 0 0;font-size:22px;line-height:1.25;">Resumen de recordatorios enviados</h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:28px;">
+                    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
+                      Jose Arevalo y Guillermo Rojas, se enviaron <strong>${input.sentCount}</strong> recordatorio(s) de informacion pendiente para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
+                    </p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;border-collapse:separate;border-spacing:0;">
+                      <thead>
+                        <tr>
+                          <th align="left" style="padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Responsable</th>
+                          <th align="left" style="padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Informacion pendiente</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${renderReminderSummaryRows(input.recipients)}
+                      </tbody>
+                    </table>
+                    <p style="margin:24px 0 0;font-size:15px;line-height:1.6;">
+                      Atentamente,<br />
+                      <strong>Chiesi Operational Committee</strong>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  await sendSendGridEmail({
+    to: SUMMARY_TO,
+    cc: [SUMMARY_CC],
+    subject: `Resumen de recordatorios enviados - ${input.periodLabel}`,
     html,
   });
 }

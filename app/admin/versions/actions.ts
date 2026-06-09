@@ -7,13 +7,17 @@ import { getBigQueryClient } from '@/lib/bigquery/client';
 import {
   sendFormRequestInfoEmail,
   sendReadyValidationEmail,
+  sendReminderEmail,
+  sendReminderSummaryEmail,
   sendRequestInfoEmail,
   sendRequestInfoSummaryEmail,
   type FormRequestInfoRecipient,
   type ReadyValidationRecipient,
+  type ReminderRecipient,
   type RequestInfoRecipient,
 } from '@/lib/email/request-info';
 import { getActiveFormResponsibles } from '@/lib/data/form-responsibles';
+import { getAdminHomeStatusData } from '@/lib/data/admin-home-status';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -116,6 +120,89 @@ async function getRequestInfoRecipients(): Promise<RequestInfoRecipient[]> {
   }
 
   return [...byEmail.values()];
+}
+
+function normalizeFormStatusCode(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/-/g, '_');
+  if (normalized === 'regulatory_affairs') return 'ra_quality_fv';
+  return normalized;
+}
+
+async function getPendingModuleReminderRecipients(params: {
+  reportingVersionId: string;
+  periodMonth: string;
+}) {
+  const client = getBigQueryClient();
+  const [rows] = await client.query({
+    query: `
+      WITH active_modules AS (
+        SELECT
+          module_code,
+          module_name,
+          area_code,
+          NULLIF(TRIM(owner_name), '') AS owner_name,
+          LOWER(TRIM(email_owner)) AS email_owner
+        FROM \`${DIM_MODULE_TABLE}\`
+        WHERE COALESCE(is_active, TRUE) = TRUE
+          AND email_owner IS NOT NULL
+          AND TRIM(email_owner) != ''
+      ),
+      latest_upload AS (
+        SELECT
+          module_code,
+          LOWER(TRIM(status)) AS status,
+          ROW_NUMBER() OVER (
+            PARTITION BY module_code
+            ORDER BY uploaded_at DESC
+          ) AS rn
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+        WHERE reporting_version_id = @reportingVersionId
+          AND period_month = DATE(@periodMonth)
+      )
+      SELECT
+        m.module_code,
+        m.module_name,
+        m.area_code,
+        m.owner_name,
+        m.email_owner,
+        COALESCE(u.status, 'missing') AS status
+      FROM active_modules m
+      LEFT JOIN latest_upload u
+        ON u.module_code = m.module_code
+       AND u.rn = 1
+      WHERE COALESCE(u.status, 'missing') != 'published'
+      ORDER BY m.email_owner, m.area_code, m.module_name
+    `,
+    params: params,
+  });
+
+  const recipientsByEmail = new Map<string, ReminderRecipient>();
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const emailOwner = normalizeEmail(row.email_owner);
+    if (!emailOwner) continue;
+    const current = recipientsByEmail.get(emailOwner);
+    const moduleItem = {
+      moduleCode: String(row.module_code ?? ''),
+      moduleName: String(row.module_name ?? ''),
+      areaCode: String(row.area_code ?? ''),
+      status: String(row.status ?? 'missing'),
+    };
+
+    if (current) {
+      current.modules.push(moduleItem);
+      if (!current.ownerName && row.owner_name) current.ownerName = String(row.owner_name);
+      continue;
+    }
+
+    recipientsByEmail.set(emailOwner, {
+      ownerName: row.owner_name == null ? '' : String(row.owner_name),
+      emailOwner,
+      modules: [moduleItem],
+      forms: [],
+    });
+  }
+
+  return recipientsByEmail;
 }
 
 export async function createReportingVersion(input: {
@@ -355,6 +442,119 @@ export async function requestReportingVersionInfo(input: {
   });
 
   return { ok: true as const, sent: sent + formsSent, failed };
+}
+
+export async function requestReportingVersionReminder(input: {
+  reportingVersionId: string;
+  periodMonth: string;
+}) {
+  const reportingVersionId = (input.reportingVersionId ?? '').trim();
+  const periodMonth = (input.periodMonth ?? '').trim();
+  if (!reportingVersionId) {
+    throw new Error('reportingVersionId is required.');
+  }
+  if (!periodMonth) {
+    throw new Error('periodMonth is required.');
+  }
+
+  const client = getBigQueryClient();
+  const [versionRows] = await client.query({
+    query: `
+      SELECT CAST(period_month AS STRING) AS period_month
+      FROM \`${REPORTING_VERSIONS_TABLE}\`
+      WHERE reporting_version_id = @reportingVersionId
+      LIMIT 1
+    `,
+    params: { reportingVersionId },
+  });
+  const versionRow = (versionRows as Array<Record<string, unknown>>)[0];
+  if (!versionRow) {
+    throw new Error('Reporting version not found.');
+  }
+
+  const periodMonthValue = String(versionRow.period_month ?? periodMonth);
+  const periodLabel = formatPeriodLabel(periodMonthValue);
+  const recipientsByEmail = await getPendingModuleReminderRecipients({
+    reportingVersionId,
+    periodMonth: periodMonthValue,
+  });
+
+  const statusData = await getAdminHomeStatusData({
+    reportingVersionId,
+    periodMonth: periodMonthValue,
+  });
+  const pendingFormsByCode = new Map(
+    statusData.forms
+      .filter((form) => form.status !== 'complete')
+      .map((form) => [normalizeFormStatusCode(form.formCode), form]),
+  );
+
+  for (const responsible of await getActiveFormResponsibles()) {
+    const emailOwner = normalizeEmail(responsible.emailOwner);
+    if (!emailOwner) continue;
+    const formStatus = pendingFormsByCode.get(normalizeFormStatusCode(responsible.formCode));
+    if (!formStatus) continue;
+
+    const formItem = {
+      formCode: responsible.formCode,
+      formLabel: responsible.formLabel,
+      formPath: responsible.formPath,
+      status: formStatus.status,
+    };
+    const current = recipientsByEmail.get(emailOwner);
+    if (current) {
+      current.forms.push(formItem);
+      if (!current.ownerName && responsible.ownerName) current.ownerName = responsible.ownerName;
+      continue;
+    }
+
+    recipientsByEmail.set(emailOwner, {
+      ownerName: responsible.ownerName ?? '',
+      emailOwner,
+      modules: [],
+      forms: [formItem],
+    });
+  }
+
+  const recipients = [...recipientsByEmail.values()].filter(
+    (recipient) => recipient.modules.length > 0 || recipient.forms.length > 0,
+  );
+  if (recipients.length === 0) {
+    return { ok: true as const, sent: 0, failed: 0 };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const recipient of recipients) {
+    try {
+      await sendReminderEmail({
+        recipient,
+        periodLabel,
+        periodMonth: periodMonthValue,
+        reportingVersionId,
+      });
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
+    }
+  }
+
+  revalidatePath('/admin/versions');
+
+  if (failed > 0) {
+    throw new Error(`Sent ${sent} reminder emails, but ${failed} failed. ${errors.slice(0, 3).join(' | ')}`);
+  }
+
+  await sendReminderSummaryEmail({
+    recipients,
+    periodLabel,
+    sentCount: sent,
+  });
+
+  return { ok: true as const, sent, failed };
 }
 
 export async function notifyReportingVersionReadyValidation(input: {
