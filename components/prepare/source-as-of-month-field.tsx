@@ -28,7 +28,7 @@ export function SourceAsOfMonthField({ name = 'sourceAsOfMonth', defaultValue, p
   return (
     <div className="space-y-2">
       <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
-        La información corresponde al cierre del mes de
+        Data al cierre de
       </label>
       <input
         type="month"

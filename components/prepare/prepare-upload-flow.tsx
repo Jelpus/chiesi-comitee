@@ -98,6 +98,59 @@ function getRequiredColumnGroups(moduleCode: string) {
     .filter((group) => group.columns.length > 0);
 }
 
+function readPhysicalSheetRowCells(
+  xlsx: typeof import('xlsx'),
+  sheet: import('xlsx').WorkSheet,
+  rowNumber: number,
+) {
+  if (!sheet['!ref']) return [];
+
+  const range = xlsx.utils.decode_range(sheet['!ref']);
+  const rowIndex = rowNumber - 1;
+  if (rowIndex < range.s.r || rowIndex > range.e.r) return [];
+
+  const cells: string[] = [];
+  for (let colIndex = range.s.c; colIndex <= range.e.c; colIndex += 1) {
+    const address = xlsx.utils.encode_cell({ r: rowIndex, c: colIndex });
+    const cell = sheet[address];
+    const value = cell?.w ?? cell?.v ?? '';
+    const text = String(value ?? '').trim();
+    if (text) cells.push(text);
+  }
+
+  return cells;
+}
+
+function detectExpectedHeaderRowFromSheet(
+  xlsx: typeof import('xlsx'),
+  sheet: import('xlsx').WorkSheet,
+  moduleCode: string,
+) {
+  if (!sheet['!ref']) return null;
+
+  const requiredGroups = getRequiredColumnGroups(moduleCode);
+  if (requiredGroups.length === 0) return null;
+
+  const range = xlsx.utils.decode_range(sheet['!ref']);
+  const lastRowToScan = Math.min(range.e.r, range.s.r + 24);
+
+  for (let rowIndex = range.s.r; rowIndex <= lastRowToScan; rowIndex += 1) {
+    const normalizedCells = new Set(
+      readPhysicalSheetRowCells(xlsx, sheet, rowIndex + 1)
+        .map(normalizeHeaderCandidate)
+        .filter(Boolean),
+    );
+
+    const matchesAllGroups = requiredGroups.every((group) =>
+      group.columns.some((column) => normalizedCells.has(normalizeHeaderCandidate(column))),
+    );
+
+    if (matchesAllGroups) return rowIndex + 1;
+  }
+
+  return null;
+}
+
 async function readHeaderCells(file: File, selectedSheetName: string, selectedHeaderRow: string) {
   const xlsx = await import('xlsx');
   const workbook = xlsx.read(await file.arrayBuffer(), { type: 'array' });
@@ -111,14 +164,7 @@ async function readHeaderCells(file: File, selectedSheetName: string, selectedHe
   }
 
   const headerRowNumber = Math.max(1, Number(selectedHeaderRow) || 1);
-  const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    raw: false,
-    blankrows: false,
-    defval: '',
-  });
-  const headerCells = rows[headerRowNumber - 1] ?? [];
-  return headerCells.map((cell) => String(cell ?? '').trim()).filter(Boolean);
+  return readPhysicalSheetRowCells(xlsx, sheet, headerRowNumber);
 }
 
 async function validateExpectedColumns(file: File, moduleCode: string, selectedSheetName: string, selectedHeaderRow: string) {
@@ -325,6 +371,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       try {
         updateProgressStep(1, 'Detectando hojas del libro.');
         let detectedLexicompHeaderRow: number | null = null;
+        const detectedHeaderRowsBySheet: Record<string, number> = {};
         const sheetNames = isCsvFileName(file.name)
           ? ['CSV']
           : await file.arrayBuffer().then(async (buffer) => {
@@ -335,6 +382,15 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
                 const sheet = detailSheetName ? workbook.Sheets[detailSheetName] : null;
                 if (sheet) {
                   detectedLexicompHeaderRow = detectLexicompHeaderRowFromSheet(xlsx, sheet);
+                }
+              }
+              for (const sheetName of workbook.SheetNames) {
+                const sheet = workbook.Sheets[sheetName];
+                const detectedHeaderRow = sheet
+                  ? detectExpectedHeaderRowFromSheet(xlsx, sheet, requirement.module.moduleCode)
+                  : null;
+                if (detectedHeaderRow) {
+                  detectedHeaderRowsBySheet[sheetName] = detectedHeaderRow;
                 }
               }
               return workbook.SheetNames;
@@ -355,6 +411,8 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         const suggestedHeaderRow =
           requirement.module.moduleCode === 'business_excellence_recompra_lexicomp'
             ? detectedLexicompHeaderRow ?? (defaults.selectedHeaderRow || 3)
+            : detectedHeaderRowsBySheet[suggestedSheetName]
+              ? detectedHeaderRowsBySheet[suggestedSheetName]
             : defaults.selectedHeaderRow && defaults.selectedHeaderRow !== 1
               ? defaults.selectedHeaderRow
               : defaults.selectedHeaderRow || 1;
@@ -439,8 +497,10 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       setError('Selecciona un archivo antes de continuar.');
       return;
     }
-    formData.set('selectedSheetName', selectedSheetName);
-    formData.set('selectedHeaderRow', selectedHeaderRow);
+    const submittedSheetName = String(formData.get('selectedSheetName') ?? selectedSheetName).trim() || selectedSheetName;
+    const submittedHeaderRow = String(formData.get('selectedHeaderRow') ?? selectedHeaderRow).trim() || selectedHeaderRow;
+    formData.set('selectedSheetName', submittedSheetName);
+    formData.set('selectedHeaderRow', submittedHeaderRow);
 
     openProgressModal({
       title: 'Publicando archivo',
@@ -458,17 +518,25 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         await validateExpectedColumns(
           selectedFile,
           requirement.module.moduleCode,
-          selectedSheetName,
-          selectedHeaderRow,
+          submittedSheetName,
+          submittedHeaderRow,
         );
 
         currentStep = uploadPublishSteps[1];
         updateProgressStep(1, 'Paso 2 de 6: subiendo el archivo al almacenamiento.');
-        const directUpload = await uploadFileDirectly(selectedFile);
-        formData.set('uploadId', directUpload.uploadId);
-        formData.set('storagePath', directUpload.storagePath);
-        formData.set('sourceFileName', directUpload.sourceFileName);
-        formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
+        try {
+          const directUpload = await uploadFileDirectly(selectedFile);
+          formData.set('uploadId', directUpload.uploadId);
+          formData.set('storagePath', directUpload.storagePath);
+          formData.set('sourceFileName', directUpload.sourceFileName);
+          formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
+        } catch (directUploadError) {
+          console.warn('[PrepareUploadFlow] direct browser upload failed; falling back to server upload', directUploadError);
+          formData.delete('uploadId');
+          formData.delete('storagePath');
+          formData.delete('sourceFileName');
+          formData.delete('sourceSheetsJson');
+        }
 
         currentStep = uploadPublishSteps[2];
         updateProgressStep(2, 'Paso 3 de 6: registrando la carga y guardando metadatos.');
@@ -619,6 +687,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           <label className="space-y-2">
             <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Archivo</span>
             <input
+              name="file"
               type="file"
               accept=".xlsx,.xls,.csv"
               onChange={(event) => handleFileChange(event.currentTarget.files?.[0] ?? null)}

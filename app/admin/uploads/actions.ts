@@ -130,6 +130,8 @@ function normalizeWorkbookSheetName(value: string) {
 const LEXICOMP_MODULE_CODE = 'business_excellence_recompra_lexicomp';
 const LEXICOMP_REQUIRED_HEADERS = ['DISTRIBUIDOR', 'ANO', 'MES', 'Piezas Vendidas'];
 const LEXICOMP_DETAIL_SHEET = 'DETALLE DESPLAZAMIENTO';
+const OPEN_VACANCY_MODULE_CODE = 'human_resources_open_vacancy';
+const OPEN_VACANCY_HEADER_DETECTION_HEADERS = ['ESTATUS', 'AREA', 'MANAGER'];
 
 function isCommercialOperationsDsoModule(moduleCode: string) {
     return (
@@ -2192,16 +2194,23 @@ function parseGcsPath(storagePath: string) {
 }
 
 async function resolveEffectiveHeaderRow(context: UploadProcessContext) {
-    if (context.moduleCode !== LEXICOMP_MODULE_CODE || context.selectedSheetName.toUpperCase() === 'CSV') {
+    if (
+        (context.moduleCode !== LEXICOMP_MODULE_CODE && context.moduleCode !== OPEN_VACANCY_MODULE_CODE) ||
+        context.selectedSheetName.toUpperCase() === 'CSV'
+    ) {
         return context.selectedHeaderRow;
     }
 
     const storageClient = getStorageClient();
     const { bucketName, objectPath } = parseGcsPath(context.storagePath);
     const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
+    const requiredHeaders =
+        context.moduleCode === OPEN_VACANCY_MODULE_CODE
+            ? OPEN_VACANCY_HEADER_DETECTION_HEADERS
+            : LEXICOMP_REQUIRED_HEADERS;
     const detectedHeaderRow = detectExcelHeaderRow(fileBuffer, {
         sheetName: context.selectedSheetName,
-        requiredHeaders: LEXICOMP_REQUIRED_HEADERS,
+        requiredHeaders,
     });
 
     return detectedHeaderRow ?? context.selectedHeaderRow;
@@ -2462,7 +2471,7 @@ export async function inspectUploadWorkbook(formData: FormData) {
   }
 
   let suggestedSheetName = sheetNames[0] ?? '';
-  let suggestedHeaderRow = moduleCode === 'human_resources_open_vacancy' ? 2 : 1;
+  let suggestedHeaderRow = 1;
   if (moduleCode === LEXICOMP_MODULE_CODE) {
     const detailSheetName = findLexicompDetailSheet(sheetNames);
     suggestedSheetName = detailSheetName ?? suggestedSheetName;
@@ -2471,6 +2480,12 @@ export async function inspectUploadWorkbook(formData: FormData) {
         sheetName: suggestedSheetName,
         requiredHeaders: LEXICOMP_REQUIRED_HEADERS,
       }) ?? 3;
+  } else if (moduleCode === OPEN_VACANCY_MODULE_CODE) {
+    suggestedHeaderRow =
+      detectExcelHeaderRow(fileBuffer, {
+        sheetName: suggestedSheetName,
+        requiredHeaders: OPEN_VACANCY_HEADER_DETECTION_HEADERS,
+      }) ?? 1;
   }
 
   if (moduleCode) {
@@ -2507,6 +2522,12 @@ export async function inspectUploadWorkbook(formData: FormData) {
             detectExcelHeaderRow(fileBuffer, {
               sheetName: suggestedSheetName,
               requiredHeaders: LEXICOMP_REQUIRED_HEADERS,
+            }) ?? suggestedHeaderRow;
+        } else if (moduleCode === OPEN_VACANCY_MODULE_CODE) {
+          suggestedHeaderRow =
+            detectExcelHeaderRow(fileBuffer, {
+              sheetName: suggestedSheetName,
+              requiredHeaders: OPEN_VACANCY_HEADER_DETECTION_HEADERS,
             }) ?? suggestedHeaderRow;
         }
       }

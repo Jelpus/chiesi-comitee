@@ -444,7 +444,7 @@ function ModuleDetail({
               <div>
                 <h3 className="text-lg font-black text-slate-950">Qué tienes que hacer ahora</h3>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  Usa este bloque para subir, reemplazar o confirmar el archivo. La información técnica queda debajo para no distraer.
+                  Usa este bloque para subir, reemplazar o confirmar el archivo.
                 </p>
               </div>
             </div>
