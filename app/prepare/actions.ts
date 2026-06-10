@@ -185,19 +185,21 @@ async function notifyPrepareUploadStatus(uploadId: string, statusLabel: 'Uploade
     const period = context.periodMonth || 'N/A';
     const fileName = context.sourceFileName || 'N/A';
     const moduleName = context.moduleName || context.moduleCode || 'N/A';
+    const outcomeLabel = statusLabel === 'Uploaded' ? 'exitoso' : 'publicado';
 
     await sendSendGridEmail({
       to: PREPARE_UPLOAD_NOTIFICATION_RECIPIENT,
-      subject: `Prepare upload ${statusLabel}: ${moduleName} - ${period}`,
+      subject: `Prepare upload ${outcomeLabel}: ${moduleName} - ${period}`,
       html: `
         <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
-          <h1 style="margin:0 0 12px;font-size:20px;">Prepare upload ${escapeHtml(statusLabel)}</h1>
+          <h1 style="margin:0 0 12px;font-size:20px;">Prepare upload ${escapeHtml(outcomeLabel)}</h1>
           <p style="margin:0 0 16px;">
             Para el periodo <strong>${escapeHtml(period)}</strong>, se ha cargado el archivo
             <strong>${escapeHtml(fileName)}</strong> del modulo <strong>${escapeHtml(moduleName)}</strong>.
-            Status actual: <strong>${escapeHtml(statusLabel)}</strong>.
+            Resultado: <strong>${escapeHtml(outcomeLabel)}</strong>.
           </p>
           <table style="border-collapse:collapse;width:100%;font-size:14px;">
+            <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Resultado</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(outcomeLabel)}</td></tr>
             <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Upload ID</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(context.uploadId)}</td></tr>
             <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Modulo code</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(context.moduleCode)}</td></tr>
             <tr><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;">Status BQ</td><td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(context.databaseStatus || 'N/A')}</td></tr>
@@ -209,6 +211,76 @@ async function notifyPrepareUploadStatus(uploadId: string, statusLabel: 'Uploade
     console.warn('[prepare] upload status email failed', {
       uploadId,
       statusLabel,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function getPrepareSourceFileName(formData: FormData) {
+  const directSourceFileName = String(formData.get('sourceFileName') ?? '').trim();
+  if (directSourceFileName) return directSourceFileName;
+
+  const file = formData.get('file');
+  if (file instanceof File && file.name) return file.name;
+
+  return '';
+}
+
+async function notifyPrepareUploadFailure(formData: FormData, message: string) {
+  try {
+    const moduleCode = formText(formData, 'moduleCode') || 'N/A';
+    const areaCode = formText(formData, 'areaCode') || 'N/A';
+    const reportingVersionId = formText(formData, 'reportingVersionId') || 'N/A';
+    const uploadId = formText(formData, 'uploadId') || 'N/A';
+    const storagePath = formText(formData, 'storagePath') || 'N/A';
+    const sourceFileName = getPrepareSourceFileName(formData) || 'N/A';
+    const sourceAsOfMonth = formText(formData, 'sourceAsOfMonth') || 'N/A';
+    const dddSource = formText(formData, 'dddSource') || 'N/A';
+    const selectedSheetName = formText(formData, 'selectedSheetName') || 'N/A';
+    const selectedHeaderRow =
+      formText(formData, 'selectedHeaderRow') ||
+      formText(formData, 'headerRow') ||
+      'N/A';
+
+    const rows = [
+      ['Resultado', 'No exitoso'],
+      ['Area', areaCode],
+      ['Modulo', moduleCode],
+      ['Version', reportingVersionId],
+      ['Archivo', sourceFileName],
+      ['Upload ID', uploadId],
+      ['Storage path', storagePath],
+      ['Data as of', sourceAsOfMonth],
+      ['Variante/Fuente', dddSource],
+      ['Hoja', selectedSheetName],
+      ['Fila encabezados', selectedHeaderRow],
+      ['Error', message],
+    ];
+
+    const contextHtml = rows
+      .map(
+        ([label, value]) => `
+          <tr>
+            <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#475569;width:160px;">${escapeHtml(label)}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#0f172a;">${escapeHtml(value)}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    await sendSendGridEmail({
+      to: PREPARE_UPLOAD_NOTIFICATION_RECIPIENT,
+      subject: `Prepare upload no exitoso: ${moduleCode} - ${sourceFileName}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+          <h1 style="margin:0 0 12px;font-size:20px;">Prepare upload no exitoso</h1>
+          <p style="margin:0 0 16px;color:#475569;">Un usuario intento cargar un archivo desde Prepare y no se pudo completar el upload.</p>
+          <table style="border-collapse:collapse;width:100%;font-size:14px;">${contextHtml}</table>
+        </div>
+      `,
+    });
+  } catch (error) {
+    console.warn('[prepare] upload failure email failed', {
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -518,19 +590,22 @@ export async function prepareCreateUploadRecord(formData: FormData): Promise<Pre
         : await createUploadRecord(uploadFormData);
     const uploadId = String(created.uploadId ?? '');
     revalidatePrepare(request.areaCode);
+    await notifyPrepareUploadStatus(uploadId, 'Uploaded');
 
     return {
       ok: true,
       status: 'uploaded',
       uploadId,
-      message: 'Archivo cargado correctamente. Listo para procesar.',
+      message: `Gracias. El archivo fue recibido correctamente. Upload ${uploadId}.`,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'No se pudo registrar la carga.';
+    await notifyPrepareUploadFailure(formData, message);
     return {
       ok: false,
       status: 'error',
-      message: error instanceof Error ? error.message : 'No se pudo registrar la carga.',
-      errors: [error instanceof Error ? error.message : String(error)],
+      message,
+      errors: [message],
     };
   }
 }
@@ -641,15 +716,6 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       confirmedBy,
     });
 
-    let reuseCompleted = true;
-    try {
-      await processUpload(uploadId);
-      await normalizeExistingUpload(uploadId);
-      await publishUpload(uploadId);
-    } catch {
-      reuseCompleted = false;
-    }
-
     const client = getBigQueryClient();
     await client.query({
       query: `
@@ -702,14 +768,12 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
         dddSource,
         originalUploadId,
         confirmedBy,
-        notes: reuseCompleted
-          ? `Archivo reutilizado desde /prepare. Nuevo upload publicado: ${uploadId}`
-          : `Archivo reutilizado desde /prepare. Nuevo upload registrado pendiente de completar: ${uploadId}`,
+        notes: `Archivo reutilizado desde /prepare. Nuevo upload registrado pendiente de completar desde Admin: ${uploadId}`,
       },
     });
 
     const result = await getUploadResult(uploadId);
-    await notifyPrepareUploadStatus(uploadId, reuseCompleted ? 'Published' : 'Uploaded');
+    await notifyPrepareUploadStatus(uploadId, 'Uploaded');
     revalidatePrepare(areaCode);
     return {
       ok: true,
@@ -718,9 +782,7 @@ export async function confirmReusePreviousUpload(formData: FormData): Promise<Pr
       rowsTotal: result.rowsTotal,
       rowsValid: result.rowsValid,
       rowsError: result.rowsError,
-      message: reuseCompleted
-        ? 'Archivo anterior reutilizado, validado y publicado para esta version.'
-        : 'Gracias. El archivo anterior quedo registrado para esta version. Si el procesamiento no termino en Prepare, lo completaremos desde Admin / Uploads.',
+      message: 'Gracias. El archivo anterior quedo registrado para esta version. Lo continuaremos desde Admin / Uploads.',
       errors: result.lastErrorMessage ? [result.lastErrorMessage] : [],
     };
 

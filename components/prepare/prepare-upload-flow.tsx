@@ -5,15 +5,10 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, UploadCloud, XCircle } from 'lucide-react';
 import {
   confirmReusePreviousUpload,
-  notifyPrepareUploadReceived,
   prepareCreateUploadRecord,
-  prepareNormalizeUpload,
-  prepareProcessUpload,
-  preparePublishUpload,
 } from '@/app/prepare/actions';
 import { SourceAsOfMonthField } from '@/components/prepare/source-as-of-month-field';
 import type { PrepareReportingVersion, PrepareRequirement } from '@/lib/data/prepare';
-import { getExpectedUploadColumnGroups } from '@/lib/uploads/expected-columns';
 
 type PrepareUploadFlowProps = {
   requirement: PrepareRequirement;
@@ -40,20 +35,14 @@ type SignedUploadResponse = {
 };
 
 const uploadPublishSteps = [
-  'Validar columnas del archivo',
+  'Preparar archivo',
   'Subir archivo a almacenamiento',
   'Registrar carga',
-  'Procesar filas',
-  'Normalizar y validar datos',
-  'Publicar informacion',
+  'Confirmar recepcion',
 ];
 
 function isProductionVersion(version: PrepareReportingVersion) {
   return version.status === 'ready_to_show' || version.status === 'closed';
-}
-
-function uploadHandoffMessage(uploadId: string) {
-  return `Gracias. El archivo fue recibido y cumple con las columnas esperadas. Upload ${uploadId}. Si el procesamiento no termino en Prepare, lo completaremos desde Admin / Uploads.`;
 }
 
 function isDddLike(moduleCode: string) {
@@ -75,27 +64,6 @@ function normalizeHeaderCandidate(value: unknown) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
-}
-
-function isConcreteExpectedColumn(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return (
-    normalized.length > 0 &&
-    !normalized.includes('...') &&
-    !normalized.startsWith('columnas ') &&
-    !normalized.startsWith('filas ') &&
-    !normalized.startsWith('secciones ')
-  );
-}
-
-function getRequiredColumnGroups(moduleCode: string) {
-  return getExpectedUploadColumnGroups(moduleCode)
-    .filter((group) => !group.label.toLowerCase().includes('hojas requeridas'))
-    .map((group) => ({
-      label: group.label,
-      columns: group.columns.filter(isConcreteExpectedColumn),
-    }))
-    .filter((group) => group.columns.length > 0);
 }
 
 function readPhysicalSheetRowCells(
@@ -128,11 +96,18 @@ function detectExpectedHeaderRowFromSheet(
 ) {
   if (!sheet['!ref']) return null;
 
-  const requiredGroups = getRequiredColumnGroups(moduleCode);
-  if (requiredGroups.length === 0) return null;
-
   const range = xlsx.utils.decode_range(sheet['!ref']);
   const lastRowToScan = Math.min(range.e.r, range.s.r + 24);
+  const expectedHeadersByModule: Record<string, string[]> = {
+    business_excellence_ddd: ['PACK_DES', 'MONTH', 'YEAR'],
+    business_excellence_pmm: ['PACK_DES', 'MONTH', 'YEAR'],
+    pmm: ['PACK_DES', 'MONTH', 'YEAR'],
+    ddd: ['PACK_DES', 'MONTH', 'YEAR'],
+    human_resources_open_vacancy: ['ESTATUS', 'AREA', 'MANAGER'],
+    business_excellence_recompra_lexicomp: ['DISTRIBUIDOR', 'ANO', 'MES'],
+  };
+  const expectedHeaders = expectedHeadersByModule[moduleCode] ?? [];
+  if (expectedHeaders.length === 0) return null;
 
   for (let rowIndex = range.s.r; rowIndex <= lastRowToScan; rowIndex += 1) {
     const normalizedCells = new Set(
@@ -141,52 +116,14 @@ function detectExpectedHeaderRowFromSheet(
         .filter(Boolean),
     );
 
-    const matchesAllGroups = requiredGroups.every((group) =>
-      group.columns.some((column) => normalizedCells.has(normalizeHeaderCandidate(column))),
+    const matchesAllHeaders = expectedHeaders.every((column) =>
+      normalizedCells.has(normalizeHeaderCandidate(column)),
     );
 
-    if (matchesAllGroups) return rowIndex + 1;
+    if (matchesAllHeaders) return rowIndex + 1;
   }
 
   return null;
-}
-
-async function readHeaderCells(file: File, selectedSheetName: string, selectedHeaderRow: string) {
-  const xlsx = await import('xlsx');
-  const workbook = xlsx.read(await file.arrayBuffer(), { type: 'array' });
-  const sheetName = isCsvFileName(file.name)
-    ? workbook.SheetNames[0]
-    : selectedSheetName || workbook.SheetNames[0];
-  const sheet = sheetName ? workbook.Sheets[sheetName] : null;
-
-  if (!sheetName || !sheet) {
-    throw new Error(`No se encontro la hoja "${selectedSheetName || 'seleccionada'}" en el archivo.`);
-  }
-
-  const headerRowNumber = Math.max(1, Number(selectedHeaderRow) || 1);
-  return readPhysicalSheetRowCells(xlsx, sheet, headerRowNumber);
-}
-
-async function validateExpectedColumns(file: File, moduleCode: string, selectedSheetName: string, selectedHeaderRow: string) {
-  const requiredGroups = getRequiredColumnGroups(moduleCode);
-  if (requiredGroups.length === 0) return;
-
-  const headers = await readHeaderCells(file, selectedSheetName, selectedHeaderRow);
-  if (headers.length === 0) {
-    throw new Error('No se encontraron encabezados en la fila seleccionada.');
-  }
-
-  const normalizedHeaders = new Set(headers.map(normalizeHeaderCandidate).filter(Boolean));
-  const missingGroups = requiredGroups.filter((group) => (
-    !group.columns.some((column) => normalizedHeaders.has(normalizeHeaderCandidate(column)))
-  ));
-
-  if (missingGroups.length > 0) {
-    const detail = missingGroups
-      .map((group) => `${group.label}: ${group.columns.join(' / ')}`)
-      .join('; ');
-    throw new Error(`El archivo no cumple con las columnas esperadas. Revisa estos grupos: ${detail}.`);
-  }
 }
 
 function detectLexicompHeaderRowFromSheet(xlsx: typeof import('xlsx'), sheet: import('xlsx').WorkSheet) {
@@ -503,33 +440,27 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     formData.set('selectedHeaderRow', submittedHeaderRow);
 
     openProgressModal({
-      title: 'Publicando archivo',
-      detail: 'Paso 1 de 6: validando columnas del archivo.',
+      title: 'Subiendo archivo',
+      detail: 'Paso 1 de 4: preparando el archivo.',
       steps: uploadPublishSteps,
       activeStep: 0,
     });
 
     startTransition(async () => {
       let currentStep = uploadPublishSteps[0];
-      let activeUploadId: string | undefined;
       try {
         currentStep = uploadPublishSteps[0];
-        updateProgressStep(0, 'Paso 1 de 6: validando columnas del archivo.');
-        await validateExpectedColumns(
-          selectedFile,
-          requirement.module.moduleCode,
-          submittedSheetName,
-          submittedHeaderRow,
-        );
+        updateProgressStep(0, 'Paso 1 de 4: preparando el archivo seleccionado.');
 
         currentStep = uploadPublishSteps[1];
-        updateProgressStep(1, 'Paso 2 de 6: subiendo el archivo al almacenamiento.');
+        updateProgressStep(1, 'Paso 2 de 4: subiendo el archivo al almacenamiento.');
         try {
           const directUpload = await uploadFileDirectly(selectedFile);
           formData.set('uploadId', directUpload.uploadId);
           formData.set('storagePath', directUpload.storagePath);
           formData.set('sourceFileName', directUpload.sourceFileName);
           formData.set('sourceSheetsJson', directUpload.sourceSheetsJson);
+          formData.delete('file');
         } catch (directUploadError) {
           console.warn('[PrepareUploadFlow] direct browser upload failed; falling back to server upload', directUploadError);
           formData.delete('uploadId');
@@ -539,54 +470,27 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         }
 
         currentStep = uploadPublishSteps[2];
-        updateProgressStep(2, 'Paso 3 de 6: registrando la carga y guardando metadatos.');
+        updateProgressStep(2, 'Paso 3 de 4: registrando la carga y guardando metadatos.');
         const created = await prepareCreateUploadRecord(formData);
         if (!created.ok || !created.uploadId) {
           throw new Error(created.message);
         }
-        activeUploadId = created.uploadId;
 
         currentStep = uploadPublishSteps[3];
-        updateProgressStep(3, 'Paso 4 de 6: leyendo el archivo y cargando filas RAW.');
-        const processed = await prepareProcessUpload(activeUploadId);
-        if (!processed.ok) throw new Error(processed.message);
+        updateProgressStep(3, 'Paso 4 de 4: confirmando recepcion.');
+        const successMessage =
+          created.message ||
+          `Gracias. El archivo fue recibido correctamente. Upload ${created.uploadId}.`;
 
-        currentStep = uploadPublishSteps[4];
-        updateProgressStep(4, 'Paso 5 de 6: normalizando datos y revisando validaciones.');
-        const normalized = await prepareNormalizeUpload(activeUploadId);
-        if (!normalized.ok) throw new Error(normalized.message);
-
-        currentStep = uploadPublishSteps[5];
-        updateProgressStep(5, 'Paso 6 de 6: publicando la informacion para la version seleccionada.');
-        const published = await preparePublishUpload(activeUploadId, requirement.module.areaCode);
-        if (!published.ok) throw new Error(published.message);
-
-        setMessage(published.message);
+        setMessage(successMessage);
         formRef.current?.reset();
         setSelectedFile(null);
         setDetectedSheetNames([]);
-        finishProgressModal('success', published.message);
+        finishProgressModal('success', successMessage);
         onCompleted?.();
         router.refresh();
       } catch (uploadError) {
         const errorMessage = uploadError instanceof Error ? uploadError.message : 'No se pudo completar la carga.';
-        if (activeUploadId) {
-          const handoffMessage = uploadHandoffMessage(activeUploadId);
-          await notifyPrepareUploadReceived(activeUploadId);
-          setMessage(handoffMessage);
-          formRef.current?.reset();
-          setSelectedFile(null);
-          setDetectedSheetNames([]);
-          setProgressModal((current) => ({
-            ...current,
-            activeStep: 2,
-            detail: handoffMessage,
-            finalState: 'success',
-          }));
-          onCompleted?.();
-          return;
-        }
-
         const detailedError = `Fallo en "${currentStep}": ${errorMessage}`;
         setError(detailedError);
         finishProgressModal('error', detailedError);
@@ -599,8 +503,8 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     setError(null);
     openProgressModal({
       title: 'Confirmando reutilizacion',
-      detail: 'Estamos reutilizando el archivo anterior y ejecutando el flujo completo para esta version.',
-      steps: ['Validando version', 'Procesando filas', 'Normalizando datos', 'Publicando informacion', 'Registrando trazabilidad'],
+      detail: 'Estamos registrando el archivo anterior para esta version.',
+      steps: ['Validando version', 'Registrando carga', 'Guardando trazabilidad'],
       activeStep: 0,
     });
 
@@ -608,9 +512,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
       let stageStep = 0;
       const stageMessages = [
         'Validando que el archivo anterior se puede reutilizar.',
-        'Estamos leyendo las filas desde el archivo anterior.',
-        'Estamos normalizando la informacion para esta version.',
-        'Estamos publicando los datos para la version seleccionada.',
+        'Registrando la carga para esta version.',
         'Guardando confirmacion de reutilizacion.',
       ];
       const timer = window.setInterval(() => {
@@ -765,7 +667,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           <label className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-900">
             <input type="checkbox" name="confirmProductionVersion" value="true" required className="mt-1" />
             <span>
-              Esta version ya esta en productivo. Confirmo que quiero continuar con la carga y publicacion.
+              Esta version ya esta en productivo. Confirmo que quiero continuar con la carga.
             </span>
           </label>
         ) : null}
@@ -778,7 +680,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
             className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 disabled:opacity-50"
           >
             {isPending || isInspecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-            Subir y publicar
+            Subir archivo
           </button>
         </div>
       </form>
