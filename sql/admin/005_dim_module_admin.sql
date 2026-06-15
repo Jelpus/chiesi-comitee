@@ -49,6 +49,7 @@ USING (
   SELECT 'human_resources_training', 'Human Resources - Training', 'human_resources', 220 UNION ALL
   SELECT 'human_resources_open_vacancy', 'Human Resources - Open Vacancy', 'human_resources', 230 UNION ALL
   SELECT 'commercial_operations_dso', 'Commercial Operations - DSO', 'commercial_operations', 310 UNION ALL
+  SELECT 'commercial_operations_aging', 'Commercial Operations - Aging', 'commercial_operations', 315 UNION ALL
   SELECT 'commercial_operations_government_orders', 'Commercial Operations - Government Orders', 'commercial_operations', 320 UNION ALL
   SELECT 'commercial_operations_private_orders', 'Commercial Operations - Private Orders', 'commercial_operations', 330 UNION ALL
   SELECT 'commercial_operations_government_contract_progress', 'Commercial Operations - Government Contract Progress', 'commercial_operations', 340 UNION ALL

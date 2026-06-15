@@ -1,8 +1,11 @@
 import Link from 'next/link';
 import { unstable_cache } from 'next/cache';
+import type { ReactNode } from 'react';
 import { SectionHeader } from '@/components/ui/section-header';
 import { getReportingVersions } from '@/lib/data/versions/get-reporting-versions';
 import {
+  getCommercialOperationsArAgingRows,
+  getCommercialOperationsArCollectionRows,
   getCommercialOperationsAuditSources,
   getCommercialOperationsDeliveryOrderRows,
   getCommercialOperationsDsoOverview,
@@ -65,6 +68,27 @@ function formatCompactNumber(value: number | null | undefined) {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function MetricTooltip({ text }: { text: string }) {
+  return (
+    <span
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 bg-white text-[10px] font-semibold text-slate-500"
+      title={text}
+      aria-label={text}
+    >
+      ?
+    </span>
+  );
+}
+
+function MainCardLabel({ children, help }: { children: ReactNode; help: string }) {
+  return (
+    <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+      <span>{children}</span>
+      <MetricTooltip text={help} />
+    </p>
+  );
 }
 
 function tagMetricLine(text: string) {
@@ -716,7 +740,9 @@ function DsoGlobalCards({
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Global Chiesi DSO</p>
+        <MainCardLabel help="Days Sales Outstanding for the Anual / General group. It estimates the average days needed to collect receivables; lower is better.">
+          Global Chiesi DSO
+        </MainCardLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{formatOneDecimal(annualGeneral?.currentValue)}</p>
         <p className="mt-2 text-sm text-slate-600">
           Target: {formatOneDecimal(annualGeneral?.target)} | Var:{' '}
@@ -724,7 +750,9 @@ function DsoGlobalCards({
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">DOH</p>
+        <MainCardLabel help="Days on Hand: estimated inventory days available by channel using stock and sell-out. Lower versus target is better.">
+          DOH
+        </MainCardLabel>
         <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
           Private {formatOneDecimal(privateDoh?.currentDoh ?? null)} | Public {formatOneDecimal(publicDoh?.currentDoh ?? null)}
         </p>
@@ -743,7 +771,9 @@ function DsoGlobalCards({
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Government Contracts</p>
+        <MainCardLabel help="Progress for ordered government contracts without OPD, measured as delivered 2025-2026 quantity over the contract quantity denominator.">
+          Government Contracts
+        </MainCardLabel>
         <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
           {governmentContractsSummary.progress2526Pct == null
             ? 'N/A'
@@ -758,7 +788,9 @@ function DsoGlobalCards({
         </p>
       </article>
       <article className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.08)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Fill Rate &amp; Lead Time</p>
+        <MainCardLabel help="Fill Rate is delivered units divided by requested units. Lead Time is average days from order to confirmed delivery; higher FR and lower LT are better.">
+          Fill Rate &amp; Lead Time
+        </MainCardLabel>
         <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
           FR {deliveryGlobalSummary.fillRatePct == null ? 'N/A' : `${deliveryGlobalSummary.fillRatePct.toFixed(1)}%`} | LT{' '}
           {deliveryGlobalSummary.leadTimeDays == null ? 'N/A' : `${deliveryGlobalSummary.leadTimeDays.toFixed(1)}d`}
@@ -1843,8 +1875,20 @@ export async function CommercialOperationsView({
   const sourceAsOfMonth = sources.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null;
   const publishedCount = sources.filter((row) => row.status === 'published').length;
 
-  const [dsoOverviewRows, targetRows, stockRows, governmentContractRows, deliveryOrderRows, otifRows, sanctionRows] = await Promise.all([
+  const [
+    dsoOverviewRows,
+    arAgingRows,
+    arCollectionRows,
+    targetRows,
+    stockRows,
+    governmentContractRows,
+    deliveryOrderRows,
+    otifRows,
+    sanctionRows,
+  ] = await Promise.all([
     getCommercialOperationsDsoOverview(selectedReportingVersionId || undefined),
+    getCommercialOperationsArAgingRows(selectedReportingVersionId || undefined),
+    getCommercialOperationsArCollectionRows(selectedReportingVersionId || undefined),
     getAdminTargets('commercial_operations', selectedReportingVersionId || undefined, selectedPeriodMonth || undefined),
     getCommercialOperationsStocksRows(selectedReportingVersionId || undefined),
     getCommercialOperationsGovernmentContractProgressRows(selectedReportingVersionId || undefined),
@@ -1950,6 +1994,8 @@ export async function CommercialOperationsView({
               trendRows={dsoTrendRows}
               tableRows={dsoTableRows}
               initialGroup="Anual / General"
+              arAgingRows={arAgingRows}
+              arCollectionRows={arCollectionRows}
               stockRows={stockRows}
               governmentContractRows={governmentContractRows}
               deliveryOrderRows={deliveryOrderRows}

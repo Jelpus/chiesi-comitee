@@ -315,6 +315,53 @@ type CommercialOperationsDsoNormalizedRow = {
   payload: Record<string, unknown>;
 };
 
+type CommercialOperationsArAgingNormalizedRow = {
+  rowNumber: number;
+  account: string | null;
+  customer: string | null;
+  documentNumber: string | null;
+  documentDate: string | null;
+  invoiceAmount: number;
+  reference: string | null;
+  invoiceDueDate: string | null;
+  paymentGroup: string | null;
+  daysPastDue: number | null;
+  assignment: string | null;
+  channelGroup: string | null;
+  status: 'Expired' | 'Due to expire' | 'Other';
+  agingGroup: string | null;
+  channel: string | null;
+  billingYear: number | null;
+  customerGroups: string | null;
+  management: string | null;
+  payload: Record<string, unknown>;
+};
+
+type CommercialOperationsArCollectionNormalizedRow = {
+  rowNumber: number;
+  sourceType: 'actual' | 'forecast';
+  account: string | null;
+  customer: string | null;
+  invoiceReference: string | null;
+  assignment: string | null;
+  reference: string | null;
+  documentNumber: string | null;
+  documentDate: string | null;
+  paymentDate: string | null;
+  termsOfPayment: string | null;
+  documentType: string;
+  invoiceAmount: number;
+  periodMonth: string;
+  customerReference: string | null;
+  clearingDocument: string | null;
+  netDueDate: string | null;
+  channelGroup: string | null;
+  text: string | null;
+  documentHeaderText: string | null;
+  fiscalYear: number | null;
+  payload: Record<string, unknown>;
+};
+
 type CommercialOperationsStocksNormalizedRow = {
   rowNumber: number;
   businessType: string | null;
@@ -4843,6 +4890,227 @@ function detectDsoGroupName(indexedCells: Array<{ index: number; value: unknown 
   return null;
 }
 
+function getCommercialOperationsArSheetKind(sheetName: string | null | undefined) {
+  const normalized = normalizeText(sheetName ?? '');
+  if (normalized === 'aging') return 'aging' as const;
+  if (normalized === 'cobranza') return 'cobranza' as const;
+  if (normalized === 'forecast') return 'forecast' as const;
+  return null;
+}
+
+function normalizeArStatus(value: unknown): 'Expired' | 'Due to expire' | 'Other' {
+  const normalized = normalizeText(String(value ?? ''));
+  if (normalized.includes('vencido') || normalized.includes('expired')) return 'Expired';
+  if (
+    normalized.includes('por vencer') ||
+    normalized.includes('porvencer') ||
+    normalized.includes('due to expire')
+  ) {
+    return 'Due to expire';
+  }
+  return 'Other';
+}
+
+function shiftMonthStart(value: string, deltaMonths: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setUTCMonth(date.getUTCMonth() + deltaMonths);
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeCommercialOperationsAr(rows: RawUploadRow[], sourceAsOfMonth: string) {
+  const validations: RowValidationResult[] = [];
+  const agingRows: CommercialOperationsArAgingNormalizedRow[] = [];
+  const collectionRows: CommercialOperationsArCollectionNormalizedRow[] = [];
+  const forecastAllowedPeriods = new Set([
+    sourceAsOfMonth,
+    shiftMonthStart(sourceAsOfMonth, -1),
+  ]);
+
+  for (const row of rows) {
+    const sheetKind = getCommercialOperationsArSheetKind(row.sheet_name);
+    const payload = toPayloadObject(row.row_payload_json);
+
+    if (!sheetKind) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: [`Skipped: sheet "${row.sheet_name ?? ''}" is not an AR required sheet.`],
+      });
+      continue;
+    }
+
+    if (Object.keys(payload).length === 0 || !hasBusinessContent(payload)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: ['Skipped: empty row payload.'],
+      });
+      continue;
+    }
+
+    const index = buildPayloadIndex(payload);
+
+    if (sheetKind === 'aging') {
+      const invoiceAmount = asNullableNumber(
+        pickPayloadValue(payload, index, ['Amount', 'invoice_amount', 'Amount - invoice_amount']),
+      );
+      if (invoiceAmount == null) {
+        validations.push({
+          rowNumber: row.row_number,
+          validationStatus: 'error',
+          errors: ['Missing numeric Amount in Aging sheet.'],
+        });
+        continue;
+      }
+
+      const account = asNullableString(pickPayloadValue(payload, index, ['Account']));
+      const customer = asNullableString(pickPayloadValue(payload, index, ['Name', 'Name - customer', 'Customer']));
+      const documentNumber = asNullableString(
+        pickPayloadValue(payload, index, ['Document Number', 'Document No']),
+      );
+      const documentDate = parseDateOnlyField(
+        pickPayloadValue(payload, index, ['Document Date', 'invoice_date', 'Document Date - invoice_date']),
+      );
+      const invoiceDueDate = parseDateOnlyField(
+        pickPayloadValue(payload, index, ['Due date', 'invoice_due_date', 'Due date - invoice_due_date']),
+      );
+      const status = normalizeArStatus(
+        pickPayloadValue(payload, index, ['Expiration status', 'status', 'Expiration status - status']),
+      );
+
+      agingRows.push({
+        rowNumber: row.row_number,
+        account,
+        customer,
+        documentNumber,
+        documentDate,
+        invoiceAmount,
+        reference: asNullableString(pickPayloadValue(payload, index, ['Reference'])),
+        invoiceDueDate,
+        paymentGroup: asNullableString(
+          pickPayloadValue(payload, index, ['Terms of Payment', 'payment_group', 'Terms of Payment - payment_group']),
+        ),
+        daysPastDue: asNullableNumber(
+          pickPayloadValue(payload, index, ['Days past due', 'days_past_due', 'Days past due - days_past_due']),
+        ),
+        assignment: asNullableString(pickPayloadValue(payload, index, ['Assignment'])),
+        channelGroup: asNullableString(
+          pickPayloadValue(payload, index, ['Distribution Channel', 'channel_group', 'Distribution Channel - channel_group']),
+        ),
+        status,
+        agingGroup: asNullableString(pickPayloadValue(payload, index, ['Aging', 'aging_group', 'Aging - aging_group'])),
+        channel: asNullableString(pickPayloadValue(payload, index, ['Sales sector', 'channel', 'Sales sector - channel'])),
+        billingYear: parseYearToken(
+          pickPayloadValue(payload, index, ['Billing Year', 'billing_year', 'Billing Year - billing_year']),
+        ),
+        customerGroups: asNullableString(
+          pickPayloadValue(payload, index, ['Sold to', 'customer_groups', 'cutomer_groups', 'Sold to - cutomer_groups']),
+        ),
+        management: asNullableString(
+          pickPayloadValue(payload, index, ['Management', 'managment', 'Management - managment']),
+        ),
+        payload,
+      });
+
+      validations.push({ rowNumber: row.row_number, validationStatus: 'valid', errors: [] });
+      continue;
+    }
+
+    const documentTypeRaw = asNullableString(
+      pickPayloadValue(payload, index, ['Document Type', 'document_type', 'Document Type - document_type']),
+    );
+    const documentType = (documentTypeRaw ?? '').trim().toUpperCase();
+    const expectedDocumentType = sheetKind === 'cobranza' ? 'BI' : 'CA';
+    if (documentType !== expectedDocumentType) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: [`Skipped: Document Type is not ${expectedDocumentType}.`],
+      });
+      continue;
+    }
+
+    const invoiceAmount = asNullableNumber(
+      pickPayloadValue(payload, index, [
+        'Amount in Local Currency',
+        'invoice_amount',
+        'Amount in Local Currency - invoice_amount',
+      ]),
+    );
+    if (invoiceAmount == null) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'error',
+        errors: ['Missing numeric Amount in Local Currency.'],
+      });
+      continue;
+    }
+
+    const paymentDateRaw = pickPayloadValue(payload, index, ['Payment Date']);
+    const netDueDateRaw = pickPayloadValue(payload, index, ['Net Due Date', 'Net Due Date - period_month']);
+    const arrearsRaw = pickPayloadValue(payload, index, [
+      'Arrears by Net Due Date',
+      'Arrears by Net Due Date - period_month',
+    ]);
+    const paymentDate = parseDateOnlyField(paymentDateRaw);
+    const netDueDate = parseDateOnlyField(netDueDateRaw);
+    const periodMonth =
+      sheetKind === 'forecast'
+        ? parseDateField(netDueDateRaw) ?? parseDateField(arrearsRaw)
+        : parseDateField(paymentDateRaw) ?? parseDateField(netDueDateRaw) ?? parseDateField(arrearsRaw);
+
+    if (!periodMonth) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'error',
+        errors: ['Missing period date for AR collection/forecast row.'],
+      });
+      continue;
+    }
+
+    if (sheetKind === 'forecast' && !forecastAllowedPeriods.has(periodMonth)) {
+      validations.push({
+        rowNumber: row.row_number,
+        validationStatus: 'skipped',
+        errors: [`Skipped: forecast period ${periodMonth} is outside source month/current-1 filter.`],
+      });
+      continue;
+    }
+
+    collectionRows.push({
+      rowNumber: row.row_number,
+      sourceType: sheetKind === 'cobranza' ? 'actual' : 'forecast',
+      account: asNullableString(pickPayloadValue(payload, index, ['Account'])),
+      customer: asNullableString(pickPayloadValue(payload, index, ['Name 1', 'Name 1 - customer', 'Customer'])),
+      invoiceReference: asNullableString(pickPayloadValue(payload, index, ['Invoice Reference'])),
+      assignment: asNullableString(pickPayloadValue(payload, index, ['Assignment'])),
+      reference: asNullableString(pickPayloadValue(payload, index, ['Reference'])),
+      documentNumber: asNullableString(pickPayloadValue(payload, index, ['Document Number'])),
+      documentDate: parseDateOnlyField(pickPayloadValue(payload, index, ['Document Date'])),
+      paymentDate,
+      termsOfPayment: asNullableString(pickPayloadValue(payload, index, ['Terms of Payment'])),
+      documentType,
+      invoiceAmount,
+      periodMonth,
+      customerReference: asNullableString(pickPayloadValue(payload, index, ['Customer Reference'])),
+      clearingDocument: asNullableString(pickPayloadValue(payload, index, ['Clearing Document'])),
+      netDueDate,
+      channelGroup: asNullableString(
+        pickPayloadValue(payload, index, ['Distribution Channel', 'Distribution Channel - channel_group']),
+      ),
+      text: asNullableString(pickPayloadValue(payload, index, ['Text'])),
+      documentHeaderText: asNullableString(pickPayloadValue(payload, index, ['Document Header Text'])),
+      fiscalYear: parseYearToken(pickPayloadValue(payload, index, ['Fiscal Year'])),
+      payload,
+    });
+
+    validations.push({ rowNumber: row.row_number, validationStatus: 'valid', errors: [] });
+  }
+
+  return { validations, agingRows, collectionRows };
+}
+
 function normalizeCommercialOperationsDso(rows: RawUploadRow[]) {
   const validations: RowValidationResult[] = [];
   const normalizedRows: CommercialOperationsDsoNormalizedRow[] = [];
@@ -5058,6 +5326,222 @@ async function loadCommercialOperationsDsoStaging(
               group_name: row.groupName,
               period_month: row.periodMonth,
               dso_value: String(row.dsoValue),
+              source_payload_json: JSON.stringify(row.payload),
+            })),
+          },
+        }),
+      );
+    },
+    1,
+  );
+}
+
+async function loadCommercialOperationsArStaging(
+  uploadId: string,
+  agingRows: CommercialOperationsArAgingNormalizedRow[],
+  collectionRows: CommercialOperationsArCollectionNormalizedRow[],
+) {
+  const client = getBigQueryClient();
+
+  const deleteOldUploads = `
+    WHERE upload_id IN (
+      WITH current_upload AS (
+        SELECT reporting_version_id, period_month
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
+        WHERE upload_id = @uploadId
+        LIMIT 1
+      )
+      SELECT u.upload_id
+      FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+      JOIN current_upload c
+        ON u.reporting_version_id = c.reporting_version_id
+       AND u.period_month = c.period_month
+      WHERE LOWER(TRIM(u.module_code)) IN ('commercial_operations_aging', 'commercial_operations_ar', 'ar')
+        AND u.upload_id != @uploadId
+    )
+  `;
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_aging\`
+      ${deleteOldUploads}
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_collection\`
+      ${deleteOldUploads}
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_aging\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  await runQueryWithRetryOnConcurrentUpdate(() =>
+    client.query({
+      query: `
+      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_collection\`
+      WHERE upload_id = @uploadId
+    `,
+      params: { uploadId },
+    }),
+  );
+
+  if (agingRows.length > 0) {
+    const agingQuery = `
+      INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_aging\`
+      (
+        upload_id, row_number, account, customer, document_number, document_date, invoice_amount,
+        reference, invoice_due_date, payment_group, days_past_due, assignment, channel_group,
+        status, aging_group, channel, billing_year, customer_groups, management,
+        source_payload_json, normalized_at
+      )
+      SELECT
+        @uploadId,
+        row.row_number,
+        NULLIF(row.account, ''),
+        NULLIF(row.customer, ''),
+        NULLIF(row.document_number, ''),
+        IF(row.document_date = '', NULL, DATE(row.document_date)),
+        SAFE_CAST(row.invoice_amount AS NUMERIC),
+        NULLIF(row.reference, ''),
+        IF(row.invoice_due_date = '', NULL, DATE(row.invoice_due_date)),
+        NULLIF(row.payment_group, ''),
+        SAFE_CAST(row.days_past_due AS NUMERIC),
+        NULLIF(row.assignment, ''),
+        NULLIF(row.channel_group, ''),
+        row.status,
+        NULLIF(row.aging_group, ''),
+        NULLIF(row.channel, ''),
+        SAFE_CAST(row.billing_year AS INT64),
+        NULLIF(row.customer_groups, ''),
+        NULLIF(row.management, ''),
+        SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+        CURRENT_TIMESTAMP()
+      FROM UNNEST(@rows) AS row
+    `;
+
+    const chunks = chunkItems(agingRows, 1200);
+    await runChunksInParallel(
+      chunks,
+      async (chunk) => {
+        await runQueryWithRetryOnConcurrentUpdate(() =>
+          client.query({
+            query: agingQuery,
+            params: {
+              uploadId,
+              rows: chunk.map((row) => ({
+                row_number: row.rowNumber,
+                account: row.account ?? '',
+                customer: row.customer ?? '',
+                document_number: row.documentNumber ?? '',
+                document_date: row.documentDate ?? '',
+                invoice_amount: String(row.invoiceAmount),
+                reference: row.reference ?? '',
+                invoice_due_date: row.invoiceDueDate ?? '',
+                payment_group: row.paymentGroup ?? '',
+                days_past_due: row.daysPastDue == null ? '' : String(row.daysPastDue),
+                assignment: row.assignment ?? '',
+                channel_group: row.channelGroup ?? '',
+                status: row.status,
+                aging_group: row.agingGroup ?? '',
+                channel: row.channel ?? '',
+                billing_year: row.billingYear == null ? '' : String(row.billingYear),
+                customer_groups: row.customerGroups ?? '',
+                management: row.management ?? '',
+                source_payload_json: JSON.stringify(row.payload),
+              })),
+            },
+          }),
+        );
+      },
+      1,
+    );
+  }
+
+  if (collectionRows.length === 0) return;
+
+  const collectionQuery = `
+    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_collection\`
+    (
+      upload_id, row_number, source_type, account, customer, invoice_reference, assignment, reference,
+      document_number, document_date, payment_date, terms_of_payment, document_type, invoice_amount,
+      period_month, customer_reference, clearing_document, net_due_date, channel_group, text,
+      document_header_text, fiscal_year, source_payload_json, normalized_at
+    )
+    SELECT
+      @uploadId,
+      row.row_number,
+      row.source_type,
+      NULLIF(row.account, ''),
+      NULLIF(row.customer, ''),
+      NULLIF(row.invoice_reference, ''),
+      NULLIF(row.assignment, ''),
+      NULLIF(row.reference, ''),
+      NULLIF(row.document_number, ''),
+      IF(row.document_date = '', NULL, DATE(row.document_date)),
+      IF(row.payment_date = '', NULL, DATE(row.payment_date)),
+      NULLIF(row.terms_of_payment, ''),
+      row.document_type,
+      SAFE_CAST(row.invoice_amount AS NUMERIC),
+      DATE(row.period_month),
+      NULLIF(row.customer_reference, ''),
+      NULLIF(row.clearing_document, ''),
+      IF(row.net_due_date = '', NULL, DATE(row.net_due_date)),
+      NULLIF(row.channel_group, ''),
+      NULLIF(row.text, ''),
+      NULLIF(row.document_header_text, ''),
+      SAFE_CAST(row.fiscal_year AS INT64),
+      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
+      CURRENT_TIMESTAMP()
+    FROM UNNEST(@rows) AS row
+  `;
+
+  const chunks = chunkItems(collectionRows, 1200);
+  await runChunksInParallel(
+    chunks,
+    async (chunk) => {
+      await runQueryWithRetryOnConcurrentUpdate(() =>
+        client.query({
+          query: collectionQuery,
+          params: {
+            uploadId,
+            rows: chunk.map((row) => ({
+              row_number: row.rowNumber,
+              source_type: row.sourceType,
+              account: row.account ?? '',
+              customer: row.customer ?? '',
+              invoice_reference: row.invoiceReference ?? '',
+              assignment: row.assignment ?? '',
+              reference: row.reference ?? '',
+              document_number: row.documentNumber ?? '',
+              document_date: row.documentDate ?? '',
+              payment_date: row.paymentDate ?? '',
+              terms_of_payment: row.termsOfPayment ?? '',
+              document_type: row.documentType,
+              invoice_amount: String(row.invoiceAmount),
+              period_month: row.periodMonth,
+              customer_reference: row.customerReference ?? '',
+              clearing_document: row.clearingDocument ?? '',
+              net_due_date: row.netDueDate ?? '',
+              channel_group: row.channelGroup ?? '',
+              text: row.text ?? '',
+              document_header_text: row.documentHeaderText ?? '',
+              fiscal_year: row.fiscalYear == null ? '' : String(row.fiscalYear),
               source_payload_json: JSON.stringify(row.payload),
             })),
           },
@@ -8204,6 +8688,21 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     await updateRawValidationStatus(uploadId, validations);
     await loadHumanResourcesOpenVacancyStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
+  }
+
+  if (
+    moduleCode === 'commercial_operations_aging' ||
+    moduleCode === 'commercial_operations_ar' ||
+    moduleCode === 'ar'
+  ) {
+    const sourceAsOfMonth = await getUploadAsOfMonth(uploadId);
+    if (!sourceAsOfMonth) {
+      throw new Error('Missing source_as_of_month for Commercial Operations AR upload.');
+    }
+    const { validations, agingRows, collectionRows } = normalizeCommercialOperationsAr(rows, sourceAsOfMonth);
+    await updateRawValidationStatus(uploadId, validations);
+    await loadCommercialOperationsArStaging(uploadId, agingRows, collectionRows);
+    return buildNormalizeUploadResult(validations, agingRows.length + collectionRows.length);
   }
 
   if (

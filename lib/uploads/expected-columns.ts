@@ -159,6 +159,12 @@ const definitions: Record<string, ExpectedUploadColumnGroup[]> = {
     { label: 'Periodo', columns: ['Year', 'Jan', 'Feb', 'Mar', '...'] },
     { label: 'Valores', columns: ['Filas por ano con valores numericos'] },
   ],
+  commercial_operations_aging: [
+    { label: 'Hojas requeridas', columns: ['Aging', 'Forecast', 'Cobranza'] },
+    { label: 'Aging', columns: ['Account', 'Name', 'Document Number', 'Amount', 'Due date', 'Expiration status', 'Aging'] },
+    { label: 'Cobranza', columns: ['Account', 'Name 1', 'Document Type', 'Amount in Local Currency', 'Payment Date'] },
+    { label: 'Forecast', columns: ['Account', 'Name 1', 'Document Type', 'Amount in Local Currency', 'Net Due Date'] },
+  ],
   commercial_operations_government_orders: [
     { label: 'Producto y fechas', columns: ['MEDICAMENTO', 'FECHA PEDIDO SAP', 'FECHA DE PEDIDO'] },
     { label: 'Cantidad', columns: ['CANTIDAD ENTREGADA', 'CANTIDAD SUMINISTRADA', 'CONFIRMADAS'] },

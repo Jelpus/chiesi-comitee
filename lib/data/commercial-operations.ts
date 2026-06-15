@@ -46,6 +46,55 @@ export type CommercialOperationsDsoTrendRow = {
   isMthPy: boolean;
 };
 
+export type CommercialOperationsArAgingRow = {
+  reportingVersionId: string;
+  reportPeriodMonth: string | null;
+  sourceAsOfMonth: string | null;
+  account: string | null;
+  customer: string | null;
+  documentNumber: string | null;
+  documentDate: string | null;
+  invoiceAmount: number;
+  reference: string | null;
+  invoiceDueDate: string | null;
+  paymentGroup: string | null;
+  daysPastDue: number | null;
+  assignment: string | null;
+  channelGroup: string;
+  status: 'Expired' | 'Due to expire' | 'Other';
+  agingGroup: string;
+  channel: string | null;
+  billingYear: number | null;
+  customerGroups: string | null;
+  management: string | null;
+};
+
+export type CommercialOperationsArCollectionRow = {
+  reportingVersionId: string;
+  reportPeriodMonth: string | null;
+  sourceAsOfMonth: string | null;
+  sourceType: 'actual' | 'forecast';
+  account: string | null;
+  customer: string;
+  invoiceReference: string | null;
+  assignment: string | null;
+  reference: string | null;
+  documentNumber: string | null;
+  documentDate: string | null;
+  paymentDate: string | null;
+  termsOfPayment: string | null;
+  documentType: string;
+  invoiceAmount: number;
+  periodMonth: string;
+  customerReference: string | null;
+  clearingDocument: string | null;
+  netDueDate: string | null;
+  channelGroup: string;
+  text: string | null;
+  documentHeaderText: string | null;
+  fiscalYear: number | null;
+};
+
 export type CommercialOperationsStockRow = {
   reportingVersionId: string;
   reportPeriodMonth: string | null;
@@ -192,6 +241,7 @@ export type CommercialOperationsSanctionRow = {
 
 const SOURCE_MODULES: Array<{ moduleCode: string; moduleLabel: string }> = [
   { moduleCode: 'commercial_operations_dso', moduleLabel: 'DSO' },
+  { moduleCode: 'commercial_operations_aging', moduleLabel: 'Aging / Cobranza' },
   { moduleCode: 'commercial_operations_government_orders', moduleLabel: 'Pedidos Gobierno' },
   { moduleCode: 'commercial_operations_private_orders', moduleLabel: 'Pedidos Privado' },
   {
@@ -204,6 +254,8 @@ const SOURCE_MODULES: Array<{ moduleCode: string; moduleLabel: string }> = [
 ];
 
 const DSO_ENRICHED_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_dso_enriched';
+const AR_AGING_STAGING_TABLE = 'chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_aging';
+const AR_COLLECTION_STAGING_TABLE = 'chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_collection';
 const STOCKS_ENRICHED_VIEW = 'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_stocks_enriched';
 const GOVERNMENT_CONTRACT_PROGRESS_ENRICHED_VIEW =
   'chiesi-committee.chiesi_committee_stg.vw_commercial_operations_government_contract_progress_enriched';
@@ -483,6 +535,167 @@ export async function getCommercialOperationsDsoTrend(
     isYtdPy: Boolean(row.is_ytd_py),
     isMth: Boolean(row.is_mth),
     isMthPy: Boolean(row.is_mth_py),
+  }));
+}
+
+function isBigQueryNotFoundError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes('not found') || message.includes('not found: table');
+}
+
+export async function getCommercialOperationsArAgingRows(
+  reportingVersionId?: string,
+): Promise<CommercialOperationsArAgingRow[]> {
+  const client = getBigQueryClient();
+  let rows;
+  try {
+    [rows] = await client.query({
+      query: `
+        SELECT
+          u.reporting_version_id,
+          CAST(rv.period_month AS STRING) AS report_period_month,
+          CAST(u.source_as_of_month AS STRING) AS source_as_of_month,
+          a.account,
+          a.customer,
+          a.document_number,
+          CAST(a.document_date AS STRING) AS document_date,
+          CAST(a.invoice_amount AS FLOAT64) AS invoice_amount,
+          a.reference,
+          CAST(a.invoice_due_date AS STRING) AS invoice_due_date,
+          a.payment_group,
+          CAST(a.days_past_due AS FLOAT64) AS days_past_due,
+          a.assignment,
+          COALESCE(NULLIF(a.channel_group, ''), 'Unassigned') AS channel_group,
+          CASE
+            WHEN a.status IN ('Expired', 'Due to expire') THEN a.status
+            ELSE 'Other'
+          END AS status,
+          COALESCE(NULLIF(a.aging_group, ''), 'Unassigned') AS aging_group,
+          a.channel,
+          a.billing_year,
+          a.customer_groups,
+          a.management
+        FROM \`${AR_AGING_STAGING_TABLE}\` a
+        JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+          ON u.upload_id = a.upload_id
+        LEFT JOIN \`chiesi-committee.chiesi_committee_admin.reporting_versions\` rv
+          ON rv.reporting_version_id = u.reporting_version_id
+        WHERE LOWER(TRIM(u.module_code)) IN ('commercial_operations_aging', 'commercial_operations_ar', 'ar')
+          AND LOWER(TRIM(u.status)) IN ('normalized', 'published')
+          AND (@reportingVersionId = '' OR u.reporting_version_id = @reportingVersionId)
+        ORDER BY a.invoice_amount DESC
+      `,
+      params: {
+        reportingVersionId: reportingVersionId ?? '',
+      },
+    });
+  } catch (error) {
+    if (isBigQueryNotFoundError(error)) return [];
+    throw error;
+  }
+
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    reportingVersionId: String(row.reporting_version_id ?? ''),
+    reportPeriodMonth: row.report_period_month == null ? null : String(row.report_period_month),
+    sourceAsOfMonth: row.source_as_of_month == null ? null : String(row.source_as_of_month),
+    account: row.account == null ? null : String(row.account),
+    customer: row.customer == null ? null : String(row.customer),
+    documentNumber: row.document_number == null ? null : String(row.document_number),
+    documentDate: row.document_date == null ? null : String(row.document_date),
+    invoiceAmount: Number(row.invoice_amount ?? 0),
+    reference: row.reference == null ? null : String(row.reference),
+    invoiceDueDate: row.invoice_due_date == null ? null : String(row.invoice_due_date),
+    paymentGroup: row.payment_group == null ? null : String(row.payment_group),
+    daysPastDue: row.days_past_due == null ? null : Number(row.days_past_due),
+    assignment: row.assignment == null ? null : String(row.assignment),
+    channelGroup: String(row.channel_group ?? 'Unassigned'),
+    status:
+      row.status === 'Expired' || row.status === 'Due to expire'
+        ? row.status
+        : 'Other',
+    agingGroup: String(row.aging_group ?? 'Unassigned'),
+    channel: row.channel == null ? null : String(row.channel),
+    billingYear: row.billing_year == null ? null : Number(row.billing_year),
+    customerGroups: row.customer_groups == null ? null : String(row.customer_groups),
+    management: row.management == null ? null : String(row.management),
+  }));
+}
+
+export async function getCommercialOperationsArCollectionRows(
+  reportingVersionId?: string,
+): Promise<CommercialOperationsArCollectionRow[]> {
+  const client = getBigQueryClient();
+  let rows;
+  try {
+    [rows] = await client.query({
+      query: `
+        SELECT
+          u.reporting_version_id,
+          CAST(rv.period_month AS STRING) AS report_period_month,
+          CAST(u.source_as_of_month AS STRING) AS source_as_of_month,
+          c.source_type,
+          c.account,
+          COALESCE(NULLIF(c.customer, ''), 'Unassigned') AS customer,
+          c.invoice_reference,
+          c.assignment,
+          c.reference,
+          c.document_number,
+          CAST(c.document_date AS STRING) AS document_date,
+          CAST(c.payment_date AS STRING) AS payment_date,
+          c.terms_of_payment,
+          c.document_type,
+          CAST(c.invoice_amount AS FLOAT64) AS invoice_amount,
+          CAST(c.period_month AS STRING) AS period_month,
+          c.customer_reference,
+          c.clearing_document,
+          CAST(c.net_due_date AS STRING) AS net_due_date,
+          COALESCE(NULLIF(c.channel_group, ''), 'Unassigned') AS channel_group,
+          c.text,
+          c.document_header_text,
+          c.fiscal_year
+        FROM \`${AR_COLLECTION_STAGING_TABLE}\` c
+        JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` u
+          ON u.upload_id = c.upload_id
+        LEFT JOIN \`chiesi-committee.chiesi_committee_admin.reporting_versions\` rv
+          ON rv.reporting_version_id = u.reporting_version_id
+        WHERE LOWER(TRIM(u.module_code)) IN ('commercial_operations_aging', 'commercial_operations_ar', 'ar')
+          AND LOWER(TRIM(u.status)) IN ('normalized', 'published')
+          AND (@reportingVersionId = '' OR u.reporting_version_id = @reportingVersionId)
+        ORDER BY c.period_month, c.source_type, c.invoice_amount DESC
+      `,
+      params: {
+        reportingVersionId: reportingVersionId ?? '',
+      },
+    });
+  } catch (error) {
+    if (isBigQueryNotFoundError(error)) return [];
+    throw error;
+  }
+
+  return (rows as Array<Record<string, unknown>>).map((row) => ({
+    reportingVersionId: String(row.reporting_version_id ?? ''),
+    reportPeriodMonth: row.report_period_month == null ? null : String(row.report_period_month),
+    sourceAsOfMonth: row.source_as_of_month == null ? null : String(row.source_as_of_month),
+    sourceType: row.source_type === 'forecast' ? 'forecast' : 'actual',
+    account: row.account == null ? null : String(row.account),
+    customer: String(row.customer ?? 'Unassigned'),
+    invoiceReference: row.invoice_reference == null ? null : String(row.invoice_reference),
+    assignment: row.assignment == null ? null : String(row.assignment),
+    reference: row.reference == null ? null : String(row.reference),
+    documentNumber: row.document_number == null ? null : String(row.document_number),
+    documentDate: row.document_date == null ? null : String(row.document_date),
+    paymentDate: row.payment_date == null ? null : String(row.payment_date),
+    termsOfPayment: row.terms_of_payment == null ? null : String(row.terms_of_payment),
+    documentType: String(row.document_type ?? ''),
+    invoiceAmount: Number(row.invoice_amount ?? 0),
+    periodMonth: String(row.period_month ?? ''),
+    customerReference: row.customer_reference == null ? null : String(row.customer_reference),
+    clearingDocument: row.clearing_document == null ? null : String(row.clearing_document),
+    netDueDate: row.net_due_date == null ? null : String(row.net_due_date),
+    channelGroup: String(row.channel_group ?? 'Unassigned'),
+    text: row.text == null ? null : String(row.text),
+    documentHeaderText: row.document_header_text == null ? null : String(row.document_header_text),
+    fiscalYear: row.fiscal_year == null ? null : Number(row.fiscal_year),
   }));
 }
 

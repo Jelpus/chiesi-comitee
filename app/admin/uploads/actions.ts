@@ -141,6 +141,10 @@ function isCommercialOperationsDsoModule(moduleCode: string) {
     );
 }
 
+function isCommercialOperationsArModule(moduleCode: string) {
+    return moduleCode === 'commercial_operations_aging' || moduleCode === 'commercial_operations_ar' || moduleCode === 'ar';
+}
+
 function isCommercialOperationsDeliveryOrdersModule(moduleCode: string) {
     return (
         moduleCode === 'commercial_operations_government_orders' ||
@@ -203,6 +207,32 @@ function resolveOpexRequiredSheets(sheetNames: string[]) {
         throw new Error(`OPEX by CC file is missing required sheets: ${missing.join(', ')}.`);
     }
     return resolved as [string, string, string];
+}
+
+function resolveCommercialOperationsArRequiredSheets(sheetNames: string[]) {
+    const normalizedSheets = sheetNames.map((sheetName) => ({
+        original: sheetName,
+        normalized: normalizeWorkbookSheetName(sheetName),
+    }));
+
+    const findExactSheet = (aliases: string[]) =>
+        normalizedSheets.find((item) => aliases.some((alias) => item.normalized === alias))?.original ?? null;
+
+    const agingSheet = findExactSheet(['aging']);
+    const forecastSheet = findExactSheet(['forecast']);
+    const cobranzaSheet = findExactSheet(['cobranza']);
+
+    const missing = [
+        agingSheet ? null : 'Aging',
+        forecastSheet ? null : 'Forecast',
+        cobranzaSheet ? null : 'Cobranza',
+    ].filter((value): value is string => value !== null);
+
+    if (missing.length > 0) {
+        throw new Error(`Commercial Operations AR file is missing required sheets: ${missing.join(', ')}.`);
+    }
+
+    return [agingSheet, forecastSheet, cobranzaSheet] as [string, string, string];
 }
 
 let ensureUploadsAsOfColumnPromise: Promise<void> | null = null;
@@ -858,6 +888,32 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         }
 
         return { ok: true, checked: rowsToCheck.length };
+    }
+
+    if (isCommercialOperationsArModule(moduleCode)) {
+        const hasAgingLayout =
+            hasAnyHeader(sampleRows, ['Account']) &&
+            hasAnyHeader(sampleRows, ['Name', 'Name - customer']) &&
+            hasAnyHeader(sampleRows, ['Document Number']) &&
+            hasAnyHeader(sampleRows, ['Amount', 'Amount - invoice_amount']) &&
+            hasAnyHeader(sampleRows, ['Aging', 'Aging - aging_group']);
+        const hasCollectionLayout =
+            hasAnyHeader(sampleRows, ['Account']) &&
+            hasAnyHeader(sampleRows, ['Name 1', 'Name 1 - customer']) &&
+            hasAnyHeader(sampleRows, ['Document Type', 'Document Type - document_type']) &&
+            hasAnyHeader(sampleRows, ['Amount in Local Currency', 'Amount in Local Currency - invoice_amount']) &&
+            (hasAnyHeader(sampleRows, ['Payment Date']) || hasAnyHeader(sampleRows, ['Net Due Date']));
+
+        if (!hasAgingLayout && !hasCollectionLayout) {
+            return {
+                ok: false,
+                checked: sampleRows.length,
+                message:
+                    'Sample check failed for Commercial Operations AR: expected Aging columns or Cobranza/Forecast columns.',
+            };
+        }
+
+        return { ok: true, checked: sampleRows.length };
     }
 
     if (isCommercialOperationsDeliveryOrdersModule(moduleCode)) {
@@ -2622,7 +2678,21 @@ export async function processUpload(uploadId: string) {
             sampleRowsChecked: number;
         };
 
-        if (moduleCode === 'opex_by_cc') {
+        if (isCommercialOperationsArModule(moduleCode)) {
+            const storageClient = getStorageClient();
+            const { bucketName, objectPath } = parseGcsPath(context.storagePath);
+            const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
+            const workbookSheets = inspectExcelWorkbook(fileBuffer);
+            const requiredSheets = resolveCommercialOperationsArRequiredSheets(workbookSheets);
+            tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
+                uploadId,
+                moduleCode,
+                storagePath: context.storagePath,
+                sheetNames: requiredSheets,
+                headerRow: effectiveHeaderRow,
+            });
+            sampleRowsChecked = tempFile.sampleRowsChecked;
+        } else if (moduleCode === 'opex_by_cc') {
             const storageClient = getStorageClient();
             const { bucketName, objectPath } = parseGcsPath(context.storagePath);
             const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();

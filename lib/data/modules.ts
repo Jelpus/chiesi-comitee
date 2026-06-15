@@ -105,6 +105,7 @@ export const defaultModules: Array<{
   { moduleCode: 'human_resources_training', moduleName: 'Human Resources - Training', areaCode: 'human_resources', displayOrder: 220 },
   { moduleCode: 'human_resources_open_vacancy', moduleName: 'Human Resources - Open Vacancy', areaCode: 'human_resources', displayOrder: 230 },
   { moduleCode: 'commercial_operations_dso', moduleName: 'Commercial Operations - DSO', areaCode: 'commercial_operations', displayOrder: 310 },
+  { moduleCode: 'commercial_operations_aging', moduleName: 'Commercial Operations - Aging', areaCode: 'commercial_operations', displayOrder: 315 },
   {
     moduleCode: 'commercial_operations_government_orders',
     moduleName: 'Commercial Operations - Government Orders',

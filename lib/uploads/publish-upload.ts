@@ -1560,6 +1560,28 @@ async function publishCommercialOperationsDsoUpload(context: UploadPublishContex
   return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
 }
 
+async function publishCommercialOperationsArUpload(context: UploadPublishContext) {
+  const client = getBigQueryClient();
+
+  const [countRows] = await client.query({
+    query: `
+      SELECT
+        (
+          SELECT COUNT(1)
+          FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_aging\`
+          WHERE upload_id = @uploadId
+        ) + (
+          SELECT COUNT(1)
+          FROM \`chiesi-committee.chiesi_committee_stg.stg_commercial_operations_ar_collection\`
+          WHERE upload_id = @uploadId
+        ) AS total
+    `,
+    params: { uploadId: context.uploadId },
+  });
+
+  return { ok: true as const, publishedRows: Number((countRows as Record<string, unknown>[])[0]?.total ?? 0) };
+}
+
 async function publishCommercialOperationsStocksUpload(context: UploadPublishContext) {
   const client = getBigQueryClient();
   const summaryModuleCode = 'commercial_operations_stocks';
@@ -2324,6 +2346,13 @@ export async function publishUploadToMart(uploadId: string) {
     context.moduleCode === 'dso'
   ) {
     return publishCommercialOperationsDsoUpload(context);
+  }
+  if (
+    context.moduleCode === 'commercial_operations_aging' ||
+    context.moduleCode === 'commercial_operations_ar' ||
+    context.moduleCode === 'ar'
+  ) {
+    return publishCommercialOperationsArUpload(context);
   }
   if (
     context.moduleCode === 'commercial_operations_government_orders' ||

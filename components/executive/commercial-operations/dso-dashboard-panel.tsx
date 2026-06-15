@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { DsoTrendChart } from '@/components/executive/commercial-operations/dso-trend-chart';
 import { DsoComparisonBarChart } from '@/components/executive/commercial-operations/dso-comparison-bar-chart';
 import { SanctionsPieChart } from '@/components/executive/commercial-operations/sanctions-pie-chart';
 import { SanctionsRankingBarChart } from '@/components/executive/commercial-operations/sanctions-ranking-bar-chart';
 import type {
+  CommercialOperationsArAgingRow,
+  CommercialOperationsArCollectionRow,
   CommercialOperationsDeliveryOrderRow,
   CommercialOperationsDsoOverviewRow,
   CommercialOperationsDsoTrendRow,
@@ -33,6 +35,8 @@ type DsoDashboardPanelProps = {
   trendRows: CommercialOperationsDsoTrendRow[];
   tableRows: DsoTableRow[];
   initialGroup: string;
+  arAgingRows: CommercialOperationsArAgingRow[];
+  arCollectionRows: CommercialOperationsArCollectionRow[];
   stockRows: CommercialOperationsStockRow[];
   governmentContractRows: CommercialOperationsGovernmentContractProgressRow[];
   deliveryOrderRows: CommercialOperationsDeliveryOrderRow[];
@@ -53,10 +57,67 @@ type DsoDashboardPanelProps = {
 };
 
 type StockScope = 'total' | 'private' | 'public';
+type ArAgingCustomerScope = 'total' | 'privado' | 'gobierno';
+type ArAgingSectorScope = 'privado' | 'gobierno' | 'other';
+type ArAgingPieStatus = 'Expired' | 'Due to expire';
 
 const GROUP_ORDER = ['Anual / General', 'B2B Privado', 'B2C Privado', 'B2C Gobierno', 'B2B Gobierno'];
 const EMPTY_OTIF_ROWS: CommercialOperationsOtifRow[] = [];
 const EMPTY_SANCTION_ROWS: CommercialOperationsSanctionRow[] = [];
+const AR_AGING_CUSTOMER_SCOPE_OPTIONS: ArAgingCustomerScope[] = ['total', 'privado', 'gobierno'];
+const AR_AGING_CHANNEL_PIE_DEFS: Array<{
+  key: string;
+  channel: 'Privado' | 'Gobierno';
+  scope: Exclude<ArAgingSectorScope, 'other'>;
+  status: ArAgingPieStatus;
+  label: string;
+  color: string;
+}> = [
+  {
+    key: 'privado-due',
+    channel: 'Privado',
+    scope: 'privado',
+    status: 'Due to expire',
+    label: 'Privado - Due to Expire',
+    color: '#93c5fd',
+  },
+  {
+    key: 'privado-expired',
+    channel: 'Privado',
+    scope: 'privado',
+    status: 'Expired',
+    label: 'Privado - Expired',
+    color: '#1d4ed8',
+  },
+  {
+    key: 'gobierno-due',
+    channel: 'Gobierno',
+    scope: 'gobierno',
+    status: 'Due to expire',
+    label: 'Gobierno - Due to Expire',
+    color: '#f9a8d4',
+  },
+  {
+    key: 'gobierno-expired',
+    channel: 'Gobierno',
+    scope: 'gobierno',
+    status: 'Expired',
+    label: 'Gobierno - Expired',
+    color: '#db2777',
+  },
+];
+const OTIF_FAILURE_REASON_COLORS = [
+  '#be123c',
+  '#e11d48',
+  '#f43f5e',
+  '#fb7185',
+  '#f97316',
+  '#f59e0b',
+  '#0f766e',
+  '#2563eb',
+  '#7c3aed',
+  '#475569',
+];
 
 function normalizeLabel(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -84,6 +145,11 @@ function formatSignedQuantity(value: number | null | undefined) {
 function formatPercent(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) return 'N/A';
   return `${value.toFixed(1)}%`;
+}
+
+function clampPercent(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return 0;
+  return Math.max(0, Math.min(100, value));
 }
 
 function KpiHelp({ text }: { text: string }) {
@@ -140,6 +206,14 @@ function formatSignedCurrency(value: number | null | undefined) {
   if (value > 0) return `+${formatted}`;
   if (value < 0) return `-${formatted}`;
   return '$0';
+}
+
+function formatAccountingAmount(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return '-';
+  const rounded = Math.round(value);
+  const formatted = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(rounded));
+  if (rounded < 0) return `(${formatted})`;
+  return formatted;
 }
 
 function formatSignedPercent(value: number | null | undefined) {
@@ -210,6 +284,82 @@ function getSanctionsCustomer(row: CommercialOperationsSanctionRow) {
 
 function getSanctionsReason(row: CommercialOperationsSanctionRow) {
   return (row.sanctionReason ?? '').trim() || 'Unassigned';
+}
+
+function getArCustomer(value: string | null | undefined, fallback: string | null | undefined) {
+  return (value ?? fallback ?? '').trim() || 'Unassigned';
+}
+
+const AGING_BUCKETS = ['Current', '1-60', '61-90', '91-120', '121-180', '181-360', '>360'] as const;
+type AgingBucket = (typeof AGING_BUCKETS)[number];
+const EXPIRED_AGING_BUCKETS = ['1-60', '61-90', '91-120', '121-180', '181-360', '>360'] as const;
+type ExpiredAgingBucket = (typeof EXPIRED_AGING_BUCKETS)[number];
+const EXPIRED_AGING_BUCKET_COLORS: Record<ExpiredAgingBucket, string> = {
+  '1-60': '#fca5a5',
+  '61-90': '#fb7185',
+  '91-120': '#f43f5e',
+  '121-180': '#e11d48',
+  '181-360': '#be123c',
+  '>360': '#881337',
+};
+
+function createEmptyAgingBuckets() {
+  return Object.fromEntries(AGING_BUCKETS.map((bucket) => [bucket, 0])) as Record<AgingBucket, number>;
+}
+
+function getAgingBucketLabel(value: string | null | undefined): AgingBucket {
+  const normalized = normalizeLabel(value ?? '');
+  if (!normalized || normalized.includes('current') || normalized.includes('corriente')) return 'Current';
+  if (normalized.includes('>360') || normalized.includes('360+') || normalized.includes('mas de 360')) return '>360';
+  const numbers = normalized.match(/\d+/g)?.map((item) => Number(item)).filter(Number.isFinite) ?? [];
+  if (numbers.length === 0) return 'Current';
+  const max = Math.max(...numbers);
+  if (max <= 60) return '1-60';
+  if (max <= 90) return '61-90';
+  if (max <= 120) return '91-120';
+  if (max <= 180) return '121-180';
+  if (max <= 360) return '181-360';
+  return '>360';
+}
+
+function getArAgingSector(row: CommercialOperationsArAgingRow) {
+  return (row.channel ?? row.channelGroup ?? '').trim() || 'Unassigned';
+}
+
+function getArAgingSectorScope(value: string | null | undefined): ArAgingSectorScope {
+  const normalized = normalizeLabel(value ?? '');
+  if (normalized.includes('privado') || normalized.includes('private')) return 'privado';
+  if (normalized.includes('gobierno') || normalized.includes('government') || normalized.includes('public')) {
+    return 'gobierno';
+  }
+  return 'other';
+}
+
+function formatArAgingCustomerScope(scope: ArAgingCustomerScope) {
+  if (scope === 'privado') return 'Privado';
+  if (scope === 'gobierno') return 'Gobierno';
+  return 'Total';
+}
+
+function formatAgingStatusLabel(status: 'Expired' | 'Due to expire' | 'Other') {
+  if (status === 'Expired') return 'Expired';
+  if (status === 'Due to expire') return 'Due to Expire';
+  return 'Other';
+}
+
+function summarizeArCollectionRows(rows: CommercialOperationsArCollectionRow[]) {
+  const actual = rows
+    .filter((row) => row.sourceType === 'actual')
+    .reduce((total, row) => total + Math.abs(row.invoiceAmount), 0);
+  const forecast = rows
+    .filter((row) => row.sourceType === 'forecast')
+    .reduce((total, row) => total + Math.abs(row.invoiceAmount), 0);
+  return {
+    actual,
+    forecast,
+    variance: actual - forecast,
+    coveragePct: forecast > 0 ? (actual / forecast) * 100 : null,
+  };
 }
 
 function filterSanctionsByResponsibility(
@@ -304,6 +454,8 @@ export function DsoDashboardPanel({
   trendRows,
   tableRows,
   initialGroup,
+  arAgingRows,
+  arCollectionRows,
   stockRows,
   governmentContractRows,
   deliveryOrderRows,
@@ -318,6 +470,11 @@ export function DsoDashboardPanel({
   const [activeView, setActiveView] = useState<
     'dso' | 'stock' | 'government-contract-progress' | 'delivery' | 'otif' | 'sanctions'
   >('dso');
+  const [selectedArAgingCustomerScope, setSelectedArAgingCustomerScope] =
+    useState<ArAgingCustomerScope>('total');
+  const [selectedArCollectionChannel, setSelectedArCollectionChannel] = useState('');
+  const [selectedArCollectionCustomerScope, setSelectedArCollectionCustomerScope] =
+    useState<ArAgingCustomerScope>('total');
   const [selectedStockScope, setSelectedStockScope] = useState<StockScope>('total');
   const [selectedDeliveryScope, setSelectedDeliveryScope] = useState<'government' | 'private' | 'total'>(
     'government',
@@ -513,6 +670,210 @@ export function DsoDashboardPanel({
     () => overviewRows.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null,
     [overviewRows],
   );
+  const arSourceAsOf = useMemo(
+    () =>
+      [
+        ...overviewRows.map((row) => row.sourceAsOfMonth),
+        ...arAgingRows.map((row) => row.sourceAsOfMonth),
+        ...arCollectionRows.map((row) => row.sourceAsOfMonth),
+      ]
+        .filter(Boolean)
+        .sort()
+        .at(-1) ?? null,
+    [arAgingRows, arCollectionRows, overviewRows],
+  );
+  const arAgingSummary = useMemo(() => {
+    const sum = (rows: CommercialOperationsArAgingRow[]) =>
+      rows.reduce((total, row) => total + row.invoiceAmount, 0);
+    const total = sum(arAgingRows);
+    const expired = sum(arAgingRows.filter((row) => row.status === 'Expired'));
+    const dueToExpire = sum(arAgingRows.filter((row) => row.status === 'Due to expire'));
+    const notExpired = total - expired;
+    return {
+      total,
+      expired,
+      dueToExpire,
+      notExpired,
+      expiredPct: total > 0 ? (expired / total) * 100 : null,
+      notExpiredPct: total > 0 ? (notExpired / total) * 100 : null,
+    };
+  }, [arAgingRows]);
+  const arAgingChannelPieRows = useMemo(() => {
+    const amounts = new Map(AR_AGING_CHANNEL_PIE_DEFS.map((segment) => [segment.key, 0]));
+    for (const row of arAgingRows) {
+      if (row.status !== 'Expired' && row.status !== 'Due to expire') continue;
+      const scope = getArAgingSectorScope(`${getArAgingSector(row)} ${row.channelGroup ?? ''}`);
+      if (scope !== 'privado' && scope !== 'gobierno') continue;
+      const segment = AR_AGING_CHANNEL_PIE_DEFS.find((item) => item.scope === scope && item.status === row.status);
+      if (!segment) continue;
+      amounts.set(segment.key, (amounts.get(segment.key) ?? 0) + row.invoiceAmount);
+    }
+    const rows = AR_AGING_CHANNEL_PIE_DEFS.map((segment) => {
+      const amount = amounts.get(segment.key) ?? 0;
+      return {
+        ...segment,
+        amount,
+        pieValue: Math.max(0, amount),
+      };
+    });
+    const totalPieValue = rows.reduce((sum, row) => sum + row.pieValue, 0);
+    const rowsWithPercent = rows.map((row) => ({
+      ...row,
+      percent: totalPieValue > 0 ? (row.pieValue / totalPieValue) * 100 : 0,
+    }));
+    return rowsWithPercent.map((row, index) => {
+      const start = rowsWithPercent.slice(0, index).reduce((sum, item) => sum + item.percent, 0);
+      const percent = totalPieValue > 0 ? (row.pieValue / totalPieValue) * 100 : 0;
+      return {
+        ...row,
+        start,
+        end: start + percent,
+      };
+    });
+  }, [arAgingRows]);
+  const arAgingChannelPieGradient = useMemo(() => {
+    const activeSegments = arAgingChannelPieRows.filter((row) => row.pieValue > 0);
+    if (activeSegments.length === 0) return 'conic-gradient(#e2e8f0 0% 100%)';
+    return `conic-gradient(${activeSegments
+      .map((row) => `${row.color} ${row.start.toFixed(4)}% ${row.end.toFixed(4)}%`)
+      .join(', ')})`;
+  }, [arAgingChannelPieRows]);
+  const arAgingPivotRows = useMemo(() => {
+    type StatusKey = 'Expired' | 'Due to expire' | 'Other';
+    type StatusSummary = {
+      status: StatusKey;
+      buckets: Record<AgingBucket, number>;
+      total: number;
+    };
+    type SectorSummary = {
+      sector: string;
+      buckets: Record<AgingBucket, number>;
+      total: number;
+      statuses: Map<StatusKey, StatusSummary>;
+    };
+    const emptyBuckets = () =>
+      Object.fromEntries(AGING_BUCKETS.map((bucket) => [bucket, 0])) as Record<AgingBucket, number>;
+    const bySector = new Map<string, SectorSummary>();
+
+    for (const row of arAgingRows) {
+      const sector = getArAgingSector(row);
+      const bucket = getAgingBucketLabel(row.agingGroup);
+      const status = row.status;
+      const sectorSummary = bySector.get(sector) ?? {
+        sector,
+        buckets: emptyBuckets(),
+        total: 0,
+        statuses: new Map<StatusKey, StatusSummary>(),
+      };
+      const statusSummary = sectorSummary.statuses.get(status) ?? {
+        status,
+        buckets: emptyBuckets(),
+        total: 0,
+      };
+      sectorSummary.buckets[bucket] += row.invoiceAmount;
+      sectorSummary.total += row.invoiceAmount;
+      statusSummary.buckets[bucket] += row.invoiceAmount;
+      statusSummary.total += row.invoiceAmount;
+      sectorSummary.statuses.set(status, statusSummary);
+      bySector.set(sector, sectorSummary);
+    }
+
+    const statusOrder: StatusKey[] = ['Expired', 'Due to expire', 'Other'];
+    return [...bySector.values()]
+      .map((sector) => ({
+        ...sector,
+        statusRows: statusOrder
+          .map((status) => sector.statuses.get(status))
+          .filter((row): row is StatusSummary => row != null && Math.abs(row.total) > 0.000001),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [arAgingRows]);
+  const arAgingGrandTotal = useMemo(() => {
+    const buckets = Object.fromEntries(AGING_BUCKETS.map((bucket) => [bucket, 0])) as Record<AgingBucket, number>;
+    let total = 0;
+    for (const row of arAgingRows) {
+      const bucket = getAgingBucketLabel(row.agingGroup);
+      buckets[bucket] += row.invoiceAmount;
+      total += row.invoiceAmount;
+    }
+    return { buckets, total };
+  }, [arAgingRows]);
+  const arAgingRiskBucketRows = useMemo(() => {
+    const byBucket = new Map<AgingBucket, number>();
+    for (const row of arAgingRows) {
+      if (row.status !== 'Expired') continue;
+      const bucket = getAgingBucketLabel(row.agingGroup);
+      byBucket.set(bucket, (byBucket.get(bucket) ?? 0) + row.invoiceAmount);
+    }
+    return AGING_BUCKETS.map((bucket) => ({ bucket, amount: byBucket.get(bucket) ?? 0 }))
+      .filter((row) => row.bucket !== 'Current');
+  }, [arAgingRows]);
+  const arAgingTopCustomers = useMemo(() => {
+    const byCustomer = new Map<string, { customer: string; amount: number; buckets: Record<AgingBucket, number> }>();
+    for (const row of arAgingRows) {
+      if (row.status !== 'Expired') continue;
+      if (selectedArAgingCustomerScope !== 'total') {
+        const sectorScope = getArAgingSectorScope(`${getArAgingSector(row)} ${row.channelGroup ?? ''}`);
+        if (sectorScope !== selectedArAgingCustomerScope) continue;
+      }
+      const customer = getArCustomer(row.customer, row.account);
+      const current = byCustomer.get(customer) ?? { customer, amount: 0, buckets: createEmptyAgingBuckets() };
+      const bucket = getAgingBucketLabel(row.agingGroup);
+      current.amount += row.invoiceAmount;
+      current.buckets[bucket] += row.invoiceAmount;
+      byCustomer.set(customer, current);
+    }
+    return [...byCustomer.values()].sort((a, b) => b.amount - a.amount);
+  }, [arAgingRows, selectedArAgingCustomerScope]);
+  const arCollectionChannelOptions = useMemo(
+    () => [...new Set(arCollectionRows.map((row) => row.channelGroup).filter(Boolean))].sort(),
+    [arCollectionRows],
+  );
+  const effectiveArCollectionChannel = arCollectionChannelOptions.includes(selectedArCollectionChannel)
+    ? selectedArCollectionChannel
+    : '';
+  const arCollectionScopedRows = useMemo(
+    () =>
+      arCollectionRows.filter(
+        (row) => !effectiveArCollectionChannel || row.channelGroup === effectiveArCollectionChannel,
+      ),
+    [arCollectionRows, effectiveArCollectionChannel],
+  );
+  const arCollectionSummary = useMemo(
+    () => summarizeArCollectionRows(arCollectionScopedRows),
+    [arCollectionScopedRows],
+  );
+  const arCollectionChannelRows = useMemo(() => {
+    const byChannel = new Map<string, CommercialOperationsArCollectionRow[]>();
+    for (const row of arCollectionRows) {
+      const current = byChannel.get(row.channelGroup) ?? [];
+      current.push(row);
+      byChannel.set(row.channelGroup, current);
+    }
+    return [...byChannel.entries()]
+      .map(([channel, rows]) => ({ channel, ...summarizeArCollectionRows(rows) }))
+      .sort((a, b) => b.actual - a.actual);
+  }, [arCollectionRows]);
+  const arCollectionCustomerScopedRows = useMemo(
+    () =>
+      arCollectionRows.filter((row) => {
+        if (selectedArCollectionCustomerScope === 'total') return true;
+        return getArAgingSectorScope(row.channelGroup) === selectedArCollectionCustomerScope;
+      }),
+    [arCollectionRows, selectedArCollectionCustomerScope],
+  );
+  const arCollectionCustomerRows = useMemo(() => {
+    const byCustomer = new Map<string, CommercialOperationsArCollectionRow[]>();
+    for (const row of arCollectionCustomerScopedRows) {
+      const customer = getArCustomer(row.customer, row.account);
+      const current = byCustomer.get(customer) ?? [];
+      current.push(row);
+      byCustomer.set(customer, current);
+    }
+    return [...byCustomer.entries()]
+      .map(([customer, rows]) => ({ customer, ...summarizeArCollectionRows(rows) }))
+      .sort((a, b) => b.actual - a.actual);
+  }, [arCollectionCustomerScopedRows]);
   const stockSourceAsOf = useMemo(
     () => stockRows.map((row) => row.sourceAsOfMonth).filter(Boolean).sort().at(-1) ?? null,
     [stockRows],
@@ -859,22 +1220,64 @@ export function DsoDashboardPanel({
       returnedPieces,
     };
   }, [otifScopedRows]);
-  const otifTrendRows = useMemo(() => {
-    const byPeriod = new Map<string, { periodMonth: string; total: number; ok: number }>();
+  const otifMonthlyFailureRows = useMemo(() => {
+    const byPeriod = new Map<
+      string,
+      { periodMonth: string; total: number; ok: number; failed: number; reasons: Map<string, number> }
+    >();
     for (const row of otifRows) {
-      const current = byPeriod.get(row.periodMonth) ?? { periodMonth: row.periodMonth, total: 0, ok: 0 };
+      const current = byPeriod.get(row.periodMonth) ?? {
+        periodMonth: row.periodMonth,
+        total: 0,
+        ok: 0,
+        failed: 0,
+        reasons: new Map<string, number>(),
+      };
       current.total += 1;
-      if (row.otif) current.ok += 1;
+      if (row.otif) {
+        current.ok += 1;
+      } else {
+        const reason = (row.falseOtifReason ?? '').trim() || 'Unspecified';
+        current.failed += 1;
+        current.reasons.set(reason, (current.reasons.get(reason) ?? 0) + 1);
+      }
       byPeriod.set(row.periodMonth, current);
     }
     return [...byPeriod.values()]
       .map((row) => ({
         periodMonth: row.periodMonth,
-        dsoValue: row.total > 0 ? (row.ok / row.total) * 100 : 0,
-        targetValue: 95,
+        total: row.total,
+        ok: row.ok,
+        failed: row.failed,
+        otifPct: row.total > 0 ? (row.ok / row.total) * 100 : null,
+        reasons: [...row.reasons.entries()]
+          .map(([reason, count]) => ({ reason, count }))
+          .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
       }))
       .sort((a, b) => a.periodMonth.localeCompare(b.periodMonth));
   }, [otifRows]);
+  const otifMonthlyFailureReasonRows = useMemo(() => {
+    const byReason = new Map<string, number>();
+    for (const row of otifMonthlyFailureRows) {
+      for (const reasonRow of row.reasons) {
+        byReason.set(reasonRow.reason, (byReason.get(reasonRow.reason) ?? 0) + reasonRow.count);
+      }
+    }
+    return [...byReason.entries()]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  }, [otifMonthlyFailureRows]);
+  const otifMonthlyFailureReasonColorMap = useMemo(
+    () =>
+      new Map(
+        otifMonthlyFailureReasonRows.map((row, index) => [
+          row.reason,
+          OTIF_FAILURE_REASON_COLORS[index % OTIF_FAILURE_REASON_COLORS.length],
+        ]),
+      ),
+    [otifMonthlyFailureReasonRows],
+  );
+  const otifMonthlyMaxFailures = Math.max(...otifMonthlyFailureRows.map((row) => row.failed), 1);
   const otifChannelRows = useMemo(() => {
     const byChannel = new Map<string, { label: string; total: number; ok: number; failed: number }>();
     for (const row of otifScopedRows) {
@@ -1258,7 +1661,7 @@ export function DsoDashboardPanel({
 
   const activeSourceAsOf =
     activeView === 'dso'
-      ? dsoSourceAsOf
+      ? arSourceAsOf ?? dsoSourceAsOf
       : activeView === 'stock'
         ? stockSourceAsOf
         : activeView === 'delivery'
@@ -1271,11 +1674,25 @@ export function DsoDashboardPanel({
                 ? contractsSourceAsOfMonth ?? null
                 : null;
 
+  const arAgingMaxCustomerAmount = Math.max(...arAgingTopCustomers.map((row) => Math.abs(row.amount)), 1);
+  const arAgingMaxRiskBucketAmount = Math.max(
+    ...arAgingRiskBucketRows.map((row) => Math.abs(row.amount)),
+    1,
+  );
+  const arAgingExpiredPct = clampPercent(arAgingSummary.expiredPct);
+  const arAgingNotExpiredPct = clampPercent(arAgingSummary.notExpiredPct);
+
   const formatMonthLabel = (value: string | null | undefined) => {
     if (!value) return 'N/A';
     const date = new Date(`${value}T00:00:00Z`);
     if (Number.isNaN(date.getTime())) return 'N/A';
     return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
+  };
+  const formatShortMonthLabel = (value: string | null | undefined) => {
+    if (!value) return 'N/A';
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return 'N/A';
+    return new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit' }).format(date);
   };
 
   const stockBusinessTypeOptions = useMemo(() => {
@@ -1853,7 +2270,7 @@ export function DsoDashboardPanel({
               activeView === 'dso' ? 'bg-slate-900 text-white' : 'text-slate-600'
             }`}
           >
-            DSO View
+            AR View
           </button>
           <button
             type="button"
@@ -2105,13 +2522,470 @@ export function DsoDashboardPanel({
       ) : null}
 
       {activeView === 'dso' ? (
-        <article className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
+        <article className="flex flex-col gap-5 rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.10)]">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-600">DSO BY GROUP Current vs Target</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-600">Accounts receivable View</p>
           </div>
 
-          <div className="mt-4 rounded-[16px] border border-slate-200 bg-slate-50/60 p-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">DSO by Group (MTH)</p>
+          <section className="order-2 rounded-[16px] border border-slate-200 bg-slate-50/60 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                  Aging Distribution
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Sales sector by expiration status and aging bucket. Signed amounts are preserved.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-2 text-right text-xs sm:grid-cols-3">
+                <div className="rounded-[10px] border border-slate-200 bg-white px-3 py-2">
+                  <p className="flex items-center justify-end gap-1 uppercase tracking-[0.12em] text-slate-500">
+                    <span>Total</span>
+                    <KpiHelp text="Total receivables portfolio in the Aging file, preserving signed amounts from source." />
+                  </p>
+                  <p className="font-semibold text-slate-900">{formatAccountingAmount(arAgingSummary.total)}</p>
+                </div>
+                <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2">
+                  <p className="flex items-center justify-end gap-1 uppercase tracking-[0.12em] text-rose-600">
+                    <span>Expired</span>
+                    <KpiHelp text="Receivables already past due according to the Aging status." />
+                  </p>
+                  <p className="font-semibold text-rose-700">{formatAccountingAmount(arAgingSummary.expired)}</p>
+                </div>
+                <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <p className="flex items-center justify-end gap-1 uppercase tracking-[0.12em] text-emerald-700">
+                    <span>Due to Expire</span>
+                    <KpiHelp text="Receivables not yet expired, classified as Due to Expire in the Aging status." />
+                  </p>
+                  <p className="font-semibold text-emerald-700">{formatAccountingAmount(arAgingSummary.dueToExpire)}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]">
+              <div className="rounded-[12px] border border-slate-200 bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                      Expired Portfolio
+                    </p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">
+                      {formatPercent(arAgingSummary.expiredPct)}
+                    </p>
+                  </div>
+                  <p className="text-right text-xs text-slate-500">
+                    {formatAccountingAmount(arAgingSummary.expired)}
+                  </p>
+                </div>
+                <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div className="bg-rose-500" style={{ width: `${arAgingExpiredPct}%` }} />
+                  <div className="bg-emerald-500" style={{ width: `${arAgingNotExpiredPct}%` }} />
+                </div>
+                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                  <div className="flex items-center justify-between gap-2 rounded-[8px] bg-rose-50 px-2 py-1.5 text-rose-700">
+                    <span>Expired</span>
+                    <span className="font-semibold">{formatPercent(arAgingSummary.expiredPct)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-[8px] bg-emerald-50 px-2 py-1.5 text-emerald-700">
+                    <span>Due to Expire</span>
+                    <span className="font-semibold">{formatPercent(arAgingSummary.notExpiredPct)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[12px] border border-slate-200 bg-white p-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                  Portfolio by Channel
+                </p>
+                <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row">
+                  <div
+                    className="relative h-40 w-40 shrink-0 rounded-full border border-slate-200 shadow-inner"
+                    style={{ background: arAgingChannelPieGradient }}
+                  >
+                    <div className="absolute inset-9 flex flex-col items-center justify-center rounded-full bg-white text-center shadow-sm">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Total
+                      </span>
+                      <span className="text-sm font-semibold text-slate-950">
+                        {formatAccountingAmount(arAgingSummary.total)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid w-full gap-2 text-xs">
+                    {arAgingChannelPieRows.map((row) => (
+                      <div key={row.key} className="flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: row.color }}
+                          />
+                          <span className="truncate font-medium text-slate-700">{row.label}</span>
+                        </span>
+                        <span className={row.amount < 0 ? 'text-rose-700' : 'text-slate-700'}>
+                          {formatPercent(row.percent)} | {formatAccountingAmount(row.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[12px] border border-rose-200 bg-white p-3">
+                <div className="space-y-3">
+                  {arAgingRiskBucketRows.map((row) => {
+                    const widthPct =
+                      Math.abs(row.amount) > 0
+                        ? Math.max(3, (Math.abs(row.amount) / arAgingMaxRiskBucketAmount) * 100)
+                        : 0;
+                    return (
+                      <div key={row.bucket}>
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-medium text-slate-700">{row.bucket}</span>
+                          <span className={row.amount < 0 ? 'text-rose-700' : 'text-slate-700'}>
+                            {formatAccountingAmount(row.amount)}
+                          </span>
+                        </div>
+                        <div className="mt-1 h-2 rounded-full bg-slate-100">
+                          <div
+                            className={`h-2 rounded-full ${row.amount < 0 ? 'bg-slate-300' : 'bg-rose-600'}`}
+                            style={{
+                              width: `${widthPct}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 overflow-x-auto rounded-[12px] border border-slate-200 bg-white">
+              <table className="min-w-[980px] w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-white">
+                    <th className="px-2 py-2 text-left font-semibold text-slate-900">Monto</th>
+                    <th
+                      className="bg-pink-100 px-2 py-2 text-center font-semibold text-slate-900"
+                      colSpan={AGING_BUCKETS.length + 1}
+                    >
+                      Aging
+                    </th>
+                  </tr>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.10em] text-slate-500">
+                    <th className="px-2 py-2 text-left">Sales Sector</th>
+                    {AGING_BUCKETS.map((bucket) => (
+                      <th key={bucket} className="px-2 py-2 text-right">
+                        {bucket}
+                      </th>
+                    ))}
+                    <th className="px-2 py-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {arAgingPivotRows.map((sectorRow) => (
+                    <Fragment key={sectorRow.sector}>
+                      <tr key={`${sectorRow.sector}-total`} className="bg-slate-100 font-semibold text-slate-950">
+                        <td className="px-2 py-2 text-left">{sectorRow.sector}</td>
+                        {AGING_BUCKETS.map((bucket) => (
+                          <td
+                            key={`${sectorRow.sector}-${bucket}`}
+                            className={`px-2 py-2 text-right ${sectorRow.buckets[bucket] < 0 ? 'text-rose-700' : ''}`}
+                          >
+                            {formatAccountingAmount(sectorRow.buckets[bucket])}
+                          </td>
+                        ))}
+                        <td className={`px-2 py-2 text-right ${sectorRow.total < 0 ? 'text-rose-700' : ''}`}>
+                          {formatAccountingAmount(sectorRow.total)}
+                        </td>
+                      </tr>
+                      {sectorRow.statusRows.map((statusRow) => (
+                        <tr key={`${sectorRow.sector}-${statusRow.status}`} className="text-slate-700">
+                          <td className="px-2 py-1.5 pl-6 text-left">{formatAgingStatusLabel(statusRow.status)}</td>
+                          {AGING_BUCKETS.map((bucket) => (
+                            <td
+                              key={`${sectorRow.sector}-${statusRow.status}-${bucket}`}
+                              className={`px-2 py-1.5 text-right ${
+                                statusRow.buckets[bucket] < 0 ? 'font-semibold text-rose-700' : ''
+                              }`}
+                            >
+                              {statusRow.buckets[bucket] === 0
+                                ? '-'
+                                : formatAccountingAmount(statusRow.buckets[bucket])}
+                            </td>
+                          ))}
+                          <td className={`px-2 py-1.5 text-right ${statusRow.total < 0 ? 'font-semibold text-rose-700' : ''}`}>
+                            {formatAccountingAmount(statusRow.total)}
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                  {arAgingPivotRows.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-3 text-center text-slate-500" colSpan={AGING_BUCKETS.length + 2}>
+                        No Aging data available.
+                      </td>
+                    </tr>
+                  ) : null}
+                  {arAgingPivotRows.length > 0 ? (
+                    <tr className="bg-slate-900 font-semibold text-white">
+                      <td className="px-2 py-2 text-left">Total</td>
+                      {AGING_BUCKETS.map((bucket) => (
+                        <td key={`grand-${bucket}`} className="px-2 py-2 text-right">
+                          {formatAccountingAmount(arAgingGrandTotal.buckets[bucket])}
+                        </td>
+                      ))}
+                      <td className="px-2 py-2 text-right">{formatAccountingAmount(arAgingGrandTotal.total)}</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 rounded-[12px] border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                  Top Expired Customers
+                </p>
+                <div className="flex flex-wrap items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+                  {AR_AGING_CUSTOMER_SCOPE_OPTIONS.map((scope) => {
+                    const active = selectedArAgingCustomerScope === scope;
+                    return (
+                      <button
+                        key={scope}
+                        type="button"
+                        onClick={() => setSelectedArAgingCustomerScope(scope)}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                          active ? 'bg-slate-900 text-white' : 'text-slate-600'
+                        }`}
+                      >
+                        {formatArAgingCustomerScope(scope)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                {EXPIRED_AGING_BUCKETS.map((bucket) => (
+                  <span key={bucket} className="inline-flex items-center gap-1">
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: EXPIRED_AGING_BUCKET_COLORS[bucket] }}
+                    />
+                    {bucket}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-3 max-h-[420px] space-y-3 overflow-y-auto pr-1">
+                {arAgingTopCustomers.map((row, index) => {
+                  const bucketRows = EXPIRED_AGING_BUCKETS.map((bucket) => ({
+                    bucket,
+                    amount: row.buckets[bucket],
+                  })).filter((bucketRow) => bucketRow.amount > 0.000001);
+                  const bucketTotal = bucketRows.reduce((total, bucketRow) => total + bucketRow.amount, 0);
+                  const overallWidthPct =
+                    Math.abs(row.amount) > 0
+                      ? Math.max(3, (Math.abs(row.amount) / arAgingMaxCustomerAmount) * 100)
+                      : 0;
+
+                  return (
+                    <div key={row.customer}>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="w-6 shrink-0 text-right text-[10px] font-semibold text-slate-400">
+                            {index + 1}
+                          </span>
+                          <span className="truncate font-medium text-slate-700">{row.customer}</span>
+                        </span>
+                        <span className={row.amount < 0 ? 'text-rose-700' : 'text-slate-700'}>
+                          {formatAccountingAmount(row.amount)}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-2.5 rounded-full bg-slate-100">
+                        <div
+                          className="flex h-2.5 overflow-hidden rounded-full"
+                          style={{ width: `${overallWidthPct}%` }}
+                        >
+                          {bucketRows.length > 0 ? (
+                            bucketRows.map((bucketRow) => (
+                              <div
+                                key={`${row.customer}-${bucketRow.bucket}`}
+                                className="h-2.5"
+                                style={{
+                                  width: `${(bucketRow.amount / bucketTotal) * 100}%`,
+                                  backgroundColor: EXPIRED_AGING_BUCKET_COLORS[bucketRow.bucket],
+                                }}
+                                title={`${bucketRow.bucket}: ${formatAccountingAmount(bucketRow.amount)}`}
+                                aria-label={`${bucketRow.bucket}: ${formatAccountingAmount(bucketRow.amount)}`}
+                              />
+                            ))
+                          ) : (
+                            <div className="h-2.5 w-full bg-slate-300" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 pl-8 text-[10px] text-slate-500">
+                        {bucketRows.map((bucketRow) => (
+                          <span key={`${row.customer}-${bucketRow.bucket}-amount`} className="inline-flex items-center gap-1">
+                            <span
+                              className="h-1.5 w-1.5 rounded-full"
+                              style={{ backgroundColor: EXPIRED_AGING_BUCKET_COLORS[bucketRow.bucket] }}
+                            />
+                            {bucketRow.bucket}: {formatAccountingAmount(bucketRow.amount)}
+                          </span>
+                        ))}
+                        {bucketRows.length === 0 ? (
+                          <span>No bucket split available.</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+                {arAgingTopCustomers.length === 0 ? (
+                  <p className="text-xs text-slate-500">No expired customers for selected channel.</p>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
+          <section className="order-3 rounded-[16px] border border-slate-200 bg-slate-50/60 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                Collections vs Forecast
+              </p>
+              <select
+                value={effectiveArCollectionChannel}
+                onChange={(event) => setSelectedArCollectionChannel(event.target.value)}
+                className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+              >
+                <option value="">All Channels</option>
+                {arCollectionChannelOptions.map((channel) => (
+                  <option key={channel} value={channel}>
+                    {channel}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <div className="rounded-[12px] border border-slate-200 bg-white p-3">
+                <KpiLabel help="Real collection amount from Cobranza rows with Document Type BI.">Actual</KpiLabel>
+                <p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(arCollectionSummary.actual)}</p>
+              </div>
+              <div className="rounded-[12px] border border-slate-200 bg-white p-3">
+                <KpiLabel help="Forecast amount from Forecast rows with Document Type CA for source month and previous month.">Forecast</KpiLabel>
+                <p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(arCollectionSummary.forecast)}</p>
+              </div>
+              <div className="rounded-[12px] border border-slate-200 bg-white p-3">
+                <KpiLabel help="Actual collection amount divided by forecast amount.">Coverage</KpiLabel>
+                <p className="mt-1 text-xl font-semibold text-slate-900">{formatPercent(arCollectionSummary.coveragePct)}</p>
+              </div>
+              <div className="rounded-[12px] border border-slate-200 bg-white p-3">
+                <KpiLabel help="Actual collection amount minus forecast amount.">Deviation</KpiLabel>
+                <p className={`mt-1 text-xl font-semibold ${arCollectionSummary.variance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {formatSignedCurrency(arCollectionSummary.variance)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div className="overflow-hidden rounded-[12px] border border-slate-200 bg-white">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Channel</th>
+                      <th className="px-3 py-2 text-right">Actual</th>
+                      <th className="px-3 py-2 text-right">Forecast</th>
+                      <th className="px-3 py-2 text-right">Coverage</th>
+                      <th className="px-3 py-2 text-right">Deviation</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {arCollectionChannelRows.map((row) => (
+                      <tr key={row.channel} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 text-left font-medium text-slate-800">{row.channel}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{formatCurrency(row.actual)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{formatCurrency(row.forecast)}</td>
+                        <td className="px-3 py-2 text-right text-slate-900">{formatPercent(row.coveragePct)}</td>
+                        <td className={`px-3 py-2 text-right font-semibold ${row.variance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {formatSignedCurrency(row.variance)}
+                        </td>
+                      </tr>
+                    ))}
+                    {arCollectionChannelRows.length === 0 ? (
+                      <tr>
+                        <td className="px-3 py-3 text-center text-slate-500" colSpan={5}>No Cobranza data available.</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded-[12px] border border-slate-200 bg-white">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+                    Client Collections
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1 rounded-full border border-slate-300 bg-white p-1">
+                    {AR_AGING_CUSTOMER_SCOPE_OPTIONS.map((scope) => {
+                      const active = selectedArCollectionCustomerScope === scope;
+                      return (
+                        <button
+                          key={scope}
+                          type="button"
+                          onClick={() => setSelectedArCollectionCustomerScope(scope)}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                            active ? 'bg-slate-900 text-white' : 'text-slate-600'
+                          }`}
+                        >
+                          {formatArAgingCustomerScope(scope)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="max-h-[420px] overflow-auto">
+                  <table className="w-full min-w-[760px] text-sm">
+                    <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Client</th>
+                        <th className="px-3 py-2 text-right">Actual</th>
+                        <th className="px-3 py-2 text-right">Forecast</th>
+                        <th className="px-3 py-2 text-right">Coverage</th>
+                        <th className="px-3 py-2 text-right">Deviation</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {arCollectionCustomerRows.map((row) => (
+                        <tr key={row.customer} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 text-left font-medium text-slate-800">{row.customer}</td>
+                          <td className="px-3 py-2 text-right text-slate-900">{formatCurrency(row.actual)}</td>
+                          <td className="px-3 py-2 text-right text-slate-900">{formatCurrency(row.forecast)}</td>
+                          <td className="px-3 py-2 text-right text-slate-900">{formatPercent(row.coveragePct)}</td>
+                          <td className={`px-3 py-2 text-right font-semibold ${row.variance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {formatSignedCurrency(row.variance)}
+                          </td>
+                        </tr>
+                      ))}
+                      {arCollectionCustomerRows.length === 0 ? (
+                        <tr>
+                          <td className="px-3 py-3 text-center text-slate-500" colSpan={5}>
+                            No client collection data available.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="order-1 rounded-[16px] border border-slate-200 bg-slate-50/60 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
+              DSO (Days Sales Outstanding)
+            </p>
+            <p className="mt-1 text-xs text-slate-500">Current month by DSO group, exactly as existing DSO view.</p>
             <div className="mt-3 overflow-hidden rounded-[12px] border border-slate-200 bg-white">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500">
@@ -2149,7 +3023,7 @@ export function DsoDashboardPanel({
             </div>
           </div>
 
-          <div className="mt-3 flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
+          <div className="order-1 flex items-center gap-1 rounded-full border border-slate-300 bg-white p-1 w-fit">
             {groupTabs.map((groupName) => {
               const active = normalizeLabel(groupName) === normalizeLabel(selectedGroup);
               return (
@@ -2167,7 +3041,7 @@ export function DsoDashboardPanel({
             })}
           </div>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="order-1 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <div>
               <h2 className="text-lg font-semibold tracking-tight text-slate-950">DSO Trend vs Target</h2>
               <p className="mt-1 text-xs text-slate-500">
@@ -2608,7 +3482,12 @@ export function DsoDashboardPanel({
               <p className="text-xs text-slate-600">{formatQuantity(otifSummary.ok)} / {formatQuantity(otifSummary.total)} orders</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <KpiLabel help="Rows where OTIF is false for the selected scope.">Failures</KpiLabel>
+              <KpiLabel help="Total orders for YTD or current month.">Orders</KpiLabel>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQuantity(otifSummary.total)}</p>
+              <p className="text-xs text-slate-600">{otifPeriodMode.toUpperCase()} base</p>
+            </div>
+            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
+              <KpiLabel help="Rows where OTIF is false for the selected scope.">Orders with Failures</KpiLabel>
               <p className="mt-1 text-2xl font-semibold text-rose-700">{formatQuantity(otifSummary.failed)}</p>
               <p className="text-xs text-slate-600">Not OTIF</p>
             </div>
@@ -2618,22 +3497,80 @@ export function DsoDashboardPanel({
               <p className="text-xs text-slate-600">Selected scope</p>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <KpiLabel help="Pieces returned in non-OTIF incidence rows when provided.">Returned Pieces</KpiLabel>
+              <KpiLabel help="Pieces returned in non-OTIF incidence rows when provided.">Rejected Pieces</KpiLabel>
               <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQuantity(otifSummary.returnedPieces)}</p>
               <p className="text-xs text-slate-600">Selected scope</p>
             </div>
-            <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-              <KpiLabel help="Total orders for YTD or current month.">Orders</KpiLabel>
-              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQuantity(otifSummary.total)}</p>
-              <p className="text-xs text-slate-600">{otifPeriodMode.toUpperCase()} base</p>
-            </div>
+            
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <div>
-              <h3 className="text-base font-semibold tracking-tight text-slate-900">Monthly OTIF Trend</h3>
-              <div className="mt-3">
-                <DsoTrendChart rows={otifTrendRows} metricLabel="OTIF %" />
+              <h3 className="text-base font-semibold tracking-tight text-slate-900">
+                Monthly Incidents by Failure Reason
+              </h3>
+              <div className="mt-3 rounded-[16px] border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {otifMonthlyFailureReasonRows.map((row) => (
+                    <span key={row.reason} className="inline-flex max-w-[220px] items-center gap-1">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: otifMonthlyFailureReasonColorMap.get(row.reason) ?? '#64748b' }}
+                      />
+                      <span className="truncate">{row.reason}</span>
+                    </span>
+                  ))}
+                  {otifMonthlyFailureReasonRows.length === 0 ? <span>No monthly incidents.</span> : null}
+                </div>
+                <div className="mt-4 overflow-x-auto pb-1">
+                  <div
+                    className="flex min-h-[260px] items-end gap-3"
+                    style={{ minWidth: `${Math.max(680, otifMonthlyFailureRows.length * 86)}px` }}
+                  >
+                    {otifMonthlyFailureRows.map((row) => {
+                      const barHeightPct =
+                        row.failed > 0 ? Math.max(6, (row.failed / otifMonthlyMaxFailures) * 100) : 2;
+                      return (
+                        <div key={row.periodMonth} className="flex w-20 shrink-0 flex-col items-center gap-2">
+                          <div className="flex h-44 w-full items-end border-b border-slate-200">
+                            <div
+                              className="flex w-full flex-col-reverse overflow-hidden rounded-t-[6px] bg-emerald-100"
+                              style={{ height: `${barHeightPct}%` }}
+                              title={`${formatShortMonthLabel(row.periodMonth)}: ${formatQuantity(row.failed)} incidents`}
+                              aria-label={`${formatShortMonthLabel(row.periodMonth)}: ${formatQuantity(row.failed)} incidents`}
+                            >
+                              {row.reasons.length > 0 ? (
+                                row.reasons.map((reasonRow) => (
+                                  <div
+                                    key={`${row.periodMonth}-${reasonRow.reason}`}
+                                    style={{
+                                      height: `${(reasonRow.count / Math.max(row.failed, 1)) * 100}%`,
+                                      backgroundColor:
+                                        otifMonthlyFailureReasonColorMap.get(reasonRow.reason) ?? '#64748b',
+                                    }}
+                                    title={`${reasonRow.reason}: ${formatQuantity(reasonRow.count)}`}
+                                    aria-label={`${reasonRow.reason}: ${formatQuantity(reasonRow.count)}`}
+                                  />
+                                ))
+                              ) : (
+                                <div className="h-full bg-emerald-100" />
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-center leading-tight">
+                            <p className="text-[11px] font-semibold text-slate-700">
+                              {formatShortMonthLabel(row.periodMonth)}
+                            </p>
+                            <p className="text-[10px] font-semibold text-slate-500">
+                              OTIF {formatPercent(row.otifPct)}
+                            </p>
+                            <p className="text-[10px] text-rose-600">{formatQuantity(row.failed)} incidents</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
             <div className="rounded-[16px] border border-slate-200 bg-slate-50/70 p-3">
@@ -2669,7 +3606,7 @@ export function DsoDashboardPanel({
                 <thead className="bg-slate-50/70 text-[10px] uppercase tracking-[0.12em] text-slate-500">
                   <tr>
                     <th className="px-3 py-2 text-left">Channel</th>
-                    <th className="px-3 py-2 text-right">Rows</th>
+                    <th className="px-3 py-2 text-right">Orders</th>
                     <th className="px-3 py-2 text-right">OTIF</th>
                     <th className="px-3 py-2 text-right">Failures</th>
                   </tr>
