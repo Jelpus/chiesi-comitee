@@ -75,6 +75,23 @@ function monthLabel(value: string) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(date);
 }
 
+function closedMonthKey(row: HumanResourcesOpenVacancyDetailRow) {
+  const closedByDate = monthKey(row.endDate) ?? monthKey(row.hireDate);
+  if (closedByDate) return closedByDate;
+  if (statusBucket(row) !== 'closed') return null;
+  return monthKey(row.searchStartDate);
+}
+
+function isSameMonth(left: string | null, right: string | null) {
+  return Boolean(left && right && left === right);
+}
+
+function isInReportYearToDate(value: string | null, reportMonth: string | null) {
+  if (!value) return false;
+  if (!reportMonth) return true;
+  return value.slice(0, 4) === reportMonth.slice(0, 4) && value <= reportMonth;
+}
+
 function formatShortDate(value: string | null | undefined) {
   const date = parseDateOnly(value);
   if (!date) return 'N/A';
@@ -244,34 +261,72 @@ export function OpenVacancyPanelClient({ data }: { data: HumanResourcesOpenVacan
   );
   const measuredRows = rowsByOpening.filter((row) => row.timeToFillDays != null && row.targetDays != null);
   const overview = {
-    ytdOpened: rowsByOpening.length,
-    openMth: rowsByOpening.filter((row) => monthKey(row.searchStartDate) === reportMonth && statusBucket(row) === 'open').length,
-    closedMth: rowsByOpening.filter((row) => monthKey(row.searchStartDate) === reportMonth && statusBucket(row) === 'closed').length,
-    aboutToEnterMth: rowsByOpening.filter((row) => monthKey(row.searchStartDate) === reportMonth && statusBucket(row) === 'about_to_enter').length,
-    pausedMth: rowsByOpening.filter((row) => monthKey(row.searchStartDate) === reportMonth && statusBucket(row) === 'paused').length,
+    ytdOpened: rowsByOpening.filter((row) => isInReportYearToDate(monthKey(row.searchStartDate), reportMonth)).length,
+    openMth: rowsByOpening.filter((row) => isSameMonth(monthKey(row.searchStartDate), reportMonth) && statusBucket(row) === 'open').length,
+    closedMth: rowsByOpening.filter((row) => isSameMonth(closedMonthKey(row), reportMonth)).length,
+    aboutToEnterMth: rowsByOpening.filter((row) => isSameMonth(monthKey(row.searchStartDate), reportMonth) && statusBucket(row) === 'about_to_enter').length,
+    pausedMth: rowsByOpening.filter((row) => isSameMonth(monthKey(row.searchStartDate), reportMonth) && statusBucket(row) === 'paused').length,
     avgTimeToFillDays: average(rowsByOpening.map((row) => row.timeToFillDays).filter((value): value is number => value != null)),
     targetHitRate: measuredRows.length === 0 ? null : measuredRows.filter((row) => (row.timeToFillDays ?? 0) <= (row.targetDays ?? 0)).length / measuredRows.length,
   };
   const monthlyTrend = useMemo(() => {
-    const groups = new Map<string, HumanResourcesOpenVacancyDetailRow[]>();
+    const groups = new Map<
+      string,
+      {
+        opened: number;
+        open: number;
+        covered: number;
+        paused: number;
+        aboutToEnter: number;
+        timeToFillValues: number[];
+      }
+    >();
+    const ensureGroup = (key: string) => {
+      const current = groups.get(key) ?? {
+        opened: 0,
+        open: 0,
+        covered: 0,
+        paused: 0,
+        aboutToEnter: 0,
+        timeToFillValues: [],
+      };
+      groups.set(key, current);
+      return current;
+    };
+
     for (const row of rowsByOpening) {
+      const status = statusBucket(row);
+      const closureKey = closedMonthKey(row);
+
+      if (isInReportYearToDate(closureKey, reportMonth)) {
+        const group = ensureGroup(closureKey!);
+        group.covered += 1;
+        if (row.timeToFillDays != null) group.timeToFillValues.push(row.timeToFillDays);
+      }
+
       const key = monthKey(row.searchStartDate);
-      if (!key) continue;
-      groups.set(key, [...(groups.get(key) ?? []), row]);
+      if (!key || !isInReportYearToDate(key, reportMonth) || status === 'closed') continue;
+      const group = ensureGroup(key);
+      group.opened += 1;
+      if (status === 'open') group.open += 1;
+      if (status === 'paused') group.paused += 1;
+      if (status === 'about_to_enter') group.aboutToEnter += 1;
     }
+
     return Array.from(groups.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, group]) => ({
         key,
         label: monthLabel(key),
-        opened: group.length,
-        open: group.filter((row) => statusBucket(row) === 'open').length,
-        covered: group.filter((row) => statusBucket(row) === 'closed').length,
-        paused: group.filter((row) => statusBucket(row) === 'paused').length,
-        aboutToEnter: group.filter((row) => statusBucket(row) === 'about_to_enter').length,
-        avgTimeToFillDays: average(group.map((row) => row.timeToFillDays).filter((value): value is number => value != null)),
-      }));
-  }, [rowsByOpening]);
+        opened: group.opened,
+        open: group.open,
+        covered: group.covered,
+        paused: group.paused,
+        aboutToEnter: group.aboutToEnter,
+        avgTimeToFillDays: average(group.timeToFillValues),
+      }))
+      .filter((row) => row.open > 0 || row.covered > 0 || row.paused > 0 || row.aboutToEnter > 0);
+  }, [reportMonth, rowsByOpening]);
   const monthlyChartRows = useMemo(
     () =>
       monthlyTrend.map((row) => ({
@@ -317,7 +372,7 @@ export function OpenVacancyPanelClient({ data }: { data: HumanResourcesOpenVacan
             <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(overview.openMth)}</p>
           </div>
           <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-            <KpiLabel help="Positions with status Closed in the current report month.">Closed MTH</KpiLabel>
+            <KpiLabel help="Positions closed in the current report month using Fecha fin or Fecha ingreso.">Closed MTH</KpiLabel>
             <p className="mt-1 text-xl font-semibold text-slate-900">{formatInt(overview.closedMth)}</p>
           </div>
           <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">

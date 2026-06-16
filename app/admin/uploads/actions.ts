@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { once } from 'events';
 import { createInterface } from 'readline';
 import ExcelJS from 'exceljs';
+import type { File as GcsFile } from '@google-cloud/storage';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
 import { detectExcelHeaderRow, inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
@@ -22,6 +23,8 @@ type ParsedUploadRow = {
     rowNumber: number;
     payload: Record<string, unknown>;
 };
+
+const CSV_ENCODING_SAMPLE_BYTES = 64 * 1024;
 
 function isCsvFileName(fileName: string) {
     return /\.csv$/i.test(fileName.trim());
@@ -88,6 +91,21 @@ function normalizeCsvCellForRaw(value: unknown): unknown {
         return value;
     }
     return String(value);
+}
+
+async function detectCsvEncodingFromGcsFile(file: GcsFile): Promise<BufferEncoding> {
+    const chunks: Buffer[] = [];
+    const stream = file.createReadStream({ start: 0, end: CSV_ENCODING_SAMPLE_BYTES - 1 });
+
+    for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    const sample = Buffer.concat(chunks);
+    if (sample.length === 0) return 'utf8';
+
+    const utf8Text = sample.toString('utf8');
+    return utf8Text.includes('\uFFFD') ? 'latin1' : 'utf8';
 }
 
 function normalizeExcelJsHeaderForRaw(header: unknown, index: number) {
@@ -756,18 +774,20 @@ function validateSampleRows(moduleCode: string, rows: ParsedUploadRow[]) {
         moduleCode === 'business_excellence_interacciones' ||
         moduleCode === 'interacciones'
     ) {
-        const hasInteractionId = sampleRows.some((row) =>
-            String(getRowValue(row.payload, ['Interaction: Id.', 'Interaction: Call Name']) ?? '').trim().length > 0,
-        );
-        const hasOnekey = sampleRows.some((row) =>
-            String(getRowValue(row.payload, ['Cuenta: Código OneKey', 'Cuenta: Codigo OneKey']) ?? '').trim().length > 0,
-        );
-        const hasTerritorio = sampleRows.some((row) =>
-            String(getRowValue(row.payload, ['Territorio', 'Territory']) ?? '').trim().length > 0,
-        );
-        const hasFecha = sampleRows.some((row) =>
-            String(getRowValue(row.payload, ['Fecha y Hora', 'Interaction Date']) ?? '').trim().length > 0,
-        );
+        const hasInteractionId = hasTextAlias(sampleRows, [
+            'Interaction: Id.',
+            'Interaction Id',
+            'Interaction: Call Name',
+            'Call Name',
+        ]);
+        const hasOnekey = hasTextAlias(sampleRows, [
+            'Cuenta: Código OneKey',
+            'Cuenta: Codigo OneKey',
+            'Codigo OneKey',
+            'Onekey ID',
+        ]);
+        const hasTerritorio = hasTextAlias(sampleRows, ['Territorio', 'Territory']);
+        const hasFecha = hasTextAlias(sampleRows, ['Fecha y Hora', 'Interaction Date', 'Fecha']);
 
         if (!hasInteractionId || !hasOnekey || !hasTerritorio || !hasFecha) {
             return {
@@ -1885,7 +1905,9 @@ async function writeCsvRawRowsNdjsonToGcsFromGcs(params: {
     const ndjsonObjectPath = `${objectPath}.raw_rows.ndjson`;
     const sourceFile = bucket.file(objectPath);
     const targetFile = bucket.file(ndjsonObjectPath);
+    const csvEncoding = await detectCsvEncodingFromGcsFile(sourceFile);
     const readStream = sourceFile.createReadStream();
+    readStream.setEncoding(csvEncoding);
     const lineReader = createInterface({
         input: readStream,
         crlfDelay: Infinity,

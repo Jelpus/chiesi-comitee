@@ -112,6 +112,34 @@ function getPrivateSellOutFilters(params: SearchParams): BusinessExcellencePriva
 function modeHref(mode: Exclude<BusinessExcellenceViewMode, 'landing'>, params: SearchParams) {
   const query = new URLSearchParams();
   if (params.version) query.set('version', params.version);
+  if (params.pmmPeriodMonth) query.set('pmmPeriodMonth', params.pmmPeriodMonth);
+  if (params.pmmMarketGroup) query.set('pmmMarketGroup', params.pmmMarketGroup);
+  if (params.pmmManager) query.set('pmmManager', params.pmmManager);
+  if (params.pmmTerritory) query.set('pmmTerritory', params.pmmTerritory);
+  if (
+    params.dashboardTab === 'market' ||
+    params.dashboardTab === 'private' ||
+    params.dashboardTab === 'public' ||
+    params.dashboardTab === 'fieldforce'
+  ) {
+    query.set('dashboardTab', params.dashboardTab);
+  }
+  if (params.publicView === 'mth' || params.publicView === 'ytd') query.set('publicView', params.publicView);
+  if (params.marketView === 'mth' || params.marketView === 'ytd') query.set('marketView', params.marketView);
+  if (params.marketChannel === 'private' || params.marketChannel === 'public' || params.marketChannel === 'total') {
+    query.set('marketChannel', params.marketChannel);
+  }
+  if (params.fieldForceView === 'mth' || params.fieldForceView === 'ytd') query.set('fieldForceView', params.fieldForceView);
+  if (params.fieldForceBu === 'air' || params.fieldForceBu === 'care' || params.fieldForceBu === 'total') {
+    query.set('fieldForceBu', params.fieldForceBu);
+  }
+  if (params.fieldForceCoverage === 'adjusted' || params.fieldForceCoverage === 'base') {
+    query.set('fieldForceCoverage', params.fieldForceCoverage);
+  }
+  if (params.fieldForceDetailMode === 'territory' || params.fieldForceDetailMode === 'district') {
+    query.set('fieldForceDetailMode', params.fieldForceDetailMode);
+  }
+  if (params.fieldForcePotential) query.set('fieldForcePotential', params.fieldForcePotential);
   const queryText = query.toString();
   return `/executive/business-excellence/${mode}${queryText ? `?${queryText}` : ''}`;
 }
@@ -3096,14 +3124,11 @@ export async function BusinessExcellenceView({
       activeDashboardTab === 'public' ||
       (activeDashboardTab === 'market' && activeMarketChannel !== 'private')
     ));
-  const needsPublicMarketOverview =
-    needsFullPublicMarketData ||
-    (viewMode === 'dashboard' && activeDashboardTab === 'market' && activeMarketChannel !== 'private');
   const needsBusinessUnitChannelRows =
     viewMode === 'insights' ||
     (viewMode === 'dashboard' && activeDashboardTab === 'market');
   const [publicMarketOverview, publicMarketData, businessUnitChannelRows] = await Promise.all([
-    needsPublicMarketOverview ? getCachedPublicMarketOverview(selectedReportingVersionId) : null,
+    getCachedPublicMarketOverview(selectedReportingVersionId),
     needsFullPublicMarketData ? getPublicMarketData(selectedReportingVersionId) : null,
     needsBusinessUnitChannelRows ? getCachedBusinessUnitChannelRows(selectedReportingVersionId) : Promise.resolve([]),
   ]);
