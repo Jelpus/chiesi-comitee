@@ -65,8 +65,8 @@ export type ReminderSummaryEmailInput = {
   sentCount: number;
 };
 
-const ALWAYS_CC = 'j.arevalo@chiesi.com';
-const SUMMARY_TO = 'j.arevalo@chiesi.com';
+const ALWAYS_CC = 'r.garciac@chiesi.com';
+const SUMMARY_TO = 'r.garciac@chiesi.com';
 const SUMMARY_CC = 'guillermo@jelpus.com';
 const POWER_BI_VALIDATION_URL =
   'https://app.powerbi.com/reportEmbed?reportId=6fb0a335-e28d-4ce7-b119-99aa067a2912&autoAuth=true&ctid=80d1b489-5ad6-45c2-b757-0ef89ea02c5b';
@@ -402,7 +402,7 @@ export async function sendReminderSummaryEmail(input: ReminderSummaryEmailInput)
                 <tr>
                   <td style="padding:28px;">
                     <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
-                      Jose Arevalo y Guillermo Rojas, se enviaron <strong>${input.sentCount}</strong> recordatorio(s) de informacion pendiente para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
+                      Equipo, se enviaron <strong>${input.sentCount}</strong> recordatorio(s) de informacion pendiente para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
                     </p>
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;border-collapse:separate;border-spacing:0;">
                       <thead>
@@ -544,9 +544,9 @@ function renderFormRecipientRows(recipients: FormRequestInfoRecipient[]) {
 export async function sendRequestInfoSummaryEmail(input: RequestInfoSummaryEmailInput) {
   const intro =
     input.sentCount > 0
-      ? `Jose Arevalo y Guillermo Rojas, el dia de hoy se comunico a <strong>${input.sentCount}</strong> lista(s) de correo que ha iniciado la ventana de actualizacion para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
+      ? `Equipo, el dia de hoy se comunico a <strong>${input.sentCount}</strong> lista(s) de correo que ha iniciado la ventana de actualizacion para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.
                       ${input.formSentCount ? `Tambien se envio solicitud a <strong>${input.formSentCount}</strong> responsable(s) de formularios.` : ''}`
-      : `Jose Arevalo y Guillermo Rojas, el dia de hoy se envio solicitud a <strong>${input.formSentCount ?? 0}</strong> responsable(s) de formularios para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.`;
+      : `Equipo, el dia de hoy se envio solicitud a <strong>${input.formSentCount ?? 0}</strong> responsable(s) de formularios para el periodo <strong>${escapeHtml(input.periodLabel)}</strong>.`;
 
   const html = `
     <!doctype html>

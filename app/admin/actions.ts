@@ -139,7 +139,7 @@ export async function requestFormsInfoAction(formData: FormData) {
 
   const formResponsibles = await getActiveFormResponsibles();
   const today = asDateOnly(new Date());
-  const windowEnd = addBusinessDays(today, 3);
+  const windowEnd = addBusinessDays(today, 5);
   const periodLabel = formatPeriodLabel(periodMonth);
   const windowStartLabel = formatSpanishDate(today);
   const windowEndLabel = formatSpanishDate(windowEnd);

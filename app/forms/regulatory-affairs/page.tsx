@@ -86,7 +86,7 @@ export default async function RegulatoryAffairsFormPage({ searchParams }: Regula
           <p className="text-xs uppercase tracking-[0.14em] text-amber-800">Targets Governance</p>
           <p className="mt-1 text-sm text-slate-700">
             Objectives are managed centrally and cannot be edited in forms. To request changes, contact{' '}
-            <span className="font-semibold">j.arevalo@chiesi.com</span>.
+            <span className="font-semibold">r.garciac@chiesi.com</span>.
           </p>
         </article>
         <RegulatoryAffairsForm

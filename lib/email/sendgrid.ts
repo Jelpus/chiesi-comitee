@@ -17,9 +17,28 @@ function getSenderEmail() {
   return process.env.SENGIRD_SENDER_EMAIL?.trim() || process.env.SENDGRID_SENDER_EMAIL?.trim() || '';
 }
 
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function uniqueCcRecipients(to: string, cc: string[] | undefined) {
+  const seen = new Set([normalizeEmail(to)]);
+  return (cc ?? []).reduce<string[]>((recipients, email) => {
+    const trimmedEmail = email.trim();
+    const normalizedEmail = normalizeEmail(trimmedEmail);
+
+    if (!trimmedEmail || seen.has(normalizedEmail)) return recipients;
+
+    seen.add(normalizedEmail);
+    recipients.push(trimmedEmail);
+    return recipients;
+  }, []);
+}
+
 export async function sendSendGridEmail(message: SendGridMessage) {
   const apiKey = getApiKey();
   const senderEmail = getSenderEmail();
+  const ccRecipients = uniqueCcRecipients(message.to, message.cc);
 
   if (!apiKey) {
     throw new Error('Missing SendGrid API key. Set SENGRID_API_KEY or SENDGRID_API_KEY.');
@@ -39,7 +58,7 @@ export async function sendSendGridEmail(message: SendGridMessage) {
       personalizations: [
         {
           to: [{ email: message.to }],
-          cc: (message.cc ?? []).map((email) => ({ email })),
+          ...(ccRecipients.length > 0 ? { cc: ccRecipients.map((email) => ({ email })) } : {}),
           subject: message.subject,
         },
       ],

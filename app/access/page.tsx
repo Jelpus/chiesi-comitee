@@ -91,8 +91,8 @@ export default function AccessPage() {
         </p>
         <p className="mt-3 max-w-4xl text-base leading-7 text-slate-600 md:text-lg">
           If you require access, please contact{' '}
-          <a href="mailto:j.arevalo@chiesi.com" className="font-semibold text-slate-900 underline decoration-slate-300 underline-offset-2">
-            j.arevalo@chiesi.com
+          <a href="mailto:r.garciac@chiesi.com" className="font-semibold text-slate-900 underline decoration-slate-300 underline-offset-2">
+            r.garciac@chiesi.com
           </a>
           .
         </p>
