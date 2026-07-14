@@ -8,6 +8,9 @@ ALTER TABLE `chiesi-committee.chiesi_committee_core.dim_module`
 ADD COLUMN IF NOT EXISTS module_type STRING;
 
 ALTER TABLE `chiesi-committee.chiesi_committee_core.dim_module`
+ADD COLUMN IF NOT EXISTS source_period_offset_months INT64;
+
+ALTER TABLE `chiesi-committee.chiesi_committee_core.dim_module`
 ADD COLUMN IF NOT EXISTS owner_name STRING;
 
 ALTER TABLE `chiesi-committee.chiesi_committee_core.dim_module`
@@ -94,3 +97,16 @@ SET is_active = FALSE,
     updated_at = CURRENT_TIMESTAMP(),
     updated_by = 'migration_005_dim_module_admin'
 WHERE module_code = 'opex_master_catalog';
+
+-- Period policy used by Prepare: M = 0, M-1 = 1, M-2 = 2.
+UPDATE `chiesi-committee.chiesi_committee_core.dim_module`
+SET source_period_offset_months = CASE
+      WHEN module_code IN (
+        'business_excellence_ddd',
+        'business_excellence_budget_sell_out'
+      ) THEN 1
+      ELSE 0
+    END,
+    updated_at = CURRENT_TIMESTAMP(),
+    updated_by = 'migration_005_dim_module_admin'
+WHERE source_period_offset_months IS NULL;

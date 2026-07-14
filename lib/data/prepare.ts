@@ -1,6 +1,7 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import type { ModuleAreaCode, ModuleRow } from '@/lib/data/modules';
+import { normalizeSourcePeriodOffset } from '@/lib/uploads/source-period-policy';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -160,6 +161,7 @@ function toModuleRow(row: Record<string, unknown>): ModuleRow {
     moduleName: String(row.module_name ?? ''),
     areaCode: String(row.area_code ?? 'other') as ModuleAreaCode,
     moduleType: row.module_type == null ? null : String(row.module_type),
+    sourcePeriodOffsetMonths: normalizeSourcePeriodOffset(row.source_period_offset_months),
     ownerName: row.owner_name == null ? null : String(row.owner_name),
     emailOwner: row.email_owner == null ? null : String(row.email_owner),
     displayOrder: Number(row.display_order ?? 999),
@@ -283,6 +285,7 @@ export async function getPrepareModules(areaCode?: string): Promise<ModuleRow[]>
         module_name,
         COALESCE(area_code, 'other') AS area_code,
         module_type,
+        COALESCE(source_period_offset_months, 0) AS source_period_offset_months,
         owner_name,
         email_owner,
         COALESCE(display_order, 999) AS display_order,

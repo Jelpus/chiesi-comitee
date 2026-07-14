@@ -19,6 +19,7 @@ export async function saveModule(formData: FormData) {
     moduleName: String(formData.get('moduleName') ?? ''),
     areaCode: String(formData.get('areaCode') ?? ''),
     moduleType: String(formData.get('moduleType') ?? ''),
+    sourcePeriodOffsetMonths: Number(formData.get('sourcePeriodOffsetMonths') ?? 0),
     ownerName: String(formData.get('ownerName') ?? ''),
     emailOwner: String(formData.get('emailOwner') ?? ''),
     displayOrder: Number.isFinite(displayOrder) ? displayOrder : undefined,

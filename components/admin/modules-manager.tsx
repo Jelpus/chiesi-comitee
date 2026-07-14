@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { disableModule, enableModule, saveModule, syncDefaultModules } from '@/app/admin/modules/actions';
 import type { ModuleRow } from '@/lib/data/modules';
+import { SOURCE_PERIOD_OFFSETS, sourcePeriodPolicyLabel } from '@/lib/uploads/source-period-policy';
 
 type ModulesManagerProps = {
   rows: ModuleRow[];
@@ -35,6 +36,7 @@ type ModuleFormState = {
   moduleName: string;
   areaCode: string;
   moduleType: string;
+  sourcePeriodOffsetMonths: string;
   ownerName: string;
   emailOwner: string;
   displayOrder: string;
@@ -59,6 +61,7 @@ const emptyForm: ModuleFormState = {
   moduleName: '',
   areaCode: 'other',
   moduleType: '',
+  sourcePeriodOffsetMonths: '0',
   ownerName: '',
   emailOwner: '',
   displayOrder: '',
@@ -76,6 +79,7 @@ function rowToForm(row: ModuleRow): ModuleFormState {
     moduleName: row.moduleName,
     areaCode: row.areaCode ?? 'other',
     moduleType: row.moduleType ?? '',
+    sourcePeriodOffsetMonths: String(row.sourcePeriodOffsetMonths),
     ownerName: row.ownerName ?? '',
     emailOwner: row.emailOwner ?? '',
     displayOrder: row.displayOrder === null || row.displayOrder === undefined ? '' : String(row.displayOrder),
@@ -91,6 +95,7 @@ function buildFormData(form: ModuleFormState) {
   formData.set('moduleName', form.moduleName.trim());
   formData.set('areaCode', form.areaCode);
   formData.set('moduleType', form.moduleType.trim());
+  formData.set('sourcePeriodOffsetMonths', form.sourcePeriodOffsetMonths);
   formData.set('ownerName', form.ownerName.trim());
   formData.set('emailOwner', form.emailOwner.trim());
   formData.set('displayOrder', form.displayOrder.trim());
@@ -103,22 +108,6 @@ function buildFormData(form: ModuleFormState) {
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
-}
-
-function ModuleStatus({ isActive }: { isActive: boolean }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em]',
-        isActive
-          ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border border-slate-200 bg-slate-100 text-slate-600',
-      )}
-    >
-      <span className={cn('h-1.5 w-1.5 rounded-full', isActive ? 'bg-emerald-500' : 'bg-slate-400')} />
-      {isActive ? 'Active' : 'Inactive'}
-    </span>
-  );
 }
 
 function FieldLabel({ children, required = false }: { children: ReactNode; required?: boolean }) {
@@ -299,6 +288,24 @@ function ModuleModal({
                 placeholder="source / catalog / reusable"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
               />
+            </div>
+
+            <div className="space-y-2">
+              <FieldLabel>Periodo esperado del archivo</FieldLabel>
+              <select
+                value={form.sourcePeriodOffsetMonths}
+                onChange={(event) => onChange({ sourcePeriodOffsetMonths: event.target.value })}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-950 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+              >
+                {SOURCE_PERIOD_OFFSETS.map((offset) => (
+                  <option key={offset} value={offset}>
+                    {sourcePeriodPolicyLabel(offset)} · {offset === 0 ? 'mismo mes de la versión' : `${offset} mes${offset === 1 ? '' : 'es'} antes`}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs leading-5 text-slate-500">
+                Prepare calculará y bloqueará el último mes esperado según esta regla.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -576,10 +583,8 @@ export function ModulesManager({ rows }: ModulesManagerProps) {
                     <tr className="text-left text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                       <th className="px-5 py-4">Module</th>
                       <th className="px-5 py-4">Area</th>
-                      <th className="px-5 py-4">Type</th>
+                      <th className="px-5 py-4">Periodo</th>
                       <th className="px-5 py-4">Owner</th>
-                      <th className="px-5 py-4">Status</th>
-                      <th className="px-5 py-4">Order</th>
                       <th className="px-5 py-4">Notes</th>
                       <th className="px-5 py-4 text-right">Actions</th>
                     </tr>
@@ -596,8 +601,10 @@ export function ModulesManager({ rows }: ModulesManagerProps) {
                             {getAreaLabel(row.areaCode)}
                           </span>
                         </td>
-                        <td className="px-5 py-4 align-top text-sm font-semibold text-slate-700">
-                          {row.moduleType || <span className="text-slate-400">No type</span>}
+                        <td className="px-5 py-4 align-top">
+                          <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-black text-blue-800">
+                            {sourcePeriodPolicyLabel(row.sourcePeriodOffsetMonths)}
+                          </span>
                         </td>
                         <td className="px-5 py-4 align-top">
                           <p className="font-semibold text-slate-800">{row.ownerName || 'Unassigned'}</p>
@@ -613,10 +620,6 @@ export function ModulesManager({ rows }: ModulesManagerProps) {
                             <p className="mt-1 text-xs text-slate-400">No email</p>
                           )}
                         </td>
-                        <td className="px-5 py-4 align-top">
-                          <ModuleStatus isActive={row.isActive} />
-                        </td>
-                        <td className="px-5 py-4 align-top font-semibold text-slate-700">{row.displayOrder ?? '-'}</td>
                         <td className="max-w-[260px] px-5 py-4 align-top text-sm leading-6 text-slate-500">
                           {row.notes || <span className="text-slate-400">No notes</span>}
                         </td>
@@ -651,7 +654,7 @@ export function ModulesManager({ rows }: ModulesManagerProps) {
 
                     {filteredRows.length === 0 ? (
                       <tr>
-                        <td className="px-5 py-12 text-center" colSpan={8}>
+                        <td className="px-5 py-12 text-center" colSpan={6}>
                           <p className="font-bold text-slate-950">No results match your filters</p>
                           <p className="mt-1 text-sm text-slate-500">Try changing the search term, area or status filter.</p>
                         </td>

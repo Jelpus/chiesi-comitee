@@ -2,9 +2,10 @@ import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getActiveModuleOptions } from '@/lib/data/modules';
 import type { ModuleAreaCode } from '@/lib/data/modules';
+import type { SourcePeriodOffsetMonths } from '@/lib/uploads/source-period-policy';
 
 export type UploadFormOptions = {
-  modules: { value: string; label: string; areaCode: ModuleAreaCode }[];
+  modules: { value: string; label: string; areaCode: ModuleAreaCode; sourcePeriodOffsetMonths: SourcePeriodOffsetMonths }[];
   versions: { value: string; label: string; periodMonth: string }[];
 };
 

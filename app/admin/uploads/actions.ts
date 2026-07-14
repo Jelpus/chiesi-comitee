@@ -9,9 +9,11 @@ import ExcelJS from 'exceljs';
 import type { File as GcsFile } from '@google-cloud/storage';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { getStorageClient, getUploadsBucketName } from '@/lib/storage/client';
-import { detectExcelHeaderRow, inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
+import { detectExcelHeaderRow, detectExcelWorkbookPeriodMonths, inspectExcelWorkbook, iterateExcelRows } from '@/lib/uploads/parse-excel';
 import { normalizeUpload } from '@/lib/uploads/normalize-upload';
 import { publishUploadToMart } from '@/lib/uploads/publish-upload';
+import { assertWorkbookSheets, getWorkbookPolicy, inspectWorkbookSheets } from '@/lib/uploads/workbook-policy';
+import { expectedSourceAsOfMonth, normalizeSourcePeriodOffset, sourcePeriodPolicyLabel } from '@/lib/uploads/source-period-policy';
 
 type UploadRowParam = {
     rowNumber: number;
@@ -32,6 +34,28 @@ function isCsvFileName(fileName: string) {
 
 function isXlsxPath(fileName: string) {
     return /\.xlsx$/i.test(fileName.trim());
+}
+
+async function assertUploadSourcePeriodPolicy(moduleCode: string, periodMonth: string, sourceAsOfMonth: string) {
+    const client = getBigQueryClient();
+    const [rows] = await client.query({
+        query: `
+          SELECT COALESCE(source_period_offset_months, 0) AS source_period_offset_months
+          FROM \`chiesi-committee.chiesi_committee_core.dim_module\`
+          WHERE module_code = @moduleCode
+          LIMIT 1
+        `,
+        params: { moduleCode },
+    });
+    const row = (rows as Array<Record<string, unknown>>)[0];
+    if (!row) throw new Error(`No existe configuración para el módulo ${moduleCode}.`);
+    const offset = normalizeSourcePeriodOffset(row.source_period_offset_months);
+    const expected = expectedSourceAsOfMonth(periodMonth, offset);
+    if (expected && sourceAsOfMonth !== expected) {
+        throw new Error(
+            `Periodo de archivo incorrecto. La regla ${sourcePeriodPolicyLabel(offset)} exige ${expected} para la versión ${periodMonth}, pero se recibió ${sourceAsOfMonth}.`,
+        );
+    }
 }
 
 function detectCsvDelimiterFromLine(line: string) {
@@ -136,18 +160,8 @@ function normalizeExcelJsCellForRaw(value: unknown): unknown {
     return String(value);
 }
 
-function normalizeWorkbookSheetName(value: string) {
-    return value
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
-}
-
 const LEXICOMP_MODULE_CODE = 'business_excellence_recompra_lexicomp';
 const LEXICOMP_REQUIRED_HEADERS = ['DISTRIBUIDOR', 'ANO', 'MES', 'Piezas Vendidas'];
-const LEXICOMP_DETAIL_SHEET = 'DETALLE DESPLAZAMIENTO';
 const OPEN_VACANCY_MODULE_CODE = 'human_resources_open_vacancy';
 const OPEN_VACANCY_HEADER_DETECTION_HEADERS = ['ESTATUS', 'AREA', 'MANAGER'];
 
@@ -195,62 +209,6 @@ function isCommercialOperationsGovernmentContractProgressModule(moduleCode: stri
         moduleCode === 'contract_progress' ||
         moduleCode === 'pcfp'
     );
-}
-
-function findLexicompDetailSheet(sheetNames: string[]) {
-    return sheetNames.find((sheetName) => sheetName.trim().toUpperCase() === LEXICOMP_DETAIL_SHEET) ?? null;
-}
-
-function resolveOpexRequiredSheets(sheetNames: string[]) {
-    const normalizedSheets = sheetNames.map((sheetName) => ({
-        original: sheetName,
-        normalized: normalizeWorkbookSheetName(sheetName),
-    }));
-
-    const findSheet = (aliases: string[]) =>
-        normalizedSheets.find((item) => aliases.some((alias) => item.normalized.includes(alias)))?.original ?? null;
-
-    const antSheet = findSheet(['ant', 'previous', 'prev', 'prior']);
-    const budgetSheet = findSheet(['budget', 'presupuesto', 'plan']);
-    const currentSheet = findSheet(['current', 'actual', 'real']);
-
-    const resolved = [antSheet, budgetSheet, currentSheet] as const;
-    const missing = [
-        antSheet ? null : 'ant',
-        budgetSheet ? null : 'budget',
-        currentSheet ? null : 'current',
-    ].filter((value): value is string => value !== null);
-
-    if (missing.length > 0) {
-        throw new Error(`OPEX by CC file is missing required sheets: ${missing.join(', ')}.`);
-    }
-    return resolved as [string, string, string];
-}
-
-function resolveCommercialOperationsArRequiredSheets(sheetNames: string[]) {
-    const normalizedSheets = sheetNames.map((sheetName) => ({
-        original: sheetName,
-        normalized: normalizeWorkbookSheetName(sheetName),
-    }));
-
-    const findExactSheet = (aliases: string[]) =>
-        normalizedSheets.find((item) => aliases.some((alias) => item.normalized === alias))?.original ?? null;
-
-    const agingSheet = findExactSheet(['aging']);
-    const forecastSheet = findExactSheet(['forecast']);
-    const cobranzaSheet = findExactSheet(['cobranza']);
-
-    const missing = [
-        agingSheet ? null : 'Aging',
-        forecastSheet ? null : 'Forecast',
-        cobranzaSheet ? null : 'Cobranza',
-    ].filter((value): value is string => value !== null);
-
-    if (missing.length > 0) {
-        throw new Error(`Commercial Operations AR file is missing required sheets: ${missing.join(', ')}.`);
-    }
-
-    return [agingSheet, forecastSheet, cobranzaSheet] as [string, string, string];
 }
 
 let ensureUploadsAsOfColumnPromise: Promise<void> | null = null;
@@ -2303,7 +2261,7 @@ async function resolveEffectiveSheetName(context: UploadProcessContext) {
     const { bucketName, objectPath } = parseGcsPath(context.storagePath);
     const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
     const sheetNames = inspectExcelWorkbook(fileBuffer);
-    return findLexicompDetailSheet(sheetNames) ?? context.selectedSheetName;
+    return inspectWorkbookSheets(context.moduleCode, sheetNames).resolvedSheetNames[0] ?? context.selectedSheetName;
 }
 
 export async function createUploadRecord(formData: FormData) {
@@ -2343,6 +2301,7 @@ export async function createUploadRecord(formData: FormData) {
     if (!moduleCode || !reportingVersionId || !periodMonth) {
         throw new Error('Missing required form fields.');
     }
+    await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth || periodMonth);
 
     const uploadId = randomUUID();
 
@@ -2354,8 +2313,14 @@ export async function createUploadRecord(formData: FormData) {
     const storagePath = `gs://${bucketName}/${storageObjectPath}`;
     const fileBuffer = Buffer.from(await file.arrayBuffer());
     const sourceSheets = isCsvFileName(file.name) ? ['CSV'] : inspectExcelWorkbook(fileBuffer);
+    if (isCsvFileName(file.name) && getWorkbookPolicy(moduleCode).mode !== 'single_user_selected') {
+      throw new Error(`El módulo ${moduleCode} requiere un libro Excel con hojas específicas; no admite CSV.`);
+    }
+    const workbookInspection = isCsvFileName(file.name) ? null : assertWorkbookSheets(moduleCode, sourceSheets);
     const effectiveSelectedSheetName =
-      selectedSheetName && sourceSheets.includes(selectedSheetName)
+      workbookInspection && workbookInspection.policy.mode !== 'single_user_selected'
+        ? workbookInspection.resolvedSheetNames[0] ?? sourceSheets[0] ?? 'UNKNOWN'
+        : selectedSheetName && sourceSheets.includes(selectedSheetName)
         ? selectedSheetName
         : sourceSheets[0] ?? 'UNKNOWN';
 
@@ -2458,6 +2423,7 @@ export async function createUploadRecordFromStorage(formData: FormData) {
   if (!moduleCode || !reportingVersionId || !periodMonth) {
     throw new Error('Missing required form fields.');
   }
+  await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth || periodMonth);
 
   const bucketName = getUploadsBucketName();
   const parsedStoragePath = parseGcsPath(storagePath);
@@ -2490,8 +2456,14 @@ export async function createUploadRecordFromStorage(formData: FormData) {
     sourceSheets = isCsvFileName(sourceFileName) ? ['CSV'] : [selectedSheetName || 'UNKNOWN'];
   }
 
+  if (isCsvFileName(sourceFileName) && getWorkbookPolicy(moduleCode).mode !== 'single_user_selected') {
+    throw new Error(`El módulo ${moduleCode} requiere un libro Excel con hojas específicas; no admite CSV.`);
+  }
+  const workbookInspection = isCsvFileName(sourceFileName) ? null : assertWorkbookSheets(moduleCode, sourceSheets);
   const effectiveSelectedSheetName =
-    selectedSheetName && sourceSheets.includes(selectedSheetName)
+    workbookInspection && workbookInspection.policy.mode !== 'single_user_selected'
+      ? workbookInspection.resolvedSheetNames[0] ?? sourceSheets[0] ?? 'UNKNOWN'
+      : selectedSheetName && sourceSheets.includes(selectedSheetName)
       ? selectedSheetName
       : sourceSheets[0] ?? 'UNKNOWN';
 
@@ -2539,6 +2511,7 @@ export async function inspectUploadWorkbook(formData: FormData) {
       sheetNames: ['CSV'],
       suggestedSheetName: 'CSV',
       suggestedHeaderRow: 1,
+      detectedPeriodMonths: [],
     };
   }
 
@@ -2548,10 +2521,13 @@ export async function inspectUploadWorkbook(formData: FormData) {
     throw new Error('No sheets/tabs were detected in the uploaded file.');
   }
 
-  let suggestedSheetName = sheetNames[0] ?? '';
+  const workbookInspection = inspectWorkbookSheets(moduleCode, sheetNames);
+  let suggestedSheetName = workbookInspection.policy.mode === 'single_user_selected'
+    ? sheetNames[0] ?? ''
+    : workbookInspection.resolvedSheetNames[0] ?? sheetNames[0] ?? '';
   let suggestedHeaderRow = 1;
   if (moduleCode === LEXICOMP_MODULE_CODE) {
-    const detailSheetName = findLexicompDetailSheet(sheetNames);
+    const detailSheetName = inspectWorkbookSheets(moduleCode, sheetNames).resolvedSheetNames[0] ?? null;
     suggestedSheetName = detailSheetName ?? suggestedSheetName;
     suggestedHeaderRow =
       detectExcelHeaderRow(fileBuffer, {
@@ -2588,7 +2564,7 @@ export async function inspectUploadWorkbook(formData: FormData) {
         : '';
       const lastHeaderRow = Number(latest?.selected_header_row ?? 1);
 
-      if (lastSheet && sheetNames.includes(lastSheet)) {
+      if (workbookInspection.policy.mode === 'single_user_selected' && lastSheet && sheetNames.includes(lastSheet)) {
         suggestedSheetName = lastSheet;
         suggestedHeaderRow =
           Number.isFinite(lastHeaderRow) && lastHeaderRow > 0
@@ -2621,6 +2597,7 @@ export async function inspectUploadWorkbook(formData: FormData) {
     sheetNames,
     suggestedSheetName,
     suggestedHeaderRow,
+    detectedPeriodMonths: detectExcelWorkbookPeriodMonths(fileBuffer, moduleCode),
   };
 }
 
@@ -2657,6 +2634,9 @@ export async function processUpload(uploadId: string) {
         await setUploadStatus(uploadId, 'parsing');
 
         if (context.selectedSheetName.toUpperCase() === 'CSV') {
+            if (getWorkbookPolicy(moduleCode).mode !== 'single_user_selected') {
+                throw new Error(`El módulo ${moduleCode} requiere un libro Excel con hojas específicas; no admite CSV.`);
+            }
             await setUploadStatus(uploadId, 'loading_raw');
             await clearUploadRawRows(uploadId);
             const tempFile = await writeCsvRawRowsNdjsonToGcsFromGcs({
@@ -2705,7 +2685,7 @@ export async function processUpload(uploadId: string) {
             const { bucketName, objectPath } = parseGcsPath(context.storagePath);
             const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
             const workbookSheets = inspectExcelWorkbook(fileBuffer);
-            const requiredSheets = resolveCommercialOperationsArRequiredSheets(workbookSheets);
+            const requiredSheets = assertWorkbookSheets(moduleCode, workbookSheets).resolvedSheetNames;
             tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
                 uploadId,
                 moduleCode,
@@ -2719,7 +2699,7 @@ export async function processUpload(uploadId: string) {
             const { bucketName, objectPath } = parseGcsPath(context.storagePath);
             const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
             const workbookSheets = inspectExcelWorkbook(fileBuffer);
-            const [antSheetName, budgetSheetName, currentSheetName] = resolveOpexRequiredSheets(workbookSheets);
+            const [antSheetName, budgetSheetName, currentSheetName] = assertWorkbookSheets(moduleCode, workbookSheets).resolvedSheetNames;
             tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
                 uploadId,
                 moduleCode,
@@ -2734,17 +2714,12 @@ export async function processUpload(uploadId: string) {
             const { bucketName, objectPath } = parseGcsPath(context.storagePath);
             const [fileBuffer] = await storageClient.bucket(bucketName).file(objectPath).download();
             const workbookSheets = inspectExcelWorkbook(fileBuffer);
-            const requiredSheets = ['AIR', 'CARE'];
-            const sheetLookup = new Map(workbookSheets.map((sheetName) => [sheetName.trim().toUpperCase(), sheetName]));
-            const missingSheets = requiredSheets.filter((sheetName) => !sheetLookup.has(sheetName));
-            if (missingSheets.length > 0) {
-                throw new Error(`Cuotas workbook must include sheets: ${requiredSheets.join(', ')}. Missing: ${missingSheets.join(', ')}.`);
-            }
+            const requiredSheets = assertWorkbookSheets(moduleCode, workbookSheets).resolvedSheetNames;
             tempFile = await writeExcelRawRowsNdjsonToGcsFromGcs({
                 uploadId,
                 moduleCode,
                 storagePath: context.storagePath,
-                sheetNames: requiredSheets.map((requiredSheet) => sheetLookup.get(requiredSheet)!),
+                sheetNames: requiredSheets,
                 headerRow: effectiveHeaderRow,
             });
             sampleRowsChecked = tempFile.sampleRowsChecked;

@@ -1,5 +1,6 @@
 import 'server-only';
 import * as XLSX from 'xlsx';
+import { detectWorkbookPeriodMonths } from '@/lib/uploads/workbook-period-detection';
 
 export type ParseExcelOptions = {
   sheetName?: string | null;
@@ -14,6 +15,11 @@ type ParsedExcelRow = {
 export type ParsedExcelRowWithSheet = ParsedExcelRow & {
   sheetName: string;
 };
+
+export function detectExcelWorkbookPeriodMonths(buffer: Buffer, moduleCode: string) {
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  return detectWorkbookPeriodMonths(XLSX, workbook, moduleCode);
+}
 
 function decodeCsvBuffer(buffer: Buffer) {
   const utf8 = buffer.toString('utf8').replace(/^\uFEFF/, '');

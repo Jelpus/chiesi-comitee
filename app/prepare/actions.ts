@@ -11,8 +11,8 @@ import {
   publishUpload,
 } from '@/app/admin/uploads/actions';
 import { getBigQueryClient } from '@/lib/bigquery/client';
-import { expectedPreviousMonth } from '@/lib/data/prepare';
 import { sendSendGridEmail } from '@/lib/email/sendgrid';
+import { expectedSourceAsOfMonth, normalizeSourcePeriodOffset, sourcePeriodPolicyLabel } from '@/lib/uploads/source-period-policy';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -96,7 +96,7 @@ async function validateModuleArea(moduleCode: string, areaCode: string) {
   const client = getBigQueryClient();
   const [rows] = await client.query({
     query: `
-      SELECT module_code
+      SELECT module_code, COALESCE(source_period_offset_months, 0) AS source_period_offset_months
       FROM \`${DIM_MODULE_TABLE}\`
       WHERE module_code = @moduleCode
         AND area_code = @areaCode
@@ -105,9 +105,13 @@ async function validateModuleArea(moduleCode: string, areaCode: string) {
     `,
     params: { moduleCode, areaCode },
   });
-  if ((rows as Array<Record<string, unknown>>).length === 0) {
+  const row = (rows as Array<Record<string, unknown>>)[0];
+  if (!row) {
     throw new Error('El módulo no pertenece al área seleccionada o no está activo.');
   }
+  return {
+    sourcePeriodOffsetMonths: normalizeSourcePeriodOffset(row.source_period_offset_months),
+  };
 }
 
 async function getUploadResult(uploadId: string) {
@@ -216,6 +220,15 @@ async function notifyPrepareUploadStatus(uploadId: string, statusLabel: 'Uploade
   }
 }
 
+function assertExpectedSourcePeriod(periodMonth: string, sourceAsOfMonth: string, offset: number) {
+  const expected = expectedSourceAsOfMonth(periodMonth, offset);
+  if (!expected || sourceAsOfMonth === expected) return;
+
+  throw new Error(
+    `Periodo de archivo incorrecto. La regla ${sourcePeriodPolicyLabel(offset)} exige ${expected} para la versión ${periodMonth}, pero se recibió ${sourceAsOfMonth}.`,
+  );
+}
+
 function getPrepareSourceFileName(formData: FormData) {
   const directSourceFileName = String(formData.get('sourceFileName') ?? '').trim();
   if (directSourceFileName) return directSourceFileName;
@@ -293,7 +306,6 @@ async function validatePrepareUploadRequest(formData: FormData) {
   const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
   const dddSource = normalizeDddSource(formData.get('dddSource'));
   const confirmProductionVersion = String(formData.get('confirmProductionVersion') ?? '') === 'true';
-  const confirmSourceAsOfMonth = String(formData.get('confirmSourceAsOfMonth') ?? '') === 'true';
 
   if (!moduleCode || !areaCode || !reportingVersionId) {
     throw new Error('Faltan datos obligatorios para preparar la carga.');
@@ -302,7 +314,7 @@ async function validatePrepareUploadRequest(formData: FormData) {
     throw new Error('Indica a que cierre de mes corresponde la informacion del archivo.');
   }
 
-  await validateModuleArea(moduleCode, areaCode);
+  const modulePolicy = await validateModuleArea(moduleCode, areaCode);
   const version = await getReportingVersion(reportingVersionId);
 
   if ((version.status === 'ready_to_show' || version.status === 'closed') && !confirmProductionVersion) {
@@ -311,11 +323,8 @@ async function validatePrepareUploadRequest(formData: FormData) {
 
   if (isDddLikeModule(moduleCode)) {
     if (!dddSource) throw new Error('Selecciona la fuente o variante del archivo.');
-    const expected = expectedPreviousMonth(version.periodMonth);
-    if (expected && sourceAsOfMonth !== expected && !confirmSourceAsOfMonth) {
-      throw new Error('La fecha del cierre informado no coincide con el mes anterior esperado. Confirma para continuar.');
-    }
   }
+  assertExpectedSourcePeriod(version.periodMonth, sourceAsOfMonth, modulePolicy.sourcePeriodOffsetMonths);
 
   return {
     moduleCode,
@@ -378,6 +387,21 @@ async function createReuseUploadRecord(params: {
 }) {
   const client = getBigQueryClient();
   const uploadId = randomUUID();
+  const [moduleRows] = await client.query({
+    query: `
+      SELECT COALESCE(source_period_offset_months, 0) AS source_period_offset_months
+      FROM \`${DIM_MODULE_TABLE}\`
+      WHERE module_code = @moduleCode
+      LIMIT 1
+    `,
+    params: { moduleCode: params.moduleCode },
+  });
+  const modulePolicy = (moduleRows as Array<Record<string, unknown>>)[0];
+  if (!modulePolicy) throw new Error('No se encontró la política de periodo del módulo.');
+  const sourceAsOfMonth = expectedSourceAsOfMonth(
+    params.periodMonth,
+    normalizeSourcePeriodOffset(modulePolicy.source_period_offset_months),
+  );
 
   const [rows] = await client.query({
     query: `
@@ -461,7 +485,7 @@ async function createReuseUploadRecord(params: {
         source_sheets_json,
         selected_sheet_name,
         selected_header_row,
-        COALESCE(source_as_of_month, period_month),
+        DATE(@sourceAsOfMonth),
         ddd_source,
         opex_jan_previous_col,
         opex_jan_budget_col,
@@ -475,6 +499,7 @@ async function createReuseUploadRecord(params: {
       periodMonth: params.periodMonth,
       reportingVersionId: params.reportingVersionId,
       confirmedBy: params.confirmedBy,
+      sourceAsOfMonth,
     },
   });
 
@@ -488,7 +513,6 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
   const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
   const dddSource = normalizeDddSource(formData.get('dddSource'));
   const confirmProductionVersion = String(formData.get('confirmProductionVersion') ?? '') === 'true';
-  const confirmSourceAsOfMonth = String(formData.get('confirmSourceAsOfMonth') ?? '') === 'true';
 
   try {
     if (!moduleCode || !areaCode || !reportingVersionId) {
@@ -498,7 +522,7 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
       throw new Error('Indica a qué cierre de mes corresponde la información del archivo.');
     }
 
-    await validateModuleArea(moduleCode, areaCode);
+    const modulePolicy = await validateModuleArea(moduleCode, areaCode);
     const version = await getReportingVersion(reportingVersionId);
 
     if ((version.status === 'ready_to_show' || version.status === 'closed') && !confirmProductionVersion) {
@@ -507,11 +531,8 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
 
     if (isDddLikeModule(moduleCode)) {
       if (!dddSource) throw new Error('Selecciona la fuente o variante del archivo.');
-      const expected = expectedPreviousMonth(version.periodMonth);
-      if (expected && sourceAsOfMonth !== expected && !confirmSourceAsOfMonth) {
-        throw new Error('La fecha del cierre informado no coincide con el mes anterior esperado. Confirma para continuar.');
-      }
     }
+    assertExpectedSourcePeriod(version.periodMonth, sourceAsOfMonth, modulePolicy.sourcePeriodOffsetMonths);
 
     const uploadFormData = new FormData();
     const file = formData.get('file');

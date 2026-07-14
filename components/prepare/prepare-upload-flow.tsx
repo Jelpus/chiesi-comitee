@@ -9,6 +9,9 @@ import {
 } from '@/app/prepare/actions';
 import { SourceAsOfMonthField } from '@/components/prepare/source-as-of-month-field';
 import type { PrepareReportingVersion, PrepareRequirement } from '@/lib/data/prepare';
+import { expectedSourceAsOfMonth, formatMonthYear } from '@/lib/uploads/source-period-policy';
+import { getWorkbookPolicy, inspectWorkbookSheets } from '@/lib/uploads/workbook-policy';
+import { detectWorkbookPeriodMonths } from '@/lib/uploads/workbook-period-detection';
 
 type PrepareUploadFlowProps = {
   requirement: PrepareRequirement;
@@ -43,14 +46,6 @@ const uploadPublishSteps = [
 
 function isProductionVersion(version: PrepareReportingVersion) {
   return version.status === 'ready_to_show' || version.status === 'closed';
-}
-
-function isDddLike(moduleCode: string) {
-  return (
-    moduleCode === 'business_excellence_ddd' ||
-    moduleCode === 'business_excellence_pmm' ||
-    moduleCode === 'business_excellence_budget_sell_out'
-  );
 }
 
 function isCsvFileName(fileName: string) {
@@ -259,15 +254,27 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
   const production = isProductionVersion(selectedVersion);
   const defaults = requirement.inferredDefaults;
-  const dddLike = Boolean(requirement.dddSource) || isDddLike(requirement.module.moduleCode);
   const [sheetOptions, setSheetOptions] = useState<string[]>(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
   const [selectedSheetName, setSelectedSheetName] = useState(defaults.selectedSheetName);
   const [selectedHeaderRow, setSelectedHeaderRow] = useState(String(defaults.selectedHeaderRow || 1));
   const [detectedSheetNames, setDetectedSheetNames] = useState<string[]>(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
+  const [detectedPeriodMonths, setDetectedPeriodMonths] = useState<string[]>([]);
   const [inspectMessage, setInspectMessage] = useState(
     defaults.selectedSheetName ? 'Agrega un archivo para continuar...' : '',
   );
   const shouldShowSheetConfig = Boolean(selectedFile);
+  const workbookPolicy = getWorkbookPolicy(requirement.module.moduleCode);
+  const workbookInspection = inspectWorkbookSheets(requirement.module.moduleCode, detectedSheetNames);
+  const systemManagesSheets = workbookPolicy.mode !== 'single_user_selected';
+  const hasWorkbookSheetErrors = systemManagesSheets && Boolean(selectedFile) && workbookInspection.missingLabels.length > 0;
+  const expectedFilePeriod = expectedSourceAsOfMonth(
+    selectedVersion.periodMonth,
+    requirement.module.sourcePeriodOffsetMonths,
+  );
+  const detectedLatestPeriod = detectedPeriodMonths.at(-1) ?? '';
+  const hasDetectedPeriodMismatch = Boolean(
+    detectedLatestPeriod && expectedFilePeriod && detectedLatestPeriod !== expectedFilePeriod,
+  );
 
   function openProgressModal(input: Omit<ProgressModalState, 'open' | 'finalState'>) {
     setProgressModal({
@@ -309,11 +316,13 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
         updateProgressStep(1, 'Detectando hojas del libro.');
         let detectedLexicompHeaderRow: number | null = null;
         const detectedHeaderRowsBySheet: Record<string, number> = {};
+        let workbookPeriodMonths: string[] = [];
         const sheetNames = isCsvFileName(file.name)
           ? ['CSV']
           : await file.arrayBuffer().then(async (buffer) => {
               const xlsx = await import('xlsx');
               const workbook = xlsx.read(buffer, { type: 'array' });
+              workbookPeriodMonths = detectWorkbookPeriodMonths(xlsx, workbook, requirement.module.moduleCode);
               if (requirement.module.moduleCode === 'business_excellence_recompra_lexicomp') {
                 const detailSheetName = workbook.SheetNames.find((sheetName) => sheetName.trim().toUpperCase() === 'DETALLE DESPLAZAMIENTO');
                 const sheet = detailSheetName ? workbook.Sheets[detailSheetName] : null;
@@ -339,8 +348,9 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
         updateProgressStep(2, 'Aplicando sugerencia de hoja y fila de encabezados.');
         const lexicompSheetName = sheetNames.find((sheetName) => sheetName.trim().toUpperCase() === 'DETALLE DESPLAZAMIENTO');
-        const suggestedSheetName =
-          defaults.selectedSheetName && sheetNames.includes(defaults.selectedSheetName)
+        const suggestedSheetName = workbookPolicy.mode !== 'single_user_selected'
+          ? inspectWorkbookSheets(requirement.module.moduleCode, sheetNames).resolvedSheetNames[0] ?? sheetNames[0] ?? ''
+          : defaults.selectedSheetName && sheetNames.includes(defaults.selectedSheetName)
             ? defaults.selectedSheetName
             : requirement.module.moduleCode === 'business_excellence_recompra_lexicomp' && lexicompSheetName
               ? lexicompSheetName
@@ -355,6 +365,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
               : defaults.selectedHeaderRow || 1;
 
         setDetectedSheetNames(sheetNames);
+        setDetectedPeriodMonths(workbookPeriodMonths);
         setSheetOptions(sheetNames);
         setSelectedSheetName(suggestedSheetName);
         setSelectedHeaderRow(String(suggestedHeaderRow));
@@ -368,6 +379,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
 
         setSheetOptions([]);
         setDetectedSheetNames([]);
+        setDetectedPeriodMonths([]);
         setSelectedSheetName(defaults.selectedSheetName);
         setSelectedHeaderRow(String(defaults.selectedHeaderRow || 1));
         setInspectMessage(errorMessage);
@@ -380,6 +392,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     setSelectedFile(file);
     setMessage(null);
     setError(null);
+    setDetectedPeriodMonths([]);
 
     if (!file) {
       setSheetOptions(defaults.selectedSheetName ? [defaults.selectedSheetName] : []);
@@ -432,6 +445,16 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
     setError(null);
     if (!selectedFile) {
       setError('Selecciona un archivo antes de continuar.');
+      return;
+    }
+    if (hasWorkbookSheetErrors) {
+      setError(`El archivo no contiene las hojas requeridas: ${workbookInspection.missingLabels.join(', ')}.`);
+      return;
+    }
+    if (hasDetectedPeriodMismatch) {
+      setError(
+        `Periodo incorrecto: el archivo contiene datos hasta ${formatMonthYear(detectedLatestPeriod)}, pero este módulo espera ${formatMonthYear(expectedFilePeriod)}. Selecciona el archivo correcto.`,
+      );
       return;
     }
     const submittedSheetName = String(formData.get('selectedSheetName') ?? selectedSheetName).trim() || selectedSheetName;
@@ -605,16 +628,47 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           </label>
 
           <SourceAsOfMonthField
-            defaultValue={defaults.sourceAsOfMonth}
             periodMonth={selectedVersion.periodMonth}
-            dddLike={dddLike}
+            sourcePeriodOffsetMonths={requirement.module.sourcePeriodOffsetMonths}
           />
 
         </div>
 
+        {detectedPeriodMonths.length > 0 ? (
+          <div className={`rounded-2xl border px-4 py-3 text-sm ${hasDetectedPeriodMismatch ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+            <p className="font-bold">{hasDetectedPeriodMismatch ? 'El periodo del archivo no coincide' : 'Periodos detectados en el archivo'}</p>
+            <p className={`mt-1 text-xs leading-5 ${hasDetectedPeriodMismatch ? 'text-rose-800' : 'text-emerald-800'}`}>
+              {detectedPeriodMonths.map((period) => formatMonthYear(period)).join(', ')}. Último periodo: {formatMonthYear(detectedLatestPeriod)}.
+              {hasDetectedPeriodMismatch ? ` Este módulo espera ${formatMonthYear(expectedFilePeriod)}; selecciona el archivo correcto.` : ' El periodo coincide con la política del módulo.'}
+            </p>
+          </div>
+        ) : null}
+
+        {systemManagesSheets ? (
+          <div className={`rounded-2xl border px-4 py-3 text-sm ${hasWorkbookSheetErrors ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-slate-200 bg-slate-50 text-slate-800'}`}>
+            <p className="font-bold">
+              {workbookPolicy.mode === 'multi_required' ? 'Hojas procesadas automáticamente' : 'Hoja seleccionada automáticamente'}
+            </p>
+            <p className="mt-1 text-xs leading-5">
+              {workbookPolicy.mode === 'multi_required' ? 'El normalizador utilizará todas las pestañas indicadas.' : 'El normalizador localizará la pestaña indicada; no es necesario seleccionarla.'}
+            </p>
+            <ul className="mt-2 space-y-1 text-xs font-semibold">
+              {workbookInspection.checks.map((check) => (
+                <li key={check.label} className={check.resolvedSheetName ? 'text-emerald-700' : selectedFile ? 'text-rose-700' : 'text-slate-500'}>
+                  {check.resolvedSheetName ? '✓' : selectedFile ? '✕' : '○'} {check.label}
+                  {check.resolvedSheetName && check.resolvedSheetName !== check.label ? ` (${check.resolvedSheetName})` : ''}
+                </li>
+              ))}
+            </ul>
+            {hasWorkbookSheetErrors ? <p className="mt-2 text-xs font-bold">Selecciona un Excel que contenga todas las hojas requeridas.</p> : null}
+          </div>
+        ) : null}
+
         {shouldShowSheetConfig ? (
           <div className="grid gap-4 lg:grid-cols-3">
-            <label className="space-y-2">
+            {systemManagesSheets ? (
+              <input type="hidden" name="selectedSheetName" value={selectedSheetName} />
+            ) : <label className="space-y-2">
               <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Hoja</span>
               {sheetOptions.length > 0 ? (
                 <select
@@ -640,7 +694,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950"
                 />
               )}
-            </label>
+            </label>}
             <label className="space-y-2">
               <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Fila de encabezados</span>
               <input
@@ -676,7 +730,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           
           <button
             type="submit"
-            disabled={isPending || isInspecting}
+            disabled={isPending || isInspecting || hasDetectedPeriodMismatch || hasWorkbookSheetErrors}
             className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/15 disabled:opacity-50"
           >
             {isPending || isInspecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}

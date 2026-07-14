@@ -6,6 +6,8 @@ import { Loader2 } from 'lucide-react';
 import { createUploadRecord, inspectUploadWorkbook } from '@/app/admin/uploads/actions';
 import type { UploadFormOptions } from '@/lib/data/uploads/get-upload-form-options';
 import type { ModuleAreaCode } from '@/lib/data/modules';
+import { getWorkbookPolicy, inspectWorkbookSheets } from '@/lib/uploads/workbook-policy';
+import { expectedSourceAsOfMonth, formatMonthYear, sourcePeriodPolicyLabel } from '@/lib/uploads/source-period-policy';
 
 type UploadFormProps = {
   options: UploadFormOptions;
@@ -64,15 +66,6 @@ function formatPeriodOptionLabel(periodMonth: string) {
     month: 'long',
     year: 'numeric',
   }).format(date);
-}
-
-function shiftMonth(periodMonth: string, deltaMonths: number) {
-  const date = new Date(`${periodMonth}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return periodMonth;
-  date.setUTCMonth(date.getUTCMonth() + deltaMonths);
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  return `${year}-${month}-01`;
 }
 
 function isCsvFileName(fileName: string) {
@@ -172,9 +165,9 @@ export function UploadForm({ options }: UploadFormProps) {
   const [dddSource, setDddSource] = useState('innovair');
   const [reportingVersionId, setReportingVersionId] = useState(initialVersionId);
   const [periodMonth, setPeriodMonth] = useState(initialPeriodMonth);
-  const [sourceAsOfMonth, setSourceAsOfMonth] = useState(initialPeriodMonth);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sheetOptions, setSheetOptions] = useState<string[]>([]);
+  const [detectedPeriodMonths, setDetectedPeriodMonths] = useState<string[]>([]);
   const [selectedSheetName, setSelectedSheetName] = useState('');
   const [headerRow, setHeaderRow] = useState('1');
   const [opexJanPreviousCol, setOpexJanPreviousCol] = useState('');
@@ -186,14 +179,9 @@ export function UploadForm({ options }: UploadFormProps) {
   const [isInspecting, startInspectTransition] = useTransition();
   const [isRegistering, startRegisterTransition] = useTransition();
   const isBusy = isInspecting || isRegistering;
-  const asOfOptions = useMemo(() => {
-    const anchor = periodMonth || initialPeriodMonth;
-    const values = Array.from({ length: 36 }, (_, index) => shiftMonth(anchor, -index));
-    return values.map((value) => ({
-      value,
-      label: formatPeriodOptionLabel(value),
-    }));
-  }, [periodMonth, initialPeriodMonth]);
+  const selectedModule = modulesWithArea.find((module) => module.value === moduleCode);
+  const sourcePeriodOffsetMonths = selectedModule?.sourcePeriodOffsetMonths ?? 0;
+  const sourceAsOfMonth = expectedSourceAsOfMonth(periodMonth || initialPeriodMonth, sourcePeriodOffsetMonths);
   const isDddModule =
     moduleCode === 'business_excellence_ddd' ||
     moduleCode === 'business_excellence_pmm' ||
@@ -204,7 +192,17 @@ export function UploadForm({ options }: UploadFormProps) {
     moduleCode === 'business_excellence_sell_out' ||
     moduleCode === 'sell_out';
   const showsSourceSelector = isDddModule || isSellOutModule;
-  const isOpexByCcModule = moduleCode === 'opex_by_cc';
+  const workbookPolicy = getWorkbookPolicy(moduleCode);
+  const workbookInspection = useMemo(
+    () => inspectWorkbookSheets(moduleCode, sheetOptions),
+    [moduleCode, sheetOptions],
+  );
+  const systemManagesSheets = workbookPolicy.mode !== 'single_user_selected';
+  const hasWorkbookSheetErrors = systemManagesSheets && Boolean(selectedFile) && workbookInspection.missingLabels.length > 0;
+  const detectedLatestPeriod = detectedPeriodMonths.at(-1) ?? '';
+  const hasDetectedPeriodMismatch = Boolean(
+    detectedLatestPeriod && sourceAsOfMonth && detectedLatestPeriod !== sourceAsOfMonth,
+  );
 
   useEffect(() => {
     try {
@@ -216,7 +214,6 @@ export function UploadForm({ options }: UploadFormProps) {
         dddSource: string;
         reportingVersionId: string;
         periodMonth: string;
-        sourceAsOfMonth: string;
         selectedSheetName: string;
         headerRow: string;
         opexJanPreviousCol: string;
@@ -229,7 +226,6 @@ export function UploadForm({ options }: UploadFormProps) {
       if (draft.dddSource !== undefined) setDddSource(draft.dddSource);
       if (draft.reportingVersionId) setReportingVersionId(draft.reportingVersionId);
       if (draft.periodMonth) setPeriodMonth(draft.periodMonth);
-      if (draft.sourceAsOfMonth) setSourceAsOfMonth(draft.sourceAsOfMonth);
       if (draft.selectedSheetName) setSelectedSheetName(draft.selectedSheetName);
       if (draft.headerRow) setHeaderRow(draft.headerRow);
       if (draft.opexJanPreviousCol !== undefined) setOpexJanPreviousCol(draft.opexJanPreviousCol);
@@ -250,7 +246,6 @@ export function UploadForm({ options }: UploadFormProps) {
           dddSource,
           reportingVersionId,
           periodMonth,
-          sourceAsOfMonth,
           selectedSheetName,
           headerRow,
           opexJanPreviousCol,
@@ -269,7 +264,6 @@ export function UploadForm({ options }: UploadFormProps) {
     periodMonth,
     reportingVersionId,
     selectedSheetName,
-    sourceAsOfMonth,
     opexJanPreviousCol,
     opexJanBudgetCol,
     opexJanCurrentCol,
@@ -288,6 +282,7 @@ export function UploadForm({ options }: UploadFormProps) {
         setSheetOptions(result.sheetNames);
         setSelectedSheetName(result.suggestedSheetName);
         setHeaderRow(String(result.suggestedHeaderRow));
+        setDetectedPeriodMonths(result.detectedPeriodMonths);
         setInspectMessage(`Sheets detected: ${result.sheetNames.length}`);
         setUiStage('inspected');
       } catch (error) {
@@ -314,6 +309,7 @@ export function UploadForm({ options }: UploadFormProps) {
     setSelectedFile(file);
     setSheetOptions([]);
     setSelectedSheetName('');
+    setDetectedPeriodMonths([]);
     setHeaderRow('1');
     setInspectMessage('');
 
@@ -335,6 +331,18 @@ export function UploadForm({ options }: UploadFormProps) {
 
     if (!selectedFile) {
       setResultMessage('You must select a file (.xlsx, .xls, .csv).');
+      setUiStage('error');
+      return;
+    }
+    if (hasWorkbookSheetErrors) {
+      setResultMessage(`Missing required sheets: ${workbookInspection.missingLabels.join(', ')}.`);
+      setUiStage('error');
+      return;
+    }
+    if (hasDetectedPeriodMismatch) {
+      setResultMessage(
+        `Periodo incorrecto: el archivo contiene datos hasta ${formatMonthYear(detectedLatestPeriod)}, pero este módulo espera ${formatMonthYear(sourceAsOfMonth)}.`,
+      );
       setUiStage('error');
       return;
     }
@@ -431,6 +439,16 @@ export function UploadForm({ options }: UploadFormProps) {
           </div>
         </div>
 
+        {detectedPeriodMonths.length > 0 ? (
+          <div className={`rounded-[18px] border px-4 py-3 text-sm lg:col-span-2 ${hasDetectedPeriodMismatch ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+            <p className="font-bold">{hasDetectedPeriodMismatch ? 'El periodo del archivo no coincide' : 'Periodos detectados en el archivo'}</p>
+            <p className="mt-1 text-xs leading-5">
+              {detectedPeriodMonths.map((period) => formatMonthYear(period)).join(', ')}. Último periodo: {formatMonthYear(detectedLatestPeriod)}.
+              {hasDetectedPeriodMismatch ? ` Este módulo espera ${formatMonthYear(sourceAsOfMonth)}.` : ' El periodo coincide con la política del módulo.'}
+            </p>
+          </div>
+        ) : null}
+
         <label className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Area</span>
           <select
@@ -495,7 +513,6 @@ export function UploadForm({ options }: UploadFormProps) {
               const selectedPeriod = versionPeriodById.get(selectedVersionId);
               if (selectedPeriod) {
                 setPeriodMonth(selectedPeriod);
-                setSourceAsOfMonth(selectedPeriod);
               }
             }}
             className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950"
@@ -525,22 +542,13 @@ export function UploadForm({ options }: UploadFormProps) {
           </select>
         </label>
 
-        <label className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Data As Of</span>
-          <select
-            name="sourceAsOfMonth"
-            value={sourceAsOfMonth}
-            disabled={isBusy}
-            onChange={(e) => setSourceAsOfMonth(e.target.value)}
-            className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950"
-          >
-            {asOfOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <div className="rounded-[18px] border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700">
+            {formatMonthYear(sourceAsOfMonth)} · regla {sourcePeriodPolicyLabel(sourcePeriodOffsetMonths)}
+          </div>
+          <input type="hidden" name="sourceAsOfMonth" value={sourceAsOfMonth} />
+        </div>
 
         {showsSourceSelector ? (
           <label className="flex flex-col gap-2">
@@ -603,13 +611,24 @@ export function UploadForm({ options }: UploadFormProps) {
           ) : null}
         </label>
 
-        <label className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            {isOpexByCcModule ? 'Workbook sheets' : 'Data sheet'}
+            {systemManagesSheets ? 'Workbook sheets' : 'Data sheet'}
           </span>
-          {isOpexByCcModule ? (
-            <div className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
-              Uses `Ant`, `Budget`, and `Current` automatically.
+          {systemManagesSheets ? (
+            <div className={`rounded-[18px] border px-4 py-3 text-sm ${hasWorkbookSheetErrors ? 'border-rose-200 bg-rose-50 text-rose-900' : 'border-slate-200 bg-slate-50/80 text-slate-700'}`}>
+              <p className="font-semibold">
+                {workbookPolicy.mode === 'multi_required' ? 'The system processes all required sheets automatically.' : 'The system selects the required sheet automatically.'}
+              </p>
+              <ul className="mt-2 space-y-1 text-xs">
+                {workbookInspection.checks.map((check) => (
+                  <li key={check.label} className={check.resolvedSheetName ? 'text-emerald-700' : selectedFile ? 'text-rose-700' : 'text-slate-500'}>
+                    {check.resolvedSheetName ? '✓' : selectedFile ? '✕' : '○'} {check.label}
+                    {check.resolvedSheetName && check.resolvedSheetName !== check.label ? ` (${check.resolvedSheetName})` : ''}
+                  </li>
+                ))}
+              </ul>
+              {hasWorkbookSheetErrors ? <p className="mt-2 text-xs font-semibold">Select a workbook containing every required sheet.</p> : null}
             </div>
           ) : (
             <select
@@ -627,8 +646,8 @@ export function UploadForm({ options }: UploadFormProps) {
               ))}
             </select>
           )}
-          {isOpexByCcModule ? <input type="hidden" name="selectedSheetName" value={selectedSheetName} /> : null}
-        </label>
+          {systemManagesSheets ? <input type="hidden" name="selectedSheetName" value={selectedSheetName} /> : null}
+        </div>
 
         <label className="flex flex-col gap-2">
           <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
@@ -648,7 +667,7 @@ export function UploadForm({ options }: UploadFormProps) {
         <div className="lg:col-span-2 flex items-center gap-3">
           <button
             type="submit"
-            disabled={isBusy}
+            disabled={isBusy || hasWorkbookSheetErrors || hasDetectedPeriodMismatch}
             className="rounded-full bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
           >
             {isRegistering ? (

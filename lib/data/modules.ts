@@ -1,5 +1,6 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
+import { normalizeSourcePeriodOffset, type SourcePeriodOffsetMonths } from '@/lib/uploads/source-period-policy';
 
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
 
@@ -19,6 +20,7 @@ export type ModuleRow = {
   moduleName: string;
   areaCode: ModuleAreaCode;
   moduleType: string | null;
+  sourcePeriodOffsetMonths: SourcePeriodOffsetMonths;
   ownerName: string | null;
   emailOwner: string | null;
   displayOrder: number;
@@ -35,6 +37,7 @@ export type UpsertModuleInput = {
   moduleName: string;
   areaCode: string;
   moduleType?: string;
+  sourcePeriodOffsetMonths?: number;
   ownerName?: string;
   emailOwner?: string;
   displayOrder?: number;
@@ -48,14 +51,16 @@ export const defaultModules: Array<{
   moduleName: string;
   areaCode: ModuleAreaCode;
   displayOrder: number;
+  sourcePeriodOffsetMonths?: SourcePeriodOffsetMonths;
 }> = [
   { moduleCode: 'sales_internal', moduleName: 'Sales Internal', areaCode: 'sales_internal', displayOrder: 10 },
-  { moduleCode: 'business_excellence_ddd', moduleName: 'Business Excellence - DDD', areaCode: 'business_excellence', displayOrder: 110 },
+  { moduleCode: 'business_excellence_ddd', moduleName: 'Business Excellence - DDD', areaCode: 'business_excellence', displayOrder: 110, sourcePeriodOffsetMonths: 1 },
   {
     moduleCode: 'business_excellence_budget_sell_out',
     moduleName: 'Business Excellence - Budget Sell Out',
     areaCode: 'business_excellence',
     displayOrder: 120,
+    sourcePeriodOffsetMonths: 1,
   },
   {
     moduleCode: 'business_excellence_brick_assignment',
@@ -157,6 +162,7 @@ function rowToModule(row: Record<string, unknown>): ModuleRow {
     areaCode: normalizeAreaCode(String(row.area_code ?? 'other')),
     ownerName: row.owner_name == null ? null : String(row.owner_name),
     moduleType: row.module_type == null ? null : String(row.module_type),
+    sourcePeriodOffsetMonths: normalizeSourcePeriodOffset(row.source_period_offset_months),
     emailOwner: row.email_owner == null ? null : String(row.email_owner),
     displayOrder: Number(row.display_order ?? 999),
     isActive: Boolean(row.is_active),
@@ -177,6 +183,7 @@ export async function getModules(): Promise<ModuleRow[]> {
         module_name,
         COALESCE(area_code, 'other') AS area_code,
         module_type,
+        COALESCE(source_period_offset_months, 0) AS source_period_offset_months,
         owner_name,
         email_owner,
         COALESCE(display_order, 999) AS display_order,
@@ -202,6 +209,7 @@ export async function getActiveModuleOptions() {
       value: module.moduleCode,
       label: module.moduleName,
       areaCode: module.areaCode,
+      sourcePeriodOffsetMonths: module.sourcePeriodOffsetMonths,
     }));
 }
 
@@ -211,6 +219,7 @@ export async function upsertModule(input: UpsertModuleInput) {
   const areaCode = normalizeAreaCode(input.areaCode);
   const updatedBy = (input.updatedBy ?? '').trim() || 'admin_panel';
   const displayOrder = Number.isFinite(input.displayOrder) ? Number(input.displayOrder) : 999;
+  const sourcePeriodOffsetMonths = normalizeSourcePeriodOffset(input.sourcePeriodOffsetMonths);
 
   if (!moduleCode) throw new Error('module_code is required.');
   if (!moduleName) throw new Error('module_name is required.');
@@ -225,6 +234,7 @@ export async function upsertModule(input: UpsertModuleInput) {
           @moduleName AS module_name,
           @areaCode AS area_code,
           NULLIF(@moduleType, '') AS module_type,
+          @sourcePeriodOffsetMonths AS source_period_offset_months,
           NULLIF(@ownerName, '') AS owner_name,
           NULLIF(@emailOwner, '') AS email_owner,
           @displayOrder AS display_order,
@@ -237,6 +247,7 @@ export async function upsertModule(input: UpsertModuleInput) {
         module_name = source.module_name,
         area_code = source.area_code,
         module_type = source.module_type,
+        source_period_offset_months = source.source_period_offset_months,
         owner_name = source.owner_name,
         email_owner = source.email_owner,
         display_order = source.display_order,
@@ -249,6 +260,7 @@ export async function upsertModule(input: UpsertModuleInput) {
         module_name,
         area_code,
         module_type,
+        source_period_offset_months,
         owner_name,
         email_owner,
         display_order,
@@ -264,6 +276,7 @@ export async function upsertModule(input: UpsertModuleInput) {
         source.module_name,
         source.area_code,
         source.module_type,
+        source.source_period_offset_months,
         source.owner_name,
         source.email_owner,
         source.display_order,
@@ -280,6 +293,7 @@ export async function upsertModule(input: UpsertModuleInput) {
       moduleName,
       areaCode,
       moduleType: input.moduleType?.trim() ?? '',
+      sourcePeriodOffsetMonths,
       ownerName: input.ownerName?.trim() ?? '',
       emailOwner: input.emailOwner?.trim() ?? '',
       displayOrder,
