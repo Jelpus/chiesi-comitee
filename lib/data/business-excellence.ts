@@ -1801,9 +1801,10 @@ async function getGob360PrivateMartRows(
 ): Promise<BusinessExcellencePrivateSellOutMartRow[]> {
   if (!cutoffDate) return [];
 
-  const [mappingRows, brandMap] = await Promise.all([
+  const [mappingRows, brandMap, privateBudgetByProduct] = await Promise.all([
     getGob360MappedClaves(),
     getProductMetadataBrandMap(),
+    getPrivateBudgetByProduct(reportingVersionId, cutoffDate),
   ]);
   const normalizedMarketGroup = sanitizeFilter(marketGroup ?? undefined);
   const filteredMappings = mappingRows.filter((row) => {
@@ -1840,6 +1841,7 @@ async function getGob360PrivateMartRows(
   const latestMonth = latestRef.month;
   const pyYear = latestYear - 1;
   const aggregate = new Map<string, {
+    productId: string;
     marketGroup: string;
     brandName: string;
     ytdUnits: number;
@@ -1878,6 +1880,7 @@ async function getGob360PrivateMartRows(
     const key = `${mapping.marketGroup}|||${mapping.brandName}`;
     const netSales = mapping.estimatedUnitPrice == null ? 0 : units * mapping.estimatedUnitPrice;
     const current = aggregate.get(key) ?? {
+      productId: mapping.productId,
       marketGroup: mapping.marketGroup,
       brandName: mapping.brandName,
       ytdUnits: 0,
@@ -1913,6 +1916,10 @@ async function getGob360PrivateMartRows(
       const msYtdUnitsPctPy = totals.ytdUnitsPy > 0 ? row.ytdUnitsPy / totals.ytdUnitsPy : null;
       const msMthUnitsPct = totals.mthUnits > 0 ? row.mthUnits / totals.mthUnits : null;
       const msMthUnitsPctPy = totals.mthUnitsPy > 0 ? row.mthUnitsPy / totals.mthUnitsPy : null;
+      const budget = privateBudgetByProduct.get(row.productId) ?? {
+        ytdUnits: 0,
+        mthUnits: 0,
+      };
       return {
         reportingVersionId,
         marketGroup: row.marketGroup,
@@ -1944,8 +1951,8 @@ async function getGob360PrivateMartRows(
         mthRxByMg: 0,
         ytdRxByNeumo: 0,
         mthRxByNeumo: 0,
-        budgetYtdUnits: 0,
-        budgetMthUnits: 0,
+        budgetYtdUnits: budget.ytdUnits,
+        budgetMthUnits: budget.mthUnits,
         ytdUnitsVisitedRatio: null,
         mthUnitsVisitedRatio: null,
         ytdRxVisitedRatio: null,
@@ -1954,9 +1961,11 @@ async function getGob360PrivateMartRows(
         mthRxMgRatio: null,
         ytdRxNeumoRatio: null,
         mthRxNeumoRatio: null,
-        varianceVsBudgetYtdUnitsPct: null,
+        varianceVsBudgetYtdUnitsPct:
+          budget.ytdUnits > 0 ? (row.ytdUnits - budget.ytdUnits) / budget.ytdUnits : null,
         varianceVsBudgetYtdNetSalesPct: null,
-        varianceVsBudgetMthUnitsPct: null,
+        varianceVsBudgetMthUnitsPct:
+          budget.mthUnits > 0 ? (row.mthUnits - budget.mthUnits) / budget.mthUnits : null,
         varianceVsBudgetMthNetSalesPct: null,
       };
     });
@@ -2341,6 +2350,47 @@ export async function getBusinessExcellencePublicDimensionRankingRows(
       growthVsPyPct,
     };
   });
+}
+
+async function getPrivateBudgetByProduct(reportingVersionId: string, cutoffDate: string) {
+  const client = getBigQueryClient();
+  const query = `
+    SELECT
+      resolved_product_id,
+      COALESCE(SUM(IF(
+        EXTRACT(YEAR FROM period_month) = EXTRACT(YEAR FROM DATE(@cutoffDate))
+        AND EXTRACT(MONTH FROM period_month) <= EXTRACT(MONTH FROM DATE(@cutoffDate)),
+        amount_value,
+        0
+      )), 0) AS budget_ytd_units,
+      COALESCE(SUM(IF(
+        period_month = DATE_TRUNC(DATE(@cutoffDate), MONTH),
+        amount_value,
+        0
+      )), 0) AS budget_mth_units
+    FROM \`${SELL_OUT_ENRICHED_VIEW}\`
+    WHERE reporting_version_id = @reportingVersionId
+      AND LOWER(TRIM(source_scope)) = 'privado'
+      AND LOWER(TRIM(channel)) = 'privado'
+      AND LOWER(TRIM(sales_group)) = 'units'
+      AND resolved_product_id IS NOT NULL
+      AND TRIM(resolved_product_id) != ''
+      AND period_month IS NOT NULL
+    GROUP BY resolved_product_id
+  `;
+  const [rows] = await client.query({
+    query,
+    params: { reportingVersionId, cutoffDate },
+  });
+  return new Map(
+    (rows as Array<Record<string, unknown>>).map((row) => [
+      String(row.resolved_product_id),
+      {
+        ytdUnits: Number(row.budget_ytd_units ?? 0),
+        mthUnits: Number(row.budget_mth_units ?? 0),
+      },
+    ]),
+  );
 }
 
 async function getPrivateBusinessUnitUnits(reportingVersionId?: string) {

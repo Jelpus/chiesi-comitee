@@ -2977,7 +2977,7 @@ const getCachedPrivateSellOutData = unstable_cache(
       productRows,
     };
   },
-  ['business-excellence-private-sell-out-v18'],
+  ['business-excellence-private-sell-out-v19'],
   { revalidate: 45 },
 );
 

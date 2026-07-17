@@ -15,6 +15,8 @@ type PublicMarketGroupAnalysisProps = {
   activeView: 'ytd' | 'mth';
 };
 
+const DEFAULT_MARKET_GROUP = 'Triples - media dosis';
+
 function formatPercent(value: number | null, digits = 1) {
   if (value === null) return 'N/A';
   return `${value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
@@ -46,7 +48,11 @@ export function PublicMarketGroupAnalysis({ rows, chartRows, rankingRows, active
     [rows],
   );
 
-  const [selectedMarketGroup, setSelectedMarketGroup] = useState(marketGroups[0] ?? '');
+  const [selectedMarketGroup, setSelectedMarketGroup] = useState(
+    marketGroups.find((marketGroup) => marketGroup === DEFAULT_MARKET_GROUP)
+      ?? marketGroups[0]
+      ?? '',
+  );
 
   const selectedRow = useMemo(
     () => rows.find((row) => (row.marketGroup ?? 'No Market') === selectedMarketGroup) ?? null,

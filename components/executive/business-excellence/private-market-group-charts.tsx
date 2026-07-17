@@ -26,6 +26,8 @@ type PrivateMarketGroupChartsProps = {
   initialMarketGroup?: string;
 };
 
+const DEFAULT_MARKET_GROUP = 'Triples - media dosis';
+
 function formatWeekLabel(value: string | null | undefined) {
   if (!value) return 'N/A';
   const normalized = String(value).trim();
@@ -59,7 +61,9 @@ export function PrivateMarketGroupCharts({
   const [selectedMarketGroup, setSelectedMarketGroup] = useState(
     initialMarketGroup && marketGroups.includes(initialMarketGroup)
       ? initialMarketGroup
-      : marketGroups[0] ?? '',
+      : marketGroups.find((marketGroup) => marketGroup === DEFAULT_MARKET_GROUP)
+        ?? marketGroups[0]
+        ?? '',
   );
 
   const filteredRows = useMemo(
