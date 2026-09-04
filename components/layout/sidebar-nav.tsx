@@ -42,6 +42,8 @@ export function SidebarNav({ collapsed = false, onNavigate, pendingHref }: Sideb
     '/prepare': ClipboardList,
     '/air': Plane,
     '/admin': Settings,
+    '/admin/planning': Calendar,
+    '/admin/settings': Settings,
     '/admin/periods': Calendar,
     '/admin/versions': Layers,
     '/admin/modules': Database,

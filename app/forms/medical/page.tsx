@@ -5,6 +5,7 @@ import { getLatestReportingVersion } from '@/lib/data/versions/get-latest-versio
 import { getAdminTargets } from '@/lib/data/targets';
 import { getMedicalMonthlyInputs } from '@/lib/data/medical-forms';
 import type { MedicalTargetRow } from '@/lib/data/medical-forms-schema';
+import { getAppSettings } from '@/lib/data/app-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +22,7 @@ type PageProps = {
 
 export default async function MedicalFormPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const latestVersion = await getLatestReportingVersion();
+  const [latestVersion, appSettings] = await Promise.all([getLatestReportingVersion(), getAppSettings()]);
   const periodMonth = (params.period ?? '').trim() || latestVersion.period_month;
   const rows = await getMedicalMonthlyInputs(periodMonth);
   const sourceAsOfMonth = rows[0]?.sourceAsOfMonth || periodMonth;
@@ -57,7 +58,9 @@ export default async function MedicalFormPage({ searchParams }: PageProps) {
           <p className="text-xs uppercase tracking-[0.14em] text-amber-800">Targets Governance</p>
           <p className="mt-1 text-sm text-slate-700">
             Objectives are managed centrally and cannot be edited in forms. To request changes, contact{' '}
-            <span className="font-semibold">r.garciac@chiesi.com</span>.
+            <a className="font-semibold underline" href={`mailto:${appSettings.committeeResponsibleEmail}`}>
+              {appSettings.committeeResponsibleEmail}
+            </a>.
           </p>
         </article>
         <MedicalForm

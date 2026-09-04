@@ -6,6 +6,8 @@ import { syncExecutiveHomeQuerySnapshot } from '@/lib/data/excecutive/sync-execu
 import { syncExecutiveInsightsPreReadSnapshot } from '@/lib/data/excecutive/sync-executive-insights-preread-snapshot';
 import { getActiveFormResponsibles, setFormResponsibleActive, upsertFormResponsible } from '@/lib/data/form-responsibles';
 import { sendFormRequestInfoEmail, sendRequestInfoSummaryEmail, type FormRequestInfoRecipient } from '@/lib/email/request-info';
+import { getAppSettings } from '@/lib/data/app-settings';
+import { getMexicoCityDate } from '@/lib/time/mexico-city';
 
 export type AdminActionState = {
   ok: boolean;
@@ -137,8 +139,8 @@ export async function requestFormsInfoAction(formData: FormData) {
   const periodMonth = String(formData.get('periodMonth') ?? '').trim();
   if (!periodMonth) throw new Error('Missing periodMonth.');
 
-  const formResponsibles = await getActiveFormResponsibles();
-  const today = asDateOnly(new Date());
+  const [formResponsibles, settings] = await Promise.all([getActiveFormResponsibles(), getAppSettings()]);
+  const today = new Date(`${getMexicoCityDate()}T00:00:00Z`);
   const windowEnd = addBusinessDays(today, 5);
   const periodLabel = formatPeriodLabel(periodMonth);
   const windowStartLabel = formatSpanishDate(today);
@@ -178,6 +180,7 @@ export async function requestFormsInfoAction(formData: FormData) {
         periodLabel,
         windowStart: windowStartLabel,
         windowEnd: windowEndLabel,
+        committeeResponsibleEmail: settings.committeeResponsibleEmail,
       });
       sent += 1;
     } catch (error) {
@@ -198,6 +201,7 @@ export async function requestFormsInfoAction(formData: FormData) {
     windowEnd: windowEndLabel,
     sentCount: 0,
     formSentCount: sent,
+    committeeResponsibleEmail: settings.committeeResponsibleEmail,
   });
 
   revalidatePath('/admin');

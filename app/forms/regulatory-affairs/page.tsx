@@ -6,6 +6,7 @@ import { getRaMonthlyInputs } from '@/lib/data/ra-forms';
 import { getAdminTargets } from '@/lib/data/targets';
 import type { RaCountMetric, RaTopicName } from '@/lib/data/ra-forms-schema';
 import { parseRaCountFields, RA_TOPICS, RA_TOPIC_COUNT_FIELDS } from '@/lib/data/ra-forms-schema';
+import { getAppSettings } from '@/lib/data/app-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +41,7 @@ type RegulatoryAffairsFormPageProps = {
 
 export default async function RegulatoryAffairsFormPage({ searchParams }: RegulatoryAffairsFormPageProps) {
   const params = await searchParams;
-  const latestVersion = await getLatestReportingVersion();
+  const [latestVersion, appSettings] = await Promise.all([getLatestReportingVersion(), getAppSettings()]);
   const periodMonth = (params.period ?? '').trim() || latestVersion.period_month;
   const rows = await getRaMonthlyInputs(periodMonth);
   const sourceAsOfMonth = rows[0]?.sourceAsOfMonth || periodMonth;
@@ -86,7 +87,9 @@ export default async function RegulatoryAffairsFormPage({ searchParams }: Regula
           <p className="text-xs uppercase tracking-[0.14em] text-amber-800">Targets Governance</p>
           <p className="mt-1 text-sm text-slate-700">
             Objectives are managed centrally and cannot be edited in forms. To request changes, contact{' '}
-            <span className="font-semibold">r.garciac@chiesi.com</span>.
+            <a className="font-semibold underline" href={`mailto:${appSettings.committeeResponsibleEmail}`}>
+              {appSettings.committeeResponsibleEmail}
+            </a>.
           </p>
         </article>
         <RegulatoryAffairsForm

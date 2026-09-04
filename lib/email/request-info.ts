@@ -25,6 +25,7 @@ export type RequestInfoEmailInput = {
   periodLabel: string;
   windowStart: string;
   windowEnd: string;
+  committeeResponsibleEmail: string;
 };
 
 export type RequestInfoSummaryEmailInput = {
@@ -35,6 +36,7 @@ export type RequestInfoSummaryEmailInput = {
   windowEnd: string;
   sentCount: number;
   formSentCount?: number;
+  committeeResponsibleEmail: string;
 };
 
 export type ReadyValidationRecipient = {
@@ -63,10 +65,9 @@ export type ReminderSummaryEmailInput = {
   recipients: ReminderRecipient[];
   periodLabel: string;
   sentCount: number;
+  committeeResponsibleEmail: string;
 };
 
-const ALWAYS_CC = 'r.garciac@chiesi.com';
-const SUMMARY_TO = 'r.garciac@chiesi.com';
 const SUMMARY_CC = 'guillermo@jelpus.com';
 const POWER_BI_VALIDATION_URL =
   'https://app.powerbi.com/reportEmbed?reportId=6fb0a335-e28d-4ce7-b119-99aa067a2912&autoAuth=true&ctid=80d1b489-5ad6-45c2-b757-0ef89ea02c5b';
@@ -149,7 +150,7 @@ export async function sendRequestInfoEmail(input: RequestInfoEmailInput) {
 
   await sendSendGridEmail({
     to: input.recipient.emailOwner,
-    cc: [ALWAYS_CC],
+    cc: [input.committeeResponsibleEmail],
     subject: `Solicitud de informacion - ${input.periodLabel}`,
     html,
   });
@@ -159,6 +160,7 @@ export async function sendReadyValidationEmail(input: {
   recipient: ReadyValidationRecipient;
   periodLabel: string;
   committeeMeetingDate: string;
+  committeeResponsibleEmail: string;
 }) {
   const ownerName = input.recipient.ownerName || 'Equipo';
   const html = `
@@ -224,7 +226,7 @@ export async function sendReadyValidationEmail(input: {
 
   await sendSendGridEmail({
     to: input.recipient.emailOwner,
-    cc: [ALWAYS_CC],
+    cc: [input.committeeResponsibleEmail],
     subject: `Validación de información para Committee - ${input.periodLabel}`,
     html,
   });
@@ -251,6 +253,7 @@ export async function sendReminderEmail(input: {
   periodLabel: string;
   periodMonth: string;
   reportingVersionId: string;
+  committeeResponsibleEmail: string;
 }) {
   const ownerName = input.recipient.ownerName || 'Equipo';
   const moduleNames = input.recipient.modules.map((module) => module.moduleName);
@@ -338,7 +341,7 @@ export async function sendReminderEmail(input: {
 
   await sendSendGridEmail({
     to: input.recipient.emailOwner,
-    cc: [ALWAYS_CC],
+    cc: [input.committeeResponsibleEmail],
     subject: `Reminder de informacion pendiente - ${input.periodLabel}`,
     html,
   });
@@ -430,7 +433,7 @@ export async function sendReminderSummaryEmail(input: ReminderSummaryEmailInput)
   `;
 
   await sendSendGridEmail({
-    to: SUMMARY_TO,
+    to: input.committeeResponsibleEmail,
     cc: [SUMMARY_CC],
     subject: `Resumen de recordatorios enviados - ${input.periodLabel}`,
     html,
@@ -442,6 +445,7 @@ export async function sendFormRequestInfoEmail(input: {
   periodLabel: string;
   windowStart: string;
   windowEnd: string;
+  committeeResponsibleEmail: string;
 }) {
   const ownerName = input.recipient.ownerName || 'Equipo';
   const html = `
@@ -491,7 +495,7 @@ export async function sendFormRequestInfoEmail(input: {
 
   await sendSendGridEmail({
     to: input.recipient.emailOwner,
-    cc: [ALWAYS_CC],
+    cc: [input.committeeResponsibleEmail],
     subject: `Solicitud de informacion de formularios - ${input.periodLabel}`,
     html,
   });
@@ -615,7 +619,7 @@ export async function sendRequestInfoSummaryEmail(input: RequestInfoSummaryEmail
   `;
 
   await sendSendGridEmail({
-    to: SUMMARY_TO,
+    to: input.committeeResponsibleEmail,
     cc: [SUMMARY_CC],
     subject: `Resumen solicitud de informacion - ${input.periodLabel}`,
     html,

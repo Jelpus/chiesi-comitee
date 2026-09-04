@@ -34,6 +34,14 @@ export type UpsertTargetInput = {
   updatedBy?: string;
 };
 
+export type CloneAdminTargetsInput = {
+  sourceReportingVersionId: string;
+  sourcePeriodMonth: string;
+  targetReportingVersionId: string;
+  targetPeriodMonth: string;
+  updatedBy?: string;
+};
+
 const TARGETS_TABLE = 'chiesi-committee.chiesi_committee_admin.kpi_targets';
 
 let ensureTargetsTablePromise: Promise<void> | null = null;
@@ -617,6 +625,61 @@ export async function upsertAdminTarget(input: UpsertTargetInput) {
   });
 
   return { ok: true as const, targetId: newTargetId };
+}
+
+function targetNaturalKey(row: Pick<AdminTargetRow, 'area' | 'kpiName'>) {
+  return `${row.area.trim().toLowerCase()}::${row.kpiName.trim().toLowerCase()}`;
+}
+
+export async function cloneAdminTargetsBetweenVersions(input: CloneAdminTargetsInput) {
+  const sourceReportingVersionId = input.sourceReportingVersionId.trim();
+  const sourcePeriodMonth = input.sourcePeriodMonth.trim();
+  const targetReportingVersionId = input.targetReportingVersionId.trim();
+  const targetPeriodMonth = input.targetPeriodMonth.trim();
+
+  if (!sourceReportingVersionId) throw new Error('Source reporting version is required.');
+  if (!sourcePeriodMonth) throw new Error('Source period month is required.');
+  if (!targetReportingVersionId) throw new Error('Target reporting version is required.');
+  if (!targetPeriodMonth) throw new Error('Target period month is required.');
+  if (sourceReportingVersionId === targetReportingVersionId) {
+    throw new Error('Source and target versions must be different.');
+  }
+
+  const [sourceRows, targetRows] = await Promise.all([
+    getAdminTargets(undefined, sourceReportingVersionId, sourcePeriodMonth),
+    getAdminTargets(undefined, targetReportingVersionId, targetPeriodMonth),
+  ]);
+  const targetIds = new Set(targetRows.map((row) => row.targetId));
+  const targetNaturalKeys = new Set(targetRows.map(targetNaturalKey));
+  let copied = 0;
+  let skipped = 0;
+
+  for (const row of sourceRows) {
+    if (targetIds.has(row.targetId) || targetNaturalKeys.has(targetNaturalKey(row))) {
+      skipped += 1;
+      continue;
+    }
+
+    await upsertAdminTarget({
+      targetId: row.targetId,
+      reportingVersionId: targetReportingVersionId,
+      periodMonth: targetPeriodMonth,
+      area: row.area,
+      kpiName: row.kpiName,
+      kpiLabel: row.kpiLabel ?? row.kpiName,
+      qtyUnit: row.qtyUnit,
+      targetValueText: row.targetValueText,
+      targetValueNumeric: row.targetValueNumeric,
+      formFields: row.formFields,
+      isActive: row.isActive,
+      updatedBy: input.updatedBy?.trim() || 'clone',
+    });
+    copied += 1;
+    targetIds.add(row.targetId);
+    targetNaturalKeys.add(targetNaturalKey(row));
+  }
+
+  return { ok: true as const, copied, skipped, sourceCount: sourceRows.length };
 }
 
 export async function deleteAdminTarget(targetId: string) {

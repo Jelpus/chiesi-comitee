@@ -12,6 +12,8 @@ export const appNavigation: AppNavItem[] = [
   { href: '/air/workbench-private', label: 'Private Workbench' },
   { href: '/air/workbench-public', label: 'Public Workbench' },
   { href: '/admin', label: 'Admin' },
+  { href: '/admin/planning', label: 'Planning' },
+  { href: '/admin/settings', label: 'Settings' },
   { href: '/admin/versions', label: 'Versions' },
   { href: '/admin/modules', label: 'Modules' },
   { href: '/admin/uploads', label: 'Uploads' },

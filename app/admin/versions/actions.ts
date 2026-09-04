@@ -18,6 +18,14 @@ import {
 } from '@/lib/email/request-info';
 import { getActiveFormResponsibles } from '@/lib/data/form-responsibles';
 import { getAdminHomeStatusData } from '@/lib/data/admin-home-status';
+import { getAppSettings } from '@/lib/data/app-settings';
+import {
+  beginNotificationDispatch,
+  finishNotificationDispatch,
+  type CommitteeNotificationSource,
+} from '@/lib/data/notification-dispatches';
+import { getMexicoCityDate } from '@/lib/time/mexico-city';
+import { getCommitteeValidationDate } from '@/lib/data/committee-planning';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
 const DIM_MODULE_TABLE = 'chiesi-committee.chiesi_committee_core.dim_module';
@@ -329,6 +337,8 @@ export async function markReportingVersionReady(input: {
 export async function requestReportingVersionInfo(input: {
   reportingVersionId: string;
   periodMonth: string;
+  windowEndDate?: string;
+  source?: CommitteeNotificationSource;
 }) {
   const reportingVersionId = (input.reportingVersionId ?? '').trim();
   const periodMonth = (input.periodMonth ?? '').trim();
@@ -354,13 +364,34 @@ export async function requestReportingVersionInfo(input: {
     throw new Error('Reporting version not found.');
   }
 
-  const today = asDateOnly(new Date());
-  const windowEnd = addBusinessDays(today, 3);
-  const recipients = await getRequestInfoRecipients();
-  const formResponsibles = await getActiveFormResponsibles();
+  const dispatch = await beginNotificationDispatch({
+    reportingVersionId,
+    periodMonth,
+    notificationType: 'request_info',
+    source: input.source ?? 'manual',
+  });
+  if (!dispatch) {
+    return { ok: true as const, sent: 0, failed: 0, skipped: true as const, reason: 'already_sent_today' as const };
+  }
+
+  let dispatchSentCount = 0;
+  try {
+
+  const today = new Date(`${getMexicoCityDate()}T00:00:00Z`);
+  const configuredWindowEnd = input.windowEndDate?.trim() || await getCommitteeValidationDate(periodMonth);
+  if (configuredWindowEnd && !/^\d{4}-\d{2}-\d{2}$/.test(configuredWindowEnd)) {
+    throw new Error('windowEndDate must use YYYY-MM-DD.');
+  }
+  const windowEnd = configuredWindowEnd ? new Date(`${configuredWindowEnd}T00:00:00Z`) : addBusinessDays(today, 3);
+  const [recipients, formResponsibles, settings] = await Promise.all([
+    getRequestInfoRecipients(),
+    getActiveFormResponsibles(),
+    getAppSettings(),
+  ]);
 
   if (recipients.length === 0 && formResponsibles.length === 0) {
-    return { ok: true as const, sent: 0, failed: 0 };
+    await finishNotificationDispatch({ dispatchId: dispatch.dispatchId, status: 'succeeded', sentCount: 0, message: 'No Request Info recipients.' });
+    return { ok: true as const, sent: 0, failed: 0, skipped: false as const };
   }
 
   const periodMonthValue = String(versionRow.period_month ?? periodMonth);
@@ -379,8 +410,10 @@ export async function requestReportingVersionInfo(input: {
         periodLabel,
         windowStart: windowStartLabel,
         windowEnd: windowEndLabel,
+        committeeResponsibleEmail: settings.committeeResponsibleEmail,
       });
       sent += 1;
+      dispatchSentCount = sent + formsSent;
     } catch (error) {
       failed += 1;
       errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
@@ -417,8 +450,10 @@ export async function requestReportingVersionInfo(input: {
         periodLabel,
         windowStart: windowStartLabel,
         windowEnd: windowEndLabel,
+        committeeResponsibleEmail: settings.committeeResponsibleEmail,
       });
       formsSent += 1;
+      dispatchSentCount = sent + formsSent;
     } catch (error) {
       failed += 1;
       errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
@@ -439,14 +474,31 @@ export async function requestReportingVersionInfo(input: {
     windowEnd: windowEndLabel,
     sentCount: sent,
     formSentCount: formsSent,
+    committeeResponsibleEmail: settings.committeeResponsibleEmail,
   });
 
-  return { ok: true as const, sent: sent + formsSent, failed };
+  await finishNotificationDispatch({
+    dispatchId: dispatch.dispatchId,
+    status: 'succeeded',
+    sentCount: sent + formsSent,
+    message: `${sent + formsSent} Request Info email(s) sent.`,
+  });
+  return { ok: true as const, sent: sent + formsSent, failed, skipped: false as const };
+  } catch (error) {
+    await finishNotificationDispatch({
+      dispatchId: dispatch.dispatchId,
+      status: 'failed',
+      sentCount: dispatchSentCount,
+      message: error instanceof Error ? error.message : 'Unknown Request Info error',
+    });
+    throw error;
+  }
 }
 
 export async function requestReportingVersionReminder(input: {
   reportingVersionId: string;
   periodMonth: string;
+  source?: CommitteeNotificationSource;
 }) {
   const reportingVersionId = (input.reportingVersionId ?? '').trim();
   const periodMonth = (input.periodMonth ?? '').trim();
@@ -472,6 +524,20 @@ export async function requestReportingVersionReminder(input: {
     throw new Error('Reporting version not found.');
   }
 
+  const dispatch = await beginNotificationDispatch({
+    reportingVersionId,
+    periodMonth,
+    notificationType: 'reminder',
+    source: input.source ?? 'manual',
+  });
+  if (!dispatch) {
+    return { ok: true as const, sent: 0, failed: 0, skipped: true as const, reason: 'already_sent_today' as const };
+  }
+
+  let dispatchSentCount = 0;
+  try {
+
+  const settings = await getAppSettings();
   const periodMonthValue = String(versionRow.period_month ?? periodMonth);
   const periodLabel = formatPeriodLabel(periodMonthValue);
   const recipientsByEmail = await getPendingModuleReminderRecipients({
@@ -520,7 +586,8 @@ export async function requestReportingVersionReminder(input: {
     (recipient) => recipient.modules.length > 0 || recipient.forms.length > 0,
   );
   if (recipients.length === 0) {
-    return { ok: true as const, sent: 0, failed: 0 };
+    await finishNotificationDispatch({ dispatchId: dispatch.dispatchId, status: 'succeeded', sentCount: 0, message: 'No pending recipients.' });
+    return { ok: true as const, sent: 0, failed: 0, skipped: false as const };
   }
 
   let sent = 0;
@@ -534,8 +601,10 @@ export async function requestReportingVersionReminder(input: {
         periodLabel,
         periodMonth: periodMonthValue,
         reportingVersionId,
+        committeeResponsibleEmail: settings.committeeResponsibleEmail,
       });
       sent += 1;
+      dispatchSentCount = sent;
     } catch (error) {
       failed += 1;
       errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
@@ -552,15 +621,32 @@ export async function requestReportingVersionReminder(input: {
     recipients,
     periodLabel,
     sentCount: sent,
+    committeeResponsibleEmail: settings.committeeResponsibleEmail,
   });
 
-  return { ok: true as const, sent, failed };
+  await finishNotificationDispatch({
+    dispatchId: dispatch.dispatchId,
+    status: 'succeeded',
+    sentCount: sent,
+    message: `${sent} reminder email(s) sent.`,
+  });
+  return { ok: true as const, sent, failed, skipped: false as const };
+  } catch (error) {
+    await finishNotificationDispatch({
+      dispatchId: dispatch.dispatchId,
+      status: 'failed',
+      sentCount: dispatchSentCount,
+      message: error instanceof Error ? error.message : 'Unknown reminder error',
+    });
+    throw error;
+  }
 }
 
 export async function notifyReportingVersionReadyValidation(input: {
   reportingVersionId: string;
   periodMonth: string;
   committeeMeetingDate: string;
+  source?: CommitteeNotificationSource;
 }) {
   const reportingVersionId = (input.reportingVersionId ?? '').trim();
   const periodMonth = (input.periodMonth ?? '').trim();
@@ -584,6 +670,20 @@ export async function notifyReportingVersionReadyValidation(input: {
   const versionRow = (versionRows as Array<Record<string, unknown>>)[0];
   if (!versionRow) throw new Error('Reporting version not found.');
 
+  const dispatch = await beginNotificationDispatch({
+    reportingVersionId,
+    periodMonth,
+    notificationType: 'validation',
+    source: input.source ?? 'manual',
+  });
+  if (!dispatch) {
+    return { ok: true as const, sent: 0, failed: 0, skipped: true as const, reason: 'already_sent_today' as const };
+  }
+
+  let dispatchSentCount = 0;
+  try {
+
+  const settings = await getAppSettings();
   const recipientsByEmail = new Map<string, ReadyValidationRecipient>();
   for (const recipient of await getRequestInfoRecipients()) {
     const emailOwner = normalizeEmail(recipient.emailOwner);
@@ -604,7 +704,8 @@ export async function notifyReportingVersionReadyValidation(input: {
 
   const recipients = [...recipientsByEmail.values()];
   if (recipients.length === 0) {
-    return { ok: true as const, sent: 0, failed: 0 };
+    await finishNotificationDispatch({ dispatchId: dispatch.dispatchId, status: 'succeeded', sentCount: 0, message: 'No validation recipients.' });
+    return { ok: true as const, sent: 0, failed: 0, skipped: false as const };
   }
 
   const periodLabel = formatPeriodLabel(String(versionRow.period_month ?? periodMonth));
@@ -619,8 +720,10 @@ export async function notifyReportingVersionReadyValidation(input: {
         recipient,
         periodLabel,
         committeeMeetingDate: meetingDateLabel,
+        committeeResponsibleEmail: settings.committeeResponsibleEmail,
       });
       sent += 1;
+      dispatchSentCount = sent;
     } catch (error) {
       failed += 1;
       errors.push(`${recipient.emailOwner}: ${error instanceof Error ? error.message : 'Unknown email error'}`);
@@ -633,7 +736,22 @@ export async function notifyReportingVersionReadyValidation(input: {
     throw new Error(`Sent ${sent} validation emails, but ${failed} failed. ${errors.slice(0, 3).join(' | ')}`);
   }
 
-  return { ok: true as const, sent, failed };
+  await finishNotificationDispatch({
+    dispatchId: dispatch.dispatchId,
+    status: 'succeeded',
+    sentCount: sent,
+    message: `${sent} validation email(s) sent.`,
+  });
+  return { ok: true as const, sent, failed, skipped: false as const };
+  } catch (error) {
+    await finishNotificationDispatch({
+      dispatchId: dispatch.dispatchId,
+      status: 'failed',
+      sentCount: dispatchSentCount,
+      message: error instanceof Error ? error.message : 'Unknown validation error',
+    });
+    throw error;
+  }
 }
 
 export async function sendReadyValidationTestEmail(input: {
@@ -663,6 +781,8 @@ export async function sendReadyValidationTestEmail(input: {
   const versionRow = (versionRows as Array<Record<string, unknown>>)[0];
   if (!versionRow) throw new Error('Reporting version not found.');
 
+  const settings = await getAppSettings();
+
   await sendReadyValidationEmail({
     recipient: {
       ownerName: 'Guillermo',
@@ -670,6 +790,7 @@ export async function sendReadyValidationTestEmail(input: {
     },
     periodLabel: formatPeriodLabel(String(versionRow.period_month ?? periodMonth)),
     committeeMeetingDate: formatSpanishDate(new Date(`${committeeMeetingDate}T00:00:00Z`)),
+    committeeResponsibleEmail: settings.committeeResponsibleEmail,
   });
 
   return { ok: true as const, sent: 1 };

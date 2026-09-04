@@ -10,6 +10,7 @@ import {
   LEGAL_COMPLIANCE_KPIS,
   parseLegalComplianceFields,
 } from '@/lib/data/legal-compliance-forms-schema';
+import { getAppSettings } from '@/lib/data/app-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,7 @@ type PageProps = { searchParams: Promise<{ period?: string }> };
 
 export default async function LegalComplianceFormPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const latestVersion = await getLatestReportingVersion();
+  const [latestVersion, appSettings] = await Promise.all([getLatestReportingVersion(), getAppSettings()]);
   const periodMonth = (params.period ?? '').trim() || latestVersion.period_month;
   const rows = await getLegalComplianceMonthlyInputs(periodMonth);
   const sourceAsOfMonth = rows[0]?.sourceAsOfMonth || periodMonth;
@@ -66,7 +67,9 @@ export default async function LegalComplianceFormPage({ searchParams }: PageProp
           <p className="text-xs uppercase tracking-[0.14em] text-amber-800">Targets Governance</p>
           <p className="mt-1 text-sm text-slate-700">
             Objectives are managed centrally and cannot be edited in forms. To request changes, contact{' '}
-            <span className="font-semibold">r.garciac@chiesi.com</span>.
+            <a className="font-semibold underline" href={`mailto:${appSettings.committeeResponsibleEmail}`}>
+              {appSettings.committeeResponsibleEmail}
+            </a>.
           </p>
         </article>
         <LegalComplianceForm

@@ -4,5 +4,11 @@
       "maxDuration": 300,
       "memory": 3008
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/committee-planning",
+      "schedule": "0 12 * * *"
+    }
+  ]
 }

@@ -84,7 +84,11 @@ export function VersionsTable({ rows }: VersionsTableProps) {
             periodMonth: row.periodMonth,
             committeeMeetingDate: meetingDate,
           });
-          setMessage(`Version ${row.versionName} marked ready to show. Validation emails sent to ${result.sent} owner(s).`);
+          setMessage(
+            result.skipped
+              ? `Version ${row.versionName} marked ready. Validation was already sent today (Mexico City); no duplicate was sent.`
+              : `Version ${row.versionName} marked ready to show. Validation emails sent to ${result.sent} owner(s).`,
+          );
         } else {
           setMessage(`Version ${row.versionName} marked ready to show.`);
         }
@@ -285,7 +289,11 @@ export function VersionsTable({ rows }: VersionsTableProps) {
                                   reportingVersionId: row.reportingVersionId,
                                   periodMonth: row.periodMonth,
                                 });
-                                setMessage(`Request Info sent to ${result.sent} owner(s).`);
+                                setMessage(
+                                  result.skipped
+                                    ? 'Request Info was already sent today (Mexico City); no duplicate was sent.'
+                                    : `Request Info sent to ${result.sent} owner(s).`,
+                                );
                               } catch (error) {
                                 setMessage(error instanceof Error ? error.message : 'Failed to send Request Info emails.');
                               } finally {
@@ -313,7 +321,11 @@ export function VersionsTable({ rows }: VersionsTableProps) {
                                   reportingVersionId: row.reportingVersionId,
                                   periodMonth: row.periodMonth,
                                 });
-                                setMessage(`Reminder sent to ${result.sent} owner(s) with pending items.`);
+                                setMessage(
+                                  result.skipped
+                                    ? 'A reminder was already sent today (Mexico City); no duplicate was sent.'
+                                    : `Reminder sent to ${result.sent} owner(s) with pending items.`,
+                                );
                               } catch (error) {
                                 setMessage(error instanceof Error ? error.message : 'Failed to send Reminder emails.');
                               } finally {
