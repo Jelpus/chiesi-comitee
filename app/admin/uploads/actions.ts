@@ -2628,7 +2628,9 @@ export async function processUpload(uploadId: string) {
         throw new Error(`Upload ${uploadId} is not ready to process (current status: ${status}).`);
     }
 
+    const startedAt = Date.now();
     let sampleRowsChecked = 0;
+    console.info('[processUpload] started', { uploadId, moduleCode, status });
     try {
         // Phase 1: load RAW only.
         await setUploadStatus(uploadId, 'parsing');
@@ -2651,6 +2653,13 @@ export async function processUpload(uploadId: string) {
                 await deleteTemporaryNdjson(tempFile.bucketName, tempFile.ndjsonObjectPath);
             }
             await updateUploadCounters(uploadId, tempFile.rowCount);
+
+            console.info('[processUpload] completed', {
+                uploadId,
+                moduleCode,
+                rowsTotal: tempFile.rowCount,
+                durationMs: Date.now() - startedAt,
+            });
 
             revalidatePath('/admin/uploads');
             revalidatePath('/admin/uploads/logs');
@@ -2758,6 +2767,13 @@ export async function processUpload(uploadId: string) {
         }
         await updateUploadCounters(uploadId, tempFile.rowCount);
 
+        console.info('[processUpload] completed', {
+            uploadId,
+            moduleCode,
+            rowsTotal: tempFile.rowCount,
+            durationMs: Date.now() - startedAt,
+        });
+
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         return {
@@ -2772,6 +2788,12 @@ export async function processUpload(uploadId: string) {
         const message = isMemoryPressureError(error)
             ? 'Process failed because the file exceeded available memory while reading/parsing rows. Try splitting the source file, exporting to CSV, or processing it from Admin Uploads with a larger runtime.'
             : error instanceof Error ? error.message : 'Unknown process error';
+        console.error('[processUpload] failed', {
+            uploadId,
+            moduleCode,
+            durationMs: Date.now() - startedAt,
+            error: message,
+        });
         const [countRows] = await getBigQueryClient().query({
             query: `
         SELECT COUNT(1) AS total
@@ -2799,6 +2821,9 @@ export async function normalizeExistingUpload(uploadId: string) {
         throw new Error(`Upload ${uploadId} is not ready to normalize (current status: ${status}).`);
     }
 
+    const startedAt = Date.now();
+    console.info('[normalizeExistingUpload] started', { uploadId, moduleCode, status });
+
     try {
         await setUploadStatus(uploadId, 'normalizing');
         const result = await normalizeUpload(uploadId, moduleCode);
@@ -2824,11 +2849,27 @@ export async function normalizeExistingUpload(uploadId: string) {
             rowsError: result.rowsError,
         });
 
+        console.info('[normalizeExistingUpload] completed', {
+            uploadId,
+            moduleCode,
+            normalizedRows: result.normalizedRows,
+            rowsValid: result.rowsValid,
+            rowsSkipped: result.rowsSkipped,
+            rowsError: result.rowsError,
+            durationMs: Date.now() - startedAt,
+        });
+
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         return { ...result, phase: 'normalized' as const };
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown normalization error';
+        console.error('[normalizeExistingUpload] failed', {
+            uploadId,
+            moduleCode,
+            durationMs: Date.now() - startedAt,
+            error: message,
+        });
         await setUploadError(uploadId, message, 'raw_loaded');
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');

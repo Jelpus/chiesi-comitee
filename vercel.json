@@ -1,7 +1,7 @@
 {
   "functions": {
     "app/**": {
-      "maxDuration": 300,
+      "maxDuration": 800,
       "memory": 3008
     }
   },

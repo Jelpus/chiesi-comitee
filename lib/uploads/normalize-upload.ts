@@ -591,27 +591,39 @@ function chunkItemsByApproxBytes<T>(
   return chunks;
 }
 
+const NORMALIZATION_QUERY_CONCURRENCY = 4;
+const NORMALIZATION_MAX_PARAMETER_BYTES = 2_000_000;
+const NORMALIZATION_MAX_PARAMETER_ROWS = 1_500;
+
 async function runChunksInParallel<T>(
   chunks: T[][],
   worker: (chunk: T[]) => Promise<void>,
   maxConcurrency: number,
 ) {
   let nextChunkIndex = 0;
+  let firstError: unknown = null;
 
   async function runWorker() {
-    while (true) {
+    while (firstError == null) {
       const chunkIndex = nextChunkIndex;
       nextChunkIndex += 1;
       if (chunkIndex >= chunks.length) return;
-      await worker(chunks[chunkIndex]);
+
+      try {
+        await worker(chunks[chunkIndex]);
+      } catch (error) {
+        firstError = error;
+      }
     }
   }
 
+  const workerCount = Math.max(1, Math.trunc(maxConcurrency));
   const workers = Array.from(
-    { length: Math.min(maxConcurrency, Math.max(chunks.length, 1)) },
+    { length: Math.min(workerCount, Math.max(chunks.length, 1)) },
     () => runWorker(),
   );
   await Promise.all(workers);
+  if (firstError != null) throw firstError;
 }
 
 function isConcurrentUpdateError(error: unknown) {
@@ -2049,7 +2061,7 @@ async function loadSalesInternalStaging(uploadId: string, rows: SalesInternalNor
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -2181,7 +2193,7 @@ async function appendCloseupStagingRows(uploadId: string, rows: CloseupNormalize
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -2317,7 +2329,7 @@ async function loadPmmStaging(uploadId: string, rows: PmmNormalizedRow[]) {
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -2710,7 +2722,7 @@ async function loadSellOutStaging(uploadId: string, rows: SellOutNormalizedRow[]
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -2834,7 +2846,7 @@ async function loadBusinessExcellenceCuotasStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -2958,7 +2970,7 @@ async function loadBrickAssignmentStaging(uploadId: string, rows: BrickAssignmen
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -3783,7 +3795,7 @@ async function loadWeeklyTrackingStaging(uploadId: string, rows: WeeklyTrackingN
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -3931,7 +3943,7 @@ async function loadBusinessExcellenceStandardDaysStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -4162,7 +4174,7 @@ async function loadBusinessExcellenceRecompraLexicomp(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -4386,7 +4398,7 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -4575,7 +4587,7 @@ async function loadBusinessExcellenceSalesforceTftStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -4786,7 +4798,7 @@ async function loadBusinessExcellenceSalesforceInteractionsStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -5332,7 +5344,7 @@ async function loadCommercialOperationsDsoStaging(
         }),
       );
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -5469,7 +5481,7 @@ async function loadCommercialOperationsArStaging(
           }),
         );
       },
-      1,
+      NORMALIZATION_QUERY_CONCURRENCY,
     );
   }
 
@@ -5548,7 +5560,7 @@ async function loadCommercialOperationsArStaging(
         }),
       );
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -5768,7 +5780,7 @@ async function loadCommercialOperationsStocksStaging(
         }),
       );
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -6483,8 +6495,8 @@ async function loadCommercialOperationsDeliveryOrdersStaging(
   `;
 
   const chunks = chunkItemsByApproxBytes(rows, {
-    maxBytesPerChunk: 700_000,
-    maxItemsPerChunk: 300,
+    maxBytesPerChunk: NORMALIZATION_MAX_PARAMETER_BYTES,
+    maxItemsPerChunk: NORMALIZATION_MAX_PARAMETER_ROWS,
     estimateBytes: (row) => Buffer.byteLength(JSON.stringify(row.payload ?? {}), 'utf8') + 1800,
   });
 
@@ -6580,7 +6592,7 @@ async function loadCommercialOperationsDeliveryOrdersStaging(
     async (chunk) => {
       await insertChunkWithAdaptiveSplit(chunk);
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -6727,7 +6739,7 @@ async function loadCommercialOperationsIncidenciasStaging(uploadId: string, rows
         })),
       },
     }));
-  }, 1);
+  }, NORMALIZATION_QUERY_CONCURRENCY);
 }
 
 function getSanctionsPeriodMonth(payload: Record<string, unknown>, index: Map<string, unknown>, asOfMonth: string | null) {
@@ -7031,7 +7043,7 @@ async function loadCommercialOperationsSanctionsStaging(uploadId: string, rows: 
         })),
       },
     }));
-  }, 1);
+  }, NORMALIZATION_QUERY_CONCURRENCY);
 }
 
 function normalizeCommercialOperationsGovernmentContractProgress(rows: RawUploadRow[]) {
@@ -7437,7 +7449,7 @@ async function loadCommercialOperationsGovernmentContractProgressStaging(
         }),
       );
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -7610,7 +7622,7 @@ async function loadHumanResourcesMetricStaging(uploadId: string, rows: HumanReso
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -7838,7 +7850,7 @@ async function loadHumanResourcesTurnoverStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -8099,7 +8111,7 @@ async function loadHumanResourcesTrainingStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -8342,7 +8354,7 @@ async function loadHumanResourcesOpenVacancyStaging(
         },
       });
     },
-    4,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -8460,7 +8472,7 @@ async function loadOpexMasterCatalogStaging(
         }),
       );
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 
@@ -8540,7 +8552,7 @@ async function loadOpexMovementsStaging(
         }),
       );
     },
-    1,
+    NORMALIZATION_QUERY_CONCURRENCY,
   );
 }
 

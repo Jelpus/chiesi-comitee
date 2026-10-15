@@ -3,6 +3,7 @@ import { SectionHeader } from '@/components/ui/section-header';
 import { getUploadsPageData } from '@/lib/data/uploads/get-uploads-page-data';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 800;
 
 type UploadLogsPageProps = {
   searchParams: Promise<{

@@ -2,7 +2,7 @@ import { PrepareAreaView } from '@/components/prepare/prepare-area-view';
 import { getPrepareAreaData } from '@/lib/data/prepare';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 type PrepareAreaPageProps = {
   params: Promise<{
