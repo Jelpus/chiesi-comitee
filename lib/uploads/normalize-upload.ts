@@ -751,6 +751,7 @@ async function ensureCloseupStagingSchema() {
 
 export type NormalizeUploadResult = {
   ok: true;
+  incomplete?: boolean;
   normalizedRows: number;
   rowsValid: number;
   rowsSkipped: number;
@@ -3164,14 +3165,60 @@ async function normalizeBusinessExcellenceCloseup(rows: RawUploadRow[]) {
 
 async function normalizeBusinessExcellenceCloseupChunked(uploadId: string): Promise<NormalizeUploadResult> {
   const batchSize = 5000;
+  const maxPagesPerCall = 10;
   let lastRowNumber = 0;
   let normalizedRows = 0;
   let rowsValid = 0;
   let rowsSkipped = 0;
   let rowsError = 0;
   const issueCounts = new Map<string, number>();
+  const errorValidations: RowValidationResult[] = [];
+  let pagesProcessed = 0;
+  let canPauseBetweenCalls = true;
 
-  await clearCloseupStagingForUpload(uploadId);
+  const client = getBigQueryClient();
+  await ensureCloseupStagingSchema();
+  const [stagingProgress] = await client.query({
+    query: `
+      SELECT COUNT(*) AS row_count, COUNT(DISTINCT row_number) AS distinct_rows,
+        MIN(row_number) AS first_row, MAX(row_number) AS last_row
+      FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_closeup\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+  const progress = (stagingProgress as Record<string, unknown>[])[0];
+  const stagedCount = Number(progress?.row_count ?? 0);
+  const firstStagedRow = Number(progress?.first_row ?? 0);
+  const lastStagedRow = Number(progress?.last_row ?? 0);
+  let canResume = false;
+  if (stagedCount > 0 && stagedCount === Number(progress?.distinct_rows ?? 0)) {
+    const [rawProgress] = await client.query({
+      query: `
+        SELECT COUNT(*) AS row_count,
+          COUNTIF(validation_status IN ('valid', 'pending')) AS resumable_rows,
+          MIN(row_number) AS first_row
+        FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+        WHERE upload_id = @uploadId AND row_number <= @lastStagedRow
+      `,
+      params: { uploadId, lastStagedRow },
+    });
+    const raw = (rawProgress as Record<string, unknown>[])[0];
+    canResume =
+      Number(raw?.row_count ?? 0) === stagedCount &&
+      Number(raw?.resumable_rows ?? 0) === stagedCount &&
+      Number(raw?.first_row ?? 0) === firstStagedRow &&
+      lastStagedRow - firstStagedRow + 1 === stagedCount;
+  }
+
+  if (canResume) {
+    lastRowNumber = lastStagedRow;
+    normalizedRows = stagedCount;
+    rowsValid = stagedCount;
+    console.info('[normalizeBusinessExcellenceCloseupChunked] resuming', { uploadId, lastRowNumber, stagedCount });
+  } else {
+    await clearCloseupStagingForUpload(uploadId);
+  }
 
   while (true) {
     const rows = await getRawRowsPage(uploadId, lastRowNumber, batchSize);
@@ -3179,8 +3226,10 @@ async function normalizeBusinessExcellenceCloseupChunked(uploadId: string): Prom
 
     lastRowNumber = Math.max(...rows.map((row) => Number(row.row_number ?? 0)));
     const result = await normalizeBusinessExcellenceCloseup(rows);
-    await updateRawValidationStatus(uploadId, result.validations);
     await appendCloseupStagingRows(uploadId, result.normalizedRows);
+    errorValidations.push(...result.validations.filter((item) => item.validationStatus === 'error'));
+    pagesProcessed += 1;
+    canPauseBetweenCalls &&= result.normalizedRows.length === rows.length;
 
     normalizedRows += result.normalizedRows.length;
     rowsValid += countValidRows(result.validations);
@@ -3190,7 +3239,41 @@ async function normalizeBusinessExcellenceCloseupChunked(uploadId: string): Prom
     for (const issue of summarizeValidationIssues(result.validations, Number.MAX_SAFE_INTEGER)) {
       issueCounts.set(issue.reason, (issueCounts.get(issue.reason) ?? 0) + issue.count);
     }
+
+    if (pagesProcessed >= maxPagesPerCall && canPauseBetweenCalls) {
+      const [remainingRows] = await client.query({
+        query: `
+          SELECT COUNT(*) AS total
+          FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+          WHERE upload_id = @uploadId AND row_number > @lastRowNumber
+        `,
+        params: { uploadId, lastRowNumber },
+      });
+      if (Number((remainingRows as Record<string, unknown>[])[0]?.total ?? 0) > 0) {
+        return {
+          ok: true,
+          incomplete: true,
+          normalizedRows,
+          rowsValid,
+          rowsSkipped,
+          rowsError,
+          topValidationIssues: [],
+        };
+      }
+    }
   }
+
+  // One DML update for the full file avoids a BigQuery table scan for every
+  // 5,000-row page. Keep row-specific error details in smaller follow-up updates.
+  await client.query({
+    query: `
+      UPDATE \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+      SET validation_status = 'valid', validation_error_json = PARSE_JSON('[]')
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+  await updateRawValidationStatus(uploadId, errorValidations);
 
   return {
     ok: true,
@@ -3797,6 +3880,157 @@ async function loadWeeklyTrackingStaging(uploadId: string, rows: WeeklyTrackingN
     },
     NORMALIZATION_QUERY_CONCURRENCY,
   );
+}
+
+// Compact IQVIA CSVs are large enough that sending every normalized row back
+// through the application can exceed the function deadline. Normalize those
+// files inside BigQuery; retain the existing parser for other week formats.
+async function normalizeCompactWeeklyInBigQuery(
+  uploadId: string,
+  asOfMonth: string | null,
+): Promise<NormalizeUploadResult | null> {
+  if (!asOfMonth || !/^\d{4}-\d{2}-01$/.test(asOfMonth)) return null;
+  const client = getBigQueryClient();
+  const [shapeRows] = await client.query({
+    query: `
+      SELECT COUNT(*) AS total,
+        COUNT(DISTINCT row_number) AS distinct_rows,
+        COUNT(DISTINCT sheet_name) AS sheet_count,
+        COUNTIF(
+          NOT REGEXP_CONTAINS(COALESCE(JSON_VALUE(row_payload_json, '$.Week'), ''), r'^20\\d{2}(0[1-9]|[1-4]\\d|5[0-3])$')
+          OR (
+            JSON_VALUE(row_payload_json, '$.Un') IS NOT NULL
+            AND NOT REGEXP_CONTAINS(TRIM(JSON_VALUE(row_payload_json, '$.Un')), r'^-?(\\d+(\\.\\d+)?|\\.\\d+)$')
+          )
+          OR (
+            JSON_VALUE(row_payload_json, '$.Lc') IS NOT NULL
+            AND NOT REGEXP_CONTAINS(TRIM(JSON_VALUE(row_payload_json, '$.Lc')), r'^-?(\\d+(\\.\\d+)?|\\.\\d+)$')
+          )
+          OR (JSON_VALUE(row_payload_json, '$.Un') IS NULL AND JSON_VALUE(row_payload_json, '$.Lc') IS NULL)
+        ) AS unsupported
+      FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+      WHERE upload_id = @uploadId
+    `,
+    params: { uploadId },
+  });
+  const shape = (shapeRows as Array<Record<string, unknown>>)[0];
+  if (
+    Number(shape?.total ?? 0) === 0 ||
+    Number(shape?.total ?? 0) !== Number(shape?.distinct_rows ?? 0) ||
+    Number(shape?.sheet_count ?? 0) !== 1 ||
+    Number(shape?.unsupported ?? 0) > 0
+  ) return null;
+
+  const stagingTable = 'chiesi-committee.chiesi_committee_stg.stg_business_excellence_weekly_tracking';
+  await client.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`${stagingTable}\` (
+        upload_id STRING, row_number INT64, week_raw STRING, period_month DATE,
+        brick_code STRING, brick_description STRING, prod_des STRING, prod_code STRING,
+        pack_des STRING, atciv_code STRING, atciv_desc STRING, pack_code STRING,
+        market_code STRING, sales_group STRING, amount_value NUMERIC,
+        source_payload_json JSON, normalized_at TIMESTAMP
+      )
+    `,
+  });
+  await client.query({
+    query: `
+      DELETE FROM \`${stagingTable}\`
+      WHERE upload_id IN (
+        SELECT u.upload_id
+        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
+        JOIN \`chiesi-committee.chiesi_committee_raw.uploads\` current_upload
+          ON current_upload.upload_id = @uploadId
+         AND u.reporting_version_id = current_upload.reporting_version_id
+         AND u.period_month = current_upload.period_month
+        WHERE LOWER(TRIM(u.module_code)) IN (
+          'business_excellence_iqvia_weekly', 'business_excellence_weekly_tracking',
+          'iqvia_weekly', 'weekly_tracking'
+        )
+      )
+    `,
+    params: { uploadId },
+  });
+
+  const parsedRows = `
+    WITH source_rows AS (
+      SELECT row_number, row_payload_json,
+        TRIM(JSON_VALUE(row_payload_json, '$.Week')) AS week_raw,
+        SAFE_CAST(TRIM(JSON_VALUE(row_payload_json, '$.Un')) AS NUMERIC) AS units_value,
+        SAFE_CAST(TRIM(JSON_VALUE(row_payload_json, '$.Lc')) AS NUMERIC) AS sales_value
+      FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\`
+      WHERE upload_id = @uploadId
+    ), parsed AS (
+      SELECT *, DATE_TRUNC(DATE_ADD(
+        DATE_TRUNC(DATE(CAST(SUBSTR(week_raw, 1, 4) AS INT64), 1, 4), WEEK(MONDAY)),
+        INTERVAL (CAST(SUBSTR(week_raw, 5, 2) AS INT64) - 1) WEEK
+      ), MONTH) AS source_month
+      FROM source_rows
+    )
+  `;
+  await client.query({
+    query: `
+      UPDATE \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\` target
+      SET validation_status = IF(
+          source.source_month BETWEEN DATE_SUB(DATE(@asOfMonth), INTERVAL 23 MONTH) AND DATE(@asOfMonth),
+          'valid', 'skipped'
+        ),
+        validation_error_json = IF(
+          source.source_month BETWEEN DATE_SUB(DATE(@asOfMonth), INTERVAL 23 MONTH) AND DATE(@asOfMonth),
+          PARSE_JSON('[]'),
+          TO_JSON([CONCAT('Skipped: outside 24-month window (',
+            CAST(DATE_SUB(DATE(@asOfMonth), INTERVAL 23 MONTH) AS STRING), ' to ', @asOfMonth, ').')])
+        )
+      FROM (${parsedRows} SELECT row_number, source_month FROM parsed) source
+      WHERE target.upload_id = @uploadId AND target.row_number = source.row_number
+    `,
+    params: { uploadId, asOfMonth },
+  });
+  await client.query({
+    query: `
+      INSERT INTO \`${stagingTable}\` (
+        upload_id, row_number, week_raw, period_month, brick_code, brick_description,
+        prod_des, prod_code, pack_des, atciv_code, atciv_desc, pack_code, market_code,
+        sales_group, amount_value, source_payload_json, normalized_at
+      )
+      ${parsedRows}
+      SELECT @uploadId, row_number, week_raw, source_month,
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.BRICK_COD')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.BRICK_DES')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.PROD_DES')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.PRODCODE')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.PACK_DES')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.ATCIV_CODE')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.ATCIV_DESC')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.PACKCODE')), ''),
+        NULLIF(TRIM(JSON_VALUE(row_payload_json, '$.MKT_COD')), ''),
+        metric.sales_group, metric.amount_value, row_payload_json, CURRENT_TIMESTAMP()
+      FROM parsed, UNNEST([
+        STRUCT('Units' AS sales_group, units_value AS amount_value),
+        STRUCT('Net Sales' AS sales_group, sales_value AS amount_value)
+      ]) metric
+      WHERE source_month BETWEEN DATE_SUB(DATE(@asOfMonth), INTERVAL 23 MONTH) AND DATE(@asOfMonth)
+        AND metric.amount_value IS NOT NULL
+    `,
+    params: { uploadId, asOfMonth },
+  });
+  const [summaryRows] = await client.query({
+    query: `
+      SELECT (SELECT COUNTIF(validation_status = 'valid') FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\` WHERE upload_id = @uploadId) AS rows_valid,
+        (SELECT COUNTIF(validation_status = 'skipped') FROM \`chiesi-committee.chiesi_committee_raw.upload_rows_raw\` WHERE upload_id = @uploadId) AS rows_skipped,
+        (SELECT COUNT(*) FROM \`${stagingTable}\` WHERE upload_id = @uploadId) AS normalized_rows
+    `,
+    params: { uploadId },
+  });
+  const summary = (summaryRows as Array<Record<string, unknown>>)[0];
+  return {
+    ok: true,
+    normalizedRows: Number(summary?.normalized_rows ?? 0),
+    rowsValid: Number(summary?.rows_valid ?? 0),
+    rowsSkipped: Number(summary?.rows_skipped ?? 0),
+    rowsError: 0,
+    topValidationIssues: [],
+  };
 }
 
 function parseStandardDaysPeriod(value: unknown) {
@@ -8564,6 +8798,16 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
 
   if (moduleCode === 'business_excellence_closeup' || moduleCode === 'closeup') {
     return normalizeBusinessExcellenceCloseupChunked(uploadId);
+  }
+
+  if (
+    moduleCode === 'business_excellence_iqvia_weekly' ||
+    moduleCode === 'business_excellence_weekly_tracking' ||
+    moduleCode === 'iqvia_weekly' ||
+    moduleCode === 'weekly_tracking'
+  ) {
+    const result = await normalizeCompactWeeklyInBigQuery(uploadId, await getUploadAsOfMonth(uploadId));
+    if (result) return result;
   }
 
   const rows = await getRawRows(uploadId);

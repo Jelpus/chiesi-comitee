@@ -58,6 +58,33 @@ async function assertUploadSourcePeriodPolicy(moduleCode: string, periodMonth: s
     }
 }
 
+async function assertReportingVersionOpen(reportingVersionId: string, periodMonth: string) {
+    const client = getBigQueryClient();
+    const [rows] = await client.query({
+        query: `
+          SELECT status
+          FROM \`chiesi-committee.chiesi_committee_admin.reporting_versions\`
+          WHERE reporting_version_id = @reportingVersionId
+            AND period_month = DATE(@periodMonth)
+          LIMIT 1
+        `,
+        params: { reportingVersionId, periodMonth },
+    });
+    const status = (rows as Array<{ status: string }>)[0]?.status;
+    if (!status) throw new Error('La versión y el período seleccionados no coinciden.');
+    if (status === 'closed') throw new Error('Este período está cerrado para nuevas cargas.');
+}
+
+function assertDddFileNamePeriod(moduleCode: string, fileName: string, sourceAsOfMonth: string) {
+    if (!['business_excellence_ddd', 'business_excellence_pmm', 'pmm', 'ddd'].includes(moduleCode)) return;
+    const match = fileName.match(/_(20\d{2})(0[1-9]|1[0-2])\.(?:csv|xlsx?)$/i);
+    if (!match) return;
+    const fileMonth = `${match[1]}-${match[2]}-01`;
+    if (fileMonth !== sourceAsOfMonth) {
+        throw new Error(`El nombre del archivo DDD indica ${fileMonth}, pero este comité exige ${sourceAsOfMonth}.`);
+    }
+}
+
 function detectCsvDelimiterFromLine(line: string) {
     const candidates = [',', ';', '\t', '|'];
     let best = ',';
@@ -2301,7 +2328,9 @@ export async function createUploadRecord(formData: FormData) {
     if (!moduleCode || !reportingVersionId || !periodMonth) {
         throw new Error('Missing required form fields.');
     }
+    await assertReportingVersionOpen(reportingVersionId, periodMonth);
     await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth || periodMonth);
+    assertDddFileNamePeriod(moduleCode, file.name, sourceAsOfMonth || periodMonth);
 
     const uploadId = randomUUID();
 
@@ -2423,7 +2452,9 @@ export async function createUploadRecordFromStorage(formData: FormData) {
   if (!moduleCode || !reportingVersionId || !periodMonth) {
     throw new Error('Missing required form fields.');
   }
+  await assertReportingVersionOpen(reportingVersionId, periodMonth);
   await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth || periodMonth);
+  assertDddFileNamePeriod(moduleCode, sourceFileName, sourceAsOfMonth || periodMonth);
 
   const bucketName = getUploadsBucketName();
   const parsedStoragePath = parseGcsPath(storagePath);
@@ -2828,6 +2859,18 @@ export async function normalizeExistingUpload(uploadId: string) {
         await setUploadStatus(uploadId, 'normalizing');
         const result = await normalizeUpload(uploadId, moduleCode);
 
+        if (result.incomplete) {
+            console.info('[normalizeExistingUpload] checkpoint', {
+                uploadId,
+                moduleCode,
+                normalizedRows: result.normalizedRows,
+                durationMs: Date.now() - startedAt,
+            });
+            revalidatePath('/admin/uploads');
+            revalidatePath('/admin/uploads/logs');
+            return { ...result, phase: 'normalizing' as const };
+        }
+
         if (result.normalizedRows === 0) {
             const summary = formatNormalizationSummary(result);
             await setUploadError(
@@ -2887,17 +2930,21 @@ export async function publishUpload(uploadId: string) {
         throw new Error(`Upload ${uploadId} is not ready to publish (status: ${status}).`);
     }
 
-    await setUploadStatus(uploadId, 'publishing');
-
     try {
+        // Enriched views only include normalized/published uploads. Changing the
+        // status to publishing first makes those views return zero rows.
+        if (status === 'publishing') await setUploadStatus(uploadId, 'normalized');
         const result = await publishUploadToMart(uploadId);
+        if (result.publishedRows < 1) {
+            throw new Error(`Publish produced 0 visible rows for upload ${uploadId}.`);
+        }
         await setUploadStatus(uploadId, 'published', { clearError: true });
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         revalidatePath('/executive');
         return result;
     } catch (error) {
-        await setUploadStatus(uploadId, status);
+        await setUploadStatus(uploadId, status === 'publishing' ? 'normalized' : status);
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         throw error;

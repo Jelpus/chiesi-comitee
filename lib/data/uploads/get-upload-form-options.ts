@@ -18,6 +18,7 @@ export async function getUploadFormOptions(): Promise<UploadFormOptions> {
       CAST(period_month AS STRING) AS period_month,
       version_name
     FROM \`chiesi-committee.chiesi_committee_admin.reporting_versions\`
+    WHERE status != 'closed'
     ORDER BY period_month DESC, version_number DESC, created_at DESC
   `;
 

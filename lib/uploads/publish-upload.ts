@@ -11,6 +11,7 @@ type UploadPublishContext = {
   uploadId: string;
   moduleCode: string;
   periodMonth: string;
+  sourceAsOfMonth: string;
   reportingVersionId: string;
 };
 
@@ -32,6 +33,7 @@ async function getPublishContext(uploadId: string): Promise<UploadPublishContext
         upload_id,
         module_code,
         CAST(period_month AS STRING) AS period_month,
+        CAST(COALESCE(source_as_of_month, period_month) AS STRING) AS source_as_of_month,
         reporting_version_id
       FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
       WHERE upload_id = @uploadId
@@ -47,6 +49,7 @@ async function getPublishContext(uploadId: string): Promise<UploadPublishContext
     uploadId: String(row.upload_id ?? ''),
     moduleCode: String(row.module_code ?? ''),
     periodMonth: String(row.period_month ?? ''),
+    sourceAsOfMonth: String(row.source_as_of_month ?? row.period_month ?? ''),
     reportingVersionId: String(row.reporting_version_id ?? ''),
   };
 }
@@ -170,12 +173,14 @@ async function publishBusinessExcellenceCloseupUpload(context: UploadPublishCont
       LEFT JOIN \`chiesi-committee.chiesi_committee_core.dim_module\` AS dm
         ON dm.module_code = @moduleCode
       WHERE c.reporting_version_id = @reportingVersionId
+        AND c.period_month <= DATE(@sourceAsOfMonth)
       GROUP BY dm.module_name, c.resolved_product_id, c.canonical_product_name, c.market_group
     `,
     params: {
       uploadId: context.uploadId,
       moduleCode: context.moduleCode,
       periodMonth: context.periodMonth,
+      sourceAsOfMonth: context.sourceAsOfMonth,
       reportingVersionId: context.reportingVersionId,
     },
   });
@@ -185,8 +190,9 @@ async function publishBusinessExcellenceCloseupUpload(context: UploadPublishCont
       SELECT COUNT(1) AS total
       FROM \`${closeupEnrichedView}\`
       WHERE reporting_version_id = @reportingVersionId
+        AND period_month <= DATE(@sourceAsOfMonth)
     `,
-    params: { reportingVersionId: context.reportingVersionId },
+    params: { reportingVersionId: context.reportingVersionId, sourceAsOfMonth: context.sourceAsOfMonth },
   });
 
   await refreshBusinessExcellenceServingArtifacts(client, context);

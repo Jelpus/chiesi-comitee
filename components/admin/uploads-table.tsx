@@ -46,7 +46,7 @@ function isProcessableStatus(status: string) {
 }
 
 function isNormalizeableStatus(status: string) {
-  return status === 'raw_loaded' || status === 'normalized' || status === 'published';
+  return status === 'raw_loaded' || status === 'normalizing' || status === 'normalized' || status === 'published';
 }
 
 function isPublishableStatus(status: string) {
@@ -71,7 +71,7 @@ function buildNormalizationSummary(result: {
 
 function nextStepLabel(status: string) {
   if (status === 'uploaded' || status === 'error') return 'Process';
-  if (status === 'raw_loaded') return 'Normalize';
+  if (status === 'raw_loaded' || status === 'normalizing') return 'Normalize';
   if (status === 'normalized') return 'Publish';
   if (status === 'published') return 'Done';
   return 'Wait';
@@ -79,7 +79,7 @@ function nextStepLabel(status: string) {
 
 function nextStepAction(status: string): 'process' | 'normalize' | 'publish' | 'none' {
   if (status === 'uploaded' || status === 'error') return 'process';
-  if (status === 'raw_loaded') return 'normalize';
+  if (status === 'raw_loaded' || status === 'normalizing') return 'normalize';
   if (status === 'normalized') return 'publish';
   return 'none';
 }
@@ -290,7 +290,15 @@ export function UploadsTable({ rows }: UploadsTableProps) {
                         setActiveAction('normalize');
                         startTransition(async () => {
                           try {
-                            const result = await normalizeExistingUpload(row.uploadId);
+                            let result: Awaited<ReturnType<typeof normalizeExistingUpload>> | undefined;
+                            for (let attempt = 0; attempt < 100; attempt += 1) {
+                              result = await normalizeExistingUpload(row.uploadId);
+                              if (result.phase !== 'normalizing') break;
+                              setFeedbackMessage(`Upload ${row.uploadId}: normalizing ${result.normalizedRows} rows...`);
+                            }
+                            if (!result || result.phase === 'normalizing') {
+                              throw new Error('Normalization paused after 100 chunks. Retry Normalize to continue.');
+                            }
                             if (result && typeof result === 'object' && 'phase' in result) {
                               if (result.phase === 'raw_loaded') {
                                 const normalizationInfo =

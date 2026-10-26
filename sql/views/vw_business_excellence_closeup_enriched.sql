@@ -89,4 +89,5 @@ LEFT JOIN `chiesi-committee.chiesi_committee_core.dim_product` d
 LEFT JOIN product_metadata_dedup pm
   ON pm.product_id = COALESCE(map.product_id, c.product_id)
 WHERE LOWER(TRIM(u.module_code)) IN ('business_excellence_closeup', 'closeup')
-  AND u.status IN ('normalized', 'published');
+  AND u.status IN ('normalized', 'published')
+  AND c.period_month <= COALESCE(u.source_as_of_month, u.period_month);

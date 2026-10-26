@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
-import { createUploadRecord, inspectUploadWorkbook } from '@/app/admin/uploads/actions';
+import { createUploadRecord, inspectUploadWorkbook, normalizeExistingUpload, processUpload, publishUpload } from '@/app/admin/uploads/actions';
 import type { UploadFormOptions } from '@/lib/data/uploads/get-upload-form-options';
 import type { ModuleAreaCode } from '@/lib/data/modules';
 import { getWorkbookPolicy, inspectWorkbookSheets } from '@/lib/uploads/workbook-policy';
@@ -80,6 +81,10 @@ type UploadUiStage =
   | 'parsing'
   | 'registering'
   | 'registered'
+  | 'processing'
+  | 'normalizing'
+  | 'publishing'
+  | 'completed'
   | 'error';
 
 function stageProgress(stage: UploadUiStage) {
@@ -87,14 +92,22 @@ function stageProgress(stage: UploadUiStage) {
     case 'inspecting':
       return 15;
     case 'inspected':
-      return 30;
+      return 20;
     case 'uploading':
-      return 45;
+      return 25;
     case 'parsing':
-      return 70;
+      return 30;
     case 'registering':
-      return 90;
+      return 35;
     case 'registered':
+      return 40;
+    case 'processing':
+      return 50;
+    case 'normalizing':
+      return 75;
+    case 'publishing':
+      return 90;
+    case 'completed':
       return 100;
     case 'error':
       return 100;
@@ -117,6 +130,14 @@ function stageLabel(stage: UploadUiStage) {
       return 'Registering';
     case 'registered':
       return 'Registered';
+    case 'processing':
+      return 'Processing RAW';
+    case 'normalizing':
+      return 'Normalizing';
+    case 'publishing':
+      return 'Publishing';
+    case 'completed':
+      return 'Published';
     case 'error':
       return 'Error';
     default:
@@ -174,11 +195,14 @@ export function UploadForm({ options }: UploadFormProps) {
   const [opexJanBudgetCol, setOpexJanBudgetCol] = useState('');
   const [opexJanCurrentCol, setOpexJanCurrentCol] = useState('');
   const [resultMessage, setResultMessage] = useState('');
+  const [registeredUploadId, setRegisteredUploadId] = useState<string | null>(null);
+  const [autoComplete, setAutoComplete] = useState(true);
   const [inspectMessage, setInspectMessage] = useState('');
   const [uiStage, setUiStage] = useState<UploadUiStage>('idle');
   const [isInspecting, startInspectTransition] = useTransition();
   const [isRegistering, startRegisterTransition] = useTransition();
-  const isBusy = isInspecting || isRegistering;
+  const [isCompleting, setIsCompleting] = useState(false);
+  const isBusy = isInspecting || isRegistering || isCompleting;
   const selectedModule = modulesWithArea.find((module) => module.value === moduleCode);
   const sourcePeriodOffsetMonths = selectedModule?.sourcePeriodOffsetMonths ?? 0;
   const sourceAsOfMonth = expectedSourceAsOfMonth(periodMonth || initialPeriodMonth, sourcePeriodOffsetMonths);
@@ -224,8 +248,11 @@ export function UploadForm({ options }: UploadFormProps) {
       if (draft.selectedArea) setSelectedArea(draft.selectedArea);
       if (draft.moduleCode) setModuleCode(draft.moduleCode);
       if (draft.dddSource !== undefined) setDddSource(draft.dddSource);
-      if (draft.reportingVersionId) setReportingVersionId(draft.reportingVersionId);
-      if (draft.periodMonth) setPeriodMonth(draft.periodMonth);
+      const savedVersion = options.versions.find((version) => version.value === draft.reportingVersionId);
+      if (savedVersion) {
+        setReportingVersionId(savedVersion.value);
+        setPeriodMonth(savedVersion.periodMonth);
+      }
       if (draft.selectedSheetName) setSelectedSheetName(draft.selectedSheetName);
       if (draft.headerRow) setHeaderRow(draft.headerRow);
       if (draft.opexJanPreviousCol !== undefined) setOpexJanPreviousCol(draft.opexJanPreviousCol);
@@ -234,7 +261,7 @@ export function UploadForm({ options }: UploadFormProps) {
     } catch {
       // Ignore corrupt session draft and keep defaults.
     }
-  }, []);
+  }, [options.versions]);
 
   useEffect(() => {
     try {
@@ -328,6 +355,7 @@ export function UploadForm({ options }: UploadFormProps) {
 
   function handleSubmit(formData: FormData) {
     setResultMessage('');
+    setRegisteredUploadId(null);
 
     if (!selectedFile) {
       setResultMessage('You must select a file (.xlsx, .xls, .csv).');
@@ -355,8 +383,10 @@ export function UploadForm({ options }: UploadFormProps) {
     payload.set('file', selectedFile, selectedFile.name);
 
     setUiStage('uploading');
+    setIsCompleting(true);
 
     startRegisterTransition(async () => {
+      let createdUploadId: string | null = null;
       let stageStep = 0;
       const stageSequence: UploadUiStage[] = ['uploading', 'parsing', 'registering'];
       const timer = setInterval(() => {
@@ -366,22 +396,39 @@ export function UploadForm({ options }: UploadFormProps) {
 
       try {
           const result = await createUploadRecord(payload);
-          setResultMessage(
-            `Upload registered successfully: ${result.uploadId}. Redirecting to Upload Logs to continue with Process and Normalize...`,
-          );
+          createdUploadId = result.uploadId;
+          clearInterval(timer);
+          setRegisteredUploadId(result.uploadId);
           setUiStage('registered');
         try {
           window.sessionStorage.removeItem('admin-upload-form-draft');
         } catch {
           // Ignore session storage failures after successful registration.
         }
-        setTimeout(() => {
-          router.push(
-            `/admin/uploads/logs?readyUploadId=${encodeURIComponent(result.uploadId)}`,
-          );
-        }, 900);
+        if (!autoComplete) {
+          setResultMessage(`Upload ${result.uploadId} registered. Complete its phases from Upload Logs.`);
+          router.push(`/admin/uploads/logs?readyUploadId=${encodeURIComponent(result.uploadId)}`);
+          return;
+        }
+        setUiStage('processing');
+        await processUpload(result.uploadId);
+        setUiStage('normalizing');
+        let normalization: Awaited<ReturnType<typeof normalizeExistingUpload>> | undefined;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          normalization = await normalizeExistingUpload(result.uploadId);
+          if (normalization.phase !== 'normalizing') break;
+        }
+        if (!normalization || normalization.phase !== 'normalized' || normalization.normalizedRows < 1) {
+          throw new Error('Normalization produced no staging rows. Review the upload details.');
+        }
+        setUiStage('publishing');
+        await publishUpload(result.uploadId);
+        setUiStage('completed');
+        setResultMessage(`Upload ${result.uploadId} completed and published.`);
+        router.push(`/admin/uploads/logs?readyUploadId=${encodeURIComponent(result.uploadId)}`);
       } catch (error) {
-        console.error('[UploadForm] register upload failed', {
+        console.error('[UploadForm] upload flow failed', {
+          uploadId: createdUploadId,
           moduleCode,
           reportingVersionId,
           periodMonth,
@@ -397,11 +444,12 @@ export function UploadForm({ options }: UploadFormProps) {
           error,
         });
         setResultMessage(
-          error instanceof Error ? error.message : 'Unable to register upload.',
+          `${createdUploadId ? `Upload ${createdUploadId} stopped: ` : ''}${error instanceof Error ? error.message : 'Unable to complete upload.'}`,
         );
         setUiStage('error');
       } finally {
         clearInterval(timer);
+        setIsCompleting(false);
       }
     });
   }
@@ -664,24 +712,37 @@ export function UploadForm({ options }: UploadFormProps) {
           />
         </label>
 
+        <label className="lg:col-span-2 flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={autoComplete}
+            onChange={(event) => setAutoComplete(event.target.checked)}
+            disabled={isBusy}
+          />
+          Process, normalize, and publish automatically after registration
+        </label>
+
         <div className="lg:col-span-2 flex items-center gap-3">
           <button
             type="submit"
             disabled={isBusy || hasWorkbookSheetErrors || hasDetectedPeriodMismatch}
             className="rounded-full bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
           >
-            {isRegistering ? (
+            {isCompleting ? (
               <span className="inline-flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Registering...
+                {stageLabel(uiStage)}...
               </span>
             ) : (
-              'Register upload'
+              autoComplete ? 'Register and complete upload' : 'Register upload'
             )}
           </button>
 
           {resultMessage ? (
-            <p className="text-sm text-slate-600">{resultMessage}</p>
+            <p className="text-sm text-slate-600">
+              {resultMessage}{' '}
+              {registeredUploadId && uiStage === 'error' ? <Link className="font-semibold underline" href={`/admin/uploads/${registeredUploadId}`}>View upload</Link> : null}
+            </p>
           ) : null}
         </div>
       </form>
