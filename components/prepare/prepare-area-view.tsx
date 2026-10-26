@@ -701,19 +701,6 @@ export function PrepareAreaView({ data }: { data: PrepareAreaData }) {
 
       <ProductionVersionWarning version={data.selectedVersion} />
 
-      {!data.defaultDraftVersion ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-6 text-amber-950">
-          <p className="text-lg font-black">No hay ninguna versión borrador disponible.</p>
-          <p className="mt-2 text-sm leading-6">
-            Crea una versión draft desde{' '}
-            <Link href="/admin/versions" className="font-bold underline">
-              Admin / Versions
-            </Link>{' '}
-            antes de preparar archivos.
-          </p>
-        </div>
-      ) : null}
-
       {data.selectedVersion ? (
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
           <aside className="xl:sticky xl:top-6 xl:self-start">
