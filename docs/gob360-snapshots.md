@@ -19,6 +19,19 @@ El snapshot activo sigue aplicando a los meses incluidos cuando avanzan los repo
 
 Las tablas `manifest` y `pieces` están en US para permitir consultas junto con las tablas `gob360.CHIESI_EXTERNAL`. Los metadatos de uploads y el serving del Comité siguen en EU; no hacer joins entre ambas regiones.
 
+## Consultar las vistas desde BigQuery con una cuenta personal
+
+La aplicación usa la cuenta de servicio GOB360, que ya puede leer las tablas de origen. Una cuenta personal que consulta las vistas necesita acceso a la vista y, mientras la vista no esté autorizada en el dataset de origen, BigQuery también exige acceso a la tabla original. Esto explica el error `bigquery.tables.getData` sobre `gob360.CHIESI_EXTERNAL.CHIESI_PC_VENTAS_EXTERNAL`.
+
+Para permitir la consulta sin conceder acceso directo al dataset de origen, un administrador con `bigquery.datasets.update` sobre **`gob360.CHIESI_EXTERNAL`** debe abrir ese dataset en BigQuery y usar **Sharing → Authorize views** para añadir exactamente:
+
+- `chiesi-committee.gob360_snapshots.vw_pc_sales_effective`
+- `chiesi-committee.gob360_snapshots.vw_sc_sales_effective`
+
+Las dos vistas y la fuente están en US. Autorizar estas dos vistas concretas limita el cambio a ellas; autorizar el dataset entero también incluiría vistas futuras. La persona que las consulta requiere permiso de lectura sobre las vistas y `bigquery.jobs.create` en el proyecto donde ejecuta la consulta. Las vistas exponen las columnas originales de ventas además de `PIEZAS` corregidas, por lo que el administrador debe revisar quién puede leerlas.
+
+La cuenta de servicio GOB360 disponible para esta aplicación tiene rol `READER` en `CHIESI_EXTERNAL` y no puede hacer esa autorización. Hasta que un administrador la aplique, las consultas directas de usuarios sin acceso a la fuente seguirán fallando; el reporte de la aplicación continúa funcionando con su cuenta de servicio.
+
 ## Verificaciones antes de habilitar
 
 - Comprobar que solo hay un `manifest.status = 'active'` por módulo y que `control_rows` coincide con `COUNT(*)` de `pieces` para su `snapshot_id`.
