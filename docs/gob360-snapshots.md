@@ -30,6 +30,8 @@ Ahora leen `gob360_mirror.pc_sales_source` y `gob360_mirror.sc_sales_source`, re
 
 La vista sigue aplicando el control `(CLAVE, CLUE, mes)` del snapshot activo en cada consulta. Si no hay control, usa las piezas de la copia GOB360. Si GOB360 cambia después del último refresco, la vista mostrará la versión copiada hasta el siguiente ciclo. Se puede ejecutar de nuevo `node scripts/setup-gob360-mirror.mjs --apply` para forzar un refresco y comprobar filas y fecha sin esperar al cron.
 
+En la aplicación, `getGob360TableRefs()` selecciona estas vistas para las ventas PC y SC cuando `GOB360_SNAPSHOT_ENABLED=true`. Lo usan Business Excellence, Air público, la vista previa de tablas y el catálogo de claves sin mapear. El test de conexión de Admin sigue consultando las tablas originales para comprobar el acceso a GOB360; las tablas de estructura PC/SC siguen en origen porque el Excel solo controla piezas de ventas. Air público conserva su serving EU hasta que se refresca tras Publish o mediante su flujo de actualización.
+
 ## Verificaciones antes de habilitar
 
 - Comprobar que solo hay un `manifest.status = 'active'` por módulo y que `control_rows` coincide con `COUNT(*)` de `pieces` para su `snapshot_id`.

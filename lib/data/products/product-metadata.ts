@@ -1,5 +1,6 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
+import { getGob360TableRefs } from '@/lib/bigquery/gob360-client';
 import { BigQuery } from '@google-cloud/bigquery';
 
 export type ProductMetadataRow = {
@@ -2251,19 +2252,16 @@ export async function getGob360UnmappedClaves(limit = 300): Promise<Gob360Unmapp
   await ensureGob360ProductMappingTable();
   const gobClient = getGob360Client();
   const localClient = getBigQueryClient();
-  const projectId = process.env.GOB360_PROJECT_ID || process.env.GCP_PROJECT_ID || 'chiesi-committee';
-  const datasetId = process.env.GOB360_DATASET_ID || 'CHIESI_EXTERNAL';
-  const pcTable = process.env.GOB360_PC_TABLE || 'CHIESI_PC_VENTAS_EXTERNAL';
-  const scTable = process.env.GOB360_SC_TABLE || 'CHIESI_SC_VENTAS_EXTERNAL';
+  const { pcSalesTableId, scSalesTableId } = getGob360TableRefs();
 
   const sourceQuery = `
     WITH source_claves AS (
       SELECT CAST(CLAVE AS STRING) AS source_clave
-      FROM \`${projectId}.${datasetId}.${pcTable}\`
+      FROM \`${pcSalesTableId}\`
       WHERE CLAVE IS NOT NULL AND TRIM(CAST(CLAVE AS STRING)) != ''
       UNION ALL
       SELECT CAST(CLAVE AS STRING) AS source_clave
-      FROM \`${projectId}.${datasetId}.${scTable}\`
+      FROM \`${scSalesTableId}\`
       WHERE CLAVE IS NOT NULL AND TRIM(CAST(CLAVE AS STRING)) != ''
     ),
     normalized AS (
