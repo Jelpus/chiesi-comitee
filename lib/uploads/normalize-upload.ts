@@ -1,6 +1,8 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { ensureBusinessExcellenceTftEffectiveView } from '@/lib/serving/refresh-business-excellence-field-force';
+import { isGob360SnapshotModule } from './gob360-snapshot-parser';
+import { normalizeGob360SnapshotUpload } from './gob360-snapshot-store';
 
 type RawUploadRow = {
   row_number: number;
@@ -8791,6 +8793,7 @@ async function loadOpexMovementsStaging(
 }
 
 export async function normalizeUpload(uploadId: string, moduleCode: string): Promise<NormalizeUploadResult> {
+  if (isGob360SnapshotModule(moduleCode)) return normalizeGob360SnapshotUpload(uploadId);
   if (moduleCode === 'business_excellence_ddd' || moduleCode === 'business_excellence_pmm' || moduleCode === 'pmm' || moduleCode === 'ddd') {
     const asOfMonth = await getUploadAsOfMonth(uploadId);
     return normalizeBusinessExcellencePmmInBigQuery(uploadId, asOfMonth);

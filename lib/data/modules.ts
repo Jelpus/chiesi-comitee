@@ -52,6 +52,7 @@ export const defaultModules: Array<{
   areaCode: ModuleAreaCode;
   displayOrder: number;
   sourcePeriodOffsetMonths?: SourcePeriodOffsetMonths;
+  moduleType?: string;
 }> = [
   { moduleCode: 'sales_internal', moduleName: 'Sales Internal', areaCode: 'sales_internal', displayOrder: 10 },
   { moduleCode: 'business_excellence_ddd', moduleName: 'Business Excellence - DDD', areaCode: 'business_excellence', displayOrder: 110, sourcePeriodOffsetMonths: 1 },
@@ -106,6 +107,8 @@ export const defaultModules: Array<{
     areaCode: 'business_excellence',
     displayOrder: 200,
   },
+  { moduleCode: 'business_excellence_gob360_air', moduleName: 'Business Excellence - GOB360 Air', areaCode: 'business_excellence', displayOrder: 205, moduleType: 'gob360_snapshot' },
+  { moduleCode: 'business_excellence_gob360_care', moduleName: 'Business Excellence - GOB360 Care', areaCode: 'business_excellence', displayOrder: 206, moduleType: 'gob360_snapshot' },
   { moduleCode: 'human_resources_turnover', moduleName: 'Human Resources - Turnover', areaCode: 'human_resources', displayOrder: 210 },
   { moduleCode: 'human_resources_training', moduleName: 'Human Resources - Training', areaCode: 'human_resources', displayOrder: 220 },
   { moduleCode: 'human_resources_open_vacancy', moduleName: 'Human Resources - Open Vacancy', areaCode: 'human_resources', displayOrder: 230 },

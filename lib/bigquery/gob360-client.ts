@@ -44,6 +44,7 @@ export function getGob360TableRefs() {
   const scSalesTable = process.env.GOB360_SC_TABLE || 'CHIESI_SC_VENTAS_EXTERNAL';
   const pcStructureTable = process.env.GOB360_SALESFORCE_PC_TABLE || 'CHIESI_ESTRUCTURA_PC';
   const scStructureTable = process.env.GOB360_SALESFORCE_SC_TABLE || 'CHIESI_ESTRUCTURA_SC';
+  const useSnapshots = process.env.GOB360_SNAPSHOT_ENABLED === 'true';
 
   return {
     projectId,
@@ -52,8 +53,12 @@ export function getGob360TableRefs() {
     scSalesTable,
     pcStructureTable,
     scStructureTable,
-    pcSalesTableId: `${projectId}.${datasetId}.${pcSalesTable}`,
-    scSalesTableId: `${projectId}.${datasetId}.${scSalesTable}`,
+    pcSalesTableId: useSnapshots
+      ? 'chiesi-committee.gob360_snapshots.vw_pc_sales_effective'
+      : `${projectId}.${datasetId}.${pcSalesTable}`,
+    scSalesTableId: useSnapshots
+      ? 'chiesi-committee.gob360_snapshots.vw_sc_sales_effective'
+      : `${projectId}.${datasetId}.${scSalesTable}`,
     pcStructureTableId: `${projectId}.${datasetId}.${pcStructureTable}`,
     scStructureTableId: `${projectId}.${datasetId}.${scStructureTable}`,
   };

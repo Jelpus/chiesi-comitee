@@ -6,6 +6,8 @@ import {
   refreshBusinessExcellenceFieldForceServingArtifacts,
 } from '@/lib/serving/refresh-business-excellence-field-force';
 import { refreshAirServingArtifacts } from '@/lib/serving/refresh-air-serving';
+import { isGob360SnapshotModule } from './gob360-snapshot-parser';
+import { publishGob360SnapshotUpload } from './gob360-snapshot-store';
 
 type UploadPublishContext = {
   uploadId: string;
@@ -2269,6 +2271,8 @@ async function publishOpexMasterCatalogUpload(context: UploadPublishContext) {
 
 export async function publishUploadToMart(uploadId: string) {
   const context = await getPublishContext(uploadId);
+
+  if (isGob360SnapshotModule(context.moduleCode)) return publishGob360SnapshotUpload(uploadId);
 
   if (context.moduleCode === 'sales_internal') return publishSalesInternalUpload(context);
   if (context.moduleCode === 'business_excellence_closeup' || context.moduleCode === 'closeup') {

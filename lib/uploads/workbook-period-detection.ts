@@ -27,6 +27,32 @@ export function detectWorkbookPeriodMonths(
   workbook: XLSX.WorkBook,
   moduleCode: string,
 ) {
+  if (moduleCode === 'business_excellence_gob360_air' || moduleCode === 'business_excellence_gob360_care') {
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!sheet?.['!ref']) return [];
+    const range = xlsx.utils.decode_range(sheet['!ref']);
+    const names: Record<string, number> = {
+      enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+      julio: 7, agosto: 8, septiembre: 9, setiembre: 9,
+      octubre: 10, noviembre: 11, diciembre: 12,
+    };
+    const value = (row: number, col: number) => {
+      const direct = sheet[xlsx.utils.encode_cell({ r: row, c: col })]?.v;
+      if (direct != null) return direct;
+      const merge = sheet['!merges']?.find((item) => row >= item.s.r && row <= item.e.r && col >= item.s.c && col <= item.e.c);
+      return merge ? sheet[xlsx.utils.encode_cell(merge.s)]?.v : null;
+    };
+    const periods = new Set<string>();
+    for (let col = 0; col <= range.e.c; col += 1) {
+      if (normalizeHeaderCandidate(value(0, col)) !== 'piezas') continue;
+      const year = Number(value(1, col));
+      const month = names[String(value(2, col) ?? '').trim().toLowerCase()];
+      if (Number.isInteger(year) && year >= 2000 && year <= 2100 && month) {
+        periods.add(`${year}-${String(month).padStart(2, '0')}-01`);
+      }
+    }
+    return [...periods].sort();
+  }
   if (!['business_excellence_cuotas', 'cuotas'].includes(moduleCode)) return [];
 
   const periods = new Set<string>();

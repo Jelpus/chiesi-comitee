@@ -12,6 +12,7 @@ import {
 } from '@/app/admin/uploads/actions';
 import { getBigQueryClient } from '@/lib/bigquery/client';
 import { sendSendGridEmail } from '@/lib/email/sendgrid';
+import { isGob360SnapshotModule } from '@/lib/uploads/gob360-snapshot-parser';
 import { expectedSourceAsOfMonth, normalizeSourcePeriodOffset, sourcePeriodPolicyLabel } from '@/lib/uploads/source-period-policy';
 
 const REPORTING_VERSIONS_TABLE = 'chiesi-committee.chiesi_committee_admin.reporting_versions';
@@ -229,6 +230,21 @@ function assertExpectedSourcePeriod(periodMonth: string, sourceAsOfMonth: string
   );
 }
 
+function validatedSourceMonth(moduleCode: string, periodMonth: string, value: string, offset: number) {
+  const sourceAsOfMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? `${value}-01` : value;
+  if (!/^\d{4}-(0[1-9]|1[0-2])-01$/.test(sourceAsOfMonth)) {
+    throw new Error('Selecciona un mes válido para la información del archivo.');
+  }
+  if (isGob360SnapshotModule(moduleCode)) {
+    if (sourceAsOfMonth > periodMonth) {
+      throw new Error('El último mes validado no puede ser posterior al periodo del reporte.');
+    }
+  } else {
+    assertExpectedSourcePeriod(periodMonth, sourceAsOfMonth, offset);
+  }
+  return sourceAsOfMonth;
+}
+
 function getPrepareSourceFileName(formData: FormData) {
   const directSourceFileName = String(formData.get('sourceFileName') ?? '').trim();
   if (directSourceFileName) return directSourceFileName;
@@ -303,14 +319,14 @@ async function validatePrepareUploadRequest(formData: FormData) {
   const moduleCode = String(formData.get('moduleCode') ?? '').trim();
   const areaCode = String(formData.get('areaCode') ?? '').trim();
   const reportingVersionId = String(formData.get('reportingVersionId') ?? '').trim();
-  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
+  const requestedSourceMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
   const dddSource = normalizeDddSource(formData.get('dddSource'));
   const confirmProductionVersion = String(formData.get('confirmProductionVersion') ?? '') === 'true';
 
   if (!moduleCode || !areaCode || !reportingVersionId) {
     throw new Error('Faltan datos obligatorios para preparar la carga.');
   }
-  if (!sourceAsOfMonth) {
+  if (!requestedSourceMonth) {
     throw new Error('Indica a que cierre de mes corresponde la informacion del archivo.');
   }
 
@@ -324,7 +340,7 @@ async function validatePrepareUploadRequest(formData: FormData) {
   if (isDddLikeModule(moduleCode)) {
     if (!dddSource) throw new Error('Selecciona la fuente o variante del archivo.');
   }
-  assertExpectedSourcePeriod(version.periodMonth, sourceAsOfMonth, modulePolicy.sourcePeriodOffsetMonths);
+  const sourceAsOfMonth = validatedSourceMonth(moduleCode, version.periodMonth, requestedSourceMonth, modulePolicy.sourcePeriodOffsetMonths);
 
   return {
     moduleCode,
@@ -510,7 +526,7 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
   const moduleCode = String(formData.get('moduleCode') ?? '').trim();
   const areaCode = String(formData.get('areaCode') ?? '').trim();
   const reportingVersionId = String(formData.get('reportingVersionId') ?? '').trim();
-  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
+  const requestedSourceMonth = String(formData.get('sourceAsOfMonth') ?? '').trim();
   const dddSource = normalizeDddSource(formData.get('dddSource'));
   const confirmProductionVersion = String(formData.get('confirmProductionVersion') ?? '') === 'true';
 
@@ -518,7 +534,7 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
     if (!moduleCode || !areaCode || !reportingVersionId) {
       throw new Error('Faltan datos obligatorios para preparar la carga.');
     }
-    if (!sourceAsOfMonth) {
+    if (!requestedSourceMonth) {
       throw new Error('Indica a qué cierre de mes corresponde la información del archivo.');
     }
 
@@ -532,7 +548,7 @@ export async function prepareUploadAndPublish(formData: FormData): Promise<Prepa
     if (isDddLikeModule(moduleCode)) {
       if (!dddSource) throw new Error('Selecciona la fuente o variante del archivo.');
     }
-    assertExpectedSourcePeriod(version.periodMonth, sourceAsOfMonth, modulePolicy.sourcePeriodOffsetMonths);
+    const sourceAsOfMonth = validatedSourceMonth(moduleCode, version.periodMonth, requestedSourceMonth, modulePolicy.sourcePeriodOffsetMonths);
 
     const uploadFormData = new FormData();
     const file = formData.get('file');

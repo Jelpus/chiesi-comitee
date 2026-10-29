@@ -4,13 +4,26 @@ type SourceAsOfMonthFieldProps = {
   name?: string;
   periodMonth: string;
   sourcePeriodOffsetMonths: number;
+  manualSnapshot?: boolean;
 };
 
 function toMonthInputValue(value: string) {
   return value ? value.slice(0, 7) : '';
 }
 
-export function SourceAsOfMonthField({ name = 'sourceAsOfMonth', periodMonth, sourcePeriodOffsetMonths }: SourceAsOfMonthFieldProps) {
+export function SourceAsOfMonthField({ name = 'sourceAsOfMonth', periodMonth, sourcePeriodOffsetMonths, manualSnapshot = false }: SourceAsOfMonthFieldProps) {
+  if (manualSnapshot) {
+    return (
+      <label className="space-y-2">
+        <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Último mes validado</span>
+        <input type="month" name={name} max={periodMonth.slice(0, 7)} required
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700" />
+        <span className="block text-xs leading-5 text-slate-600">
+          Selecciona el último mes aprobado. Las columnas posteriores del Excel no se publicarán.
+        </span>
+      </label>
+    );
+  }
   const expected = expectedSourceAsOfMonth(periodMonth, sourcePeriodOffsetMonths) || periodMonth;
   const monthValue = toMonthInputValue(expected);
   const policyLabel = sourcePeriodPolicyLabel(sourcePeriodOffsetMonths);

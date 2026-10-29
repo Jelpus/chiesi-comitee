@@ -56,6 +56,7 @@ export type PrepareRequirement = {
 
 export type PrepareModuleStatus =
   | 'pending'
+  | 'optional'
   | 'uploaded'
   | 'validated'
   | 'published'
@@ -222,9 +223,9 @@ function uploadDefaults(upload: PrepareUploadRow | null, selectedVersion: Prepar
   };
 }
 
-function resolveRequirementStatus(currentUpload: PrepareUploadRow | null, reuse: PrepareReuseConfirmation | null, reusable: boolean): PrepareModuleStatus {
+function resolveRequirementStatus(currentUpload: PrepareUploadRow | null, reuse: PrepareReuseConfirmation | null, reusable: boolean, optional: boolean): PrepareModuleStatus {
   if (reuse) return 'reused';
-  if (!currentUpload) return reusable ? 'requires_confirmation' : 'pending';
+  if (!currentUpload) return optional ? 'optional' : reusable ? 'requires_confirmation' : 'pending';
   if (currentUpload.status === 'published') return 'published';
   if (currentUpload.status === 'normalized') return 'validated';
   if (currentUpload.status === 'error' || currentUpload.rowsError > 0) return 'error';
@@ -232,15 +233,16 @@ function resolveRequirementStatus(currentUpload: PrepareUploadRow | null, reuse:
 }
 
 function buildSummary(areaCode: string, requirements: PrepareRequirement[]): PrepareAreaSummary {
-  const completed = requirements.filter((item) => (
+  const required = requirements.filter((item) => item.module.moduleType !== 'gob360_snapshot');
+  const completed = required.filter((item) => (
     item.status === 'uploaded' ||
     item.status === 'validated' ||
     item.status === 'published' ||
     item.status === 'reused'
   )).length;
-  const errorModules = requirements.filter((item) => item.status === 'error').length;
-  const reusedModules = requirements.filter((item) => item.status === 'reused').length;
-  const totalModules = requirements.length;
+  const errorModules = required.filter((item) => item.status === 'error').length;
+  const reusedModules = required.filter((item) => item.status === 'reused').length;
+  const totalModules = required.length;
   return {
     areaCode,
     areaLabel: areaLabel(areaCode),
@@ -449,7 +451,7 @@ function buildRequirements(params: {
       const currentUpload = currentByKey.get(key) ?? null;
       const reuseConfirmation = reuseByKey.get(key) ?? null;
       const reusable = reusableModuleCodes.has(module.moduleCode);
-      const status = resolveRequirementStatus(currentUpload, reuseConfirmation, reusable);
+      const status = resolveRequirementStatus(currentUpload, reuseConfirmation, reusable, module.moduleType === 'gob360_snapshot');
       return {
         key,
         module,

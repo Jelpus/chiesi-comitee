@@ -34,6 +34,14 @@ function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 function statusConfig(status: string) {
+  if (status === 'optional') {
+    return {
+      label: 'Opcional', shortLabel: 'Opcional',
+      helper: 'Sin carga nueva se sigue usando BigQuery o el snapshot GOB360 vigente.',
+      className: 'border-sky-200 bg-sky-50 text-sky-800',
+      dotClassName: 'bg-sky-500', icon: Info,
+    };
+  }
   if (status === 'published') {
     return {
       label: 'Publicado',

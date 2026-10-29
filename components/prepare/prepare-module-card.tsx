@@ -8,6 +8,7 @@ type PrepareModuleCardProps = {
 };
 
 function statusConfig(status: string) {
+  if (status === 'optional') return { label: 'Opcional', className: 'border-sky-200 bg-sky-50 text-sky-800', icon: Clock };
   if (status === 'published') return { label: 'Publicado', className: 'border-emerald-200 bg-emerald-50 text-emerald-800', icon: CheckCircle2 };
   if (status === 'reused') return { label: 'Reutilizado', className: 'border-sky-200 bg-sky-50 text-sky-800', icon: CopyCheck };
   if (status === 'validated') return { label: 'Validado', className: 'border-blue-200 bg-blue-50 text-blue-800', icon: CheckCircle2 };
@@ -29,6 +30,7 @@ export function PrepareModuleCard({ requirement, selectedVersion }: PrepareModul
   const Icon = config.icon;
   const current = requirement.currentUpload;
   const latest = requirement.latestUpload;
+  const isGob360Snapshot = requirement.module.moduleType === 'gob360_snapshot';
 
   return (
     <article className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.07)]">
@@ -44,6 +46,11 @@ export function PrepareModuleCard({ requirement, selectedVersion }: PrepareModul
               ) : null}
             </div>
             <p className="mt-1 font-mono text-xs text-slate-500">{requirement.module.moduleCode}</p>
+            {isGob360Snapshot ? (
+              <p className="mt-2 text-sm text-slate-600">
+                {latest ? `Snapshot vigente hasta ${latest.sourceAsOfMonth.slice(0, 7)}; los meses posteriores usan BigQuery.` : 'Sin snapshot vigente; se usa BigQuery.'}
+              </p>
+            ) : null}
             {requirement.module.notes ? <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">{requirement.module.notes}</p> : null}
           </div>
 
@@ -100,9 +107,9 @@ export function PrepareModuleCard({ requirement, selectedVersion }: PrepareModul
 
           {latest ? (
             <div className="rounded-[22px] border border-slate-200 p-4 text-sm">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Última carga publicada</p>
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{isGob360Snapshot ? 'Snapshot vigente' : 'Última carga publicada'}</p>
               <p className="mt-2 font-semibold text-slate-950">{latest.sourceFileName}</p>
-              <p className="mt-1 text-slate-500">{latest.periodMonth} · {formatDate(latest.uploadedAt)}</p>
+              <p className="mt-1 text-slate-500">{isGob360Snapshot ? `Validado hasta ${latest.sourceAsOfMonth.slice(0, 7)} · ` : `${latest.periodMonth} · `}{formatDate(latest.uploadedAt)}</p>
               <a
                 href={`/api/prepare/download?uploadId=${encodeURIComponent(latest.uploadId)}`}
                 className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"

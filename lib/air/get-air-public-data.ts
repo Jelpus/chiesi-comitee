@@ -304,10 +304,10 @@ async function buildAirPublicPageData(options: {
             NULLIF(TRIM(CAST(CLUE AS STRING)), '') AS clue,
             LOWER(REGEXP_REPLACE(TRIM(CAST(CLAVE AS STRING)), r'[^a-zA-Z0-9]+', '')) AS source_clave_normalized,
             COALESCE(
-              SAFE_CAST(FECHA_MOVIL AS DATE),
-              SAFE_CAST(JSON_VALUE(TO_JSON_STRING(FECHA_MOVIL), '$.value') AS DATE),
               SAFE_CAST(FECHA AS DATE),
-              SAFE_CAST(JSON_VALUE(TO_JSON_STRING(FECHA), '$.value') AS DATE)
+              SAFE_CAST(JSON_VALUE(TO_JSON_STRING(FECHA), '$.value') AS DATE),
+              SAFE_CAST(FECHA_MOVIL AS DATE),
+              SAFE_CAST(JSON_VALUE(TO_JSON_STRING(FECHA_MOVIL), '$.value') AS DATE)
             ) AS event_date,
             COALESCE(SAFE_CAST(PIEZAS AS FLOAT64), 0) AS pieces
           FROM \`${pcSalesTableId}\`

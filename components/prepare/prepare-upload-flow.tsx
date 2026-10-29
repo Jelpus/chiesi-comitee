@@ -264,6 +264,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   );
   const shouldShowSheetConfig = Boolean(selectedFile);
   const workbookPolicy = getWorkbookPolicy(requirement.module.moduleCode);
+  const isGob360Snapshot = requirement.module.moduleType === 'gob360_snapshot';
   const workbookInspection = inspectWorkbookSheets(requirement.module.moduleCode, detectedSheetNames);
   const systemManagesSheets = workbookPolicy.mode !== 'single_user_selected';
   const hasWorkbookSheetErrors = systemManagesSheets && Boolean(selectedFile) && workbookInspection.missingLabels.length > 0;
@@ -273,7 +274,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
   );
   const detectedLatestPeriod = detectedPeriodMonths.at(-1) ?? '';
   const hasDetectedPeriodMismatch = Boolean(
-    detectedLatestPeriod && expectedFilePeriod && detectedLatestPeriod !== expectedFilePeriod,
+    !isGob360Snapshot && detectedLatestPeriod && expectedFilePeriod && detectedLatestPeriod !== expectedFilePeriod,
   );
 
   function openProgressModal(input: Omit<ProgressModalState, 'open' | 'finalState'>) {
@@ -630,6 +631,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
           <SourceAsOfMonthField
             periodMonth={selectedVersion.periodMonth}
             sourcePeriodOffsetMonths={requirement.module.sourcePeriodOffsetMonths}
+            manualSnapshot={isGob360Snapshot}
           />
 
         </div>
@@ -639,7 +641,7 @@ export function PrepareUploadFlow({ requirement, selectedVersion, onCompleted }:
             <p className="font-bold">{hasDetectedPeriodMismatch ? 'El periodo del archivo no coincide' : 'Periodos detectados en el archivo'}</p>
             <p className={`mt-1 text-xs leading-5 ${hasDetectedPeriodMismatch ? 'text-rose-800' : 'text-emerald-800'}`}>
               {detectedPeriodMonths.map((period) => formatMonthYear(period)).join(', ')}. Último periodo: {formatMonthYear(detectedLatestPeriod)}.
-              {hasDetectedPeriodMismatch ? ` Este módulo espera ${formatMonthYear(expectedFilePeriod)}; selecciona el archivo correcto.` : ' El periodo coincide con la política del módulo.'}
+              {hasDetectedPeriodMismatch ? ` Este módulo espera ${formatMonthYear(expectedFilePeriod)}; selecciona el archivo correcto.` : isGob360Snapshot ? ' Selecciona el último mes validado; las columnas posteriores se excluyen.' : ' El periodo coincide con la política del módulo.'}
             </p>
           </div>
         ) : null}

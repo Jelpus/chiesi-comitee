@@ -189,6 +189,7 @@ export function UploadForm({ options }: UploadFormProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sheetOptions, setSheetOptions] = useState<string[]>([]);
   const [detectedPeriodMonths, setDetectedPeriodMonths] = useState<string[]>([]);
+  const [validatedThroughMonth, setValidatedThroughMonth] = useState('');
   const [selectedSheetName, setSelectedSheetName] = useState('');
   const [headerRow, setHeaderRow] = useState('1');
   const [opexJanPreviousCol, setOpexJanPreviousCol] = useState('');
@@ -205,7 +206,10 @@ export function UploadForm({ options }: UploadFormProps) {
   const isBusy = isInspecting || isRegistering || isCompleting;
   const selectedModule = modulesWithArea.find((module) => module.value === moduleCode);
   const sourcePeriodOffsetMonths = selectedModule?.sourcePeriodOffsetMonths ?? 0;
-  const sourceAsOfMonth = expectedSourceAsOfMonth(periodMonth || initialPeriodMonth, sourcePeriodOffsetMonths);
+  const isGob360Snapshot = moduleCode === 'business_excellence_gob360_air' || moduleCode === 'business_excellence_gob360_care';
+  const sourceAsOfMonth = isGob360Snapshot
+    ? (validatedThroughMonth ? `${validatedThroughMonth}-01` : '')
+    : expectedSourceAsOfMonth(periodMonth || initialPeriodMonth, sourcePeriodOffsetMonths);
   const isDddModule =
     moduleCode === 'business_excellence_ddd' ||
     moduleCode === 'business_excellence_pmm' ||
@@ -225,7 +229,7 @@ export function UploadForm({ options }: UploadFormProps) {
   const hasWorkbookSheetErrors = systemManagesSheets && Boolean(selectedFile) && workbookInspection.missingLabels.length > 0;
   const detectedLatestPeriod = detectedPeriodMonths.at(-1) ?? '';
   const hasDetectedPeriodMismatch = Boolean(
-    detectedLatestPeriod && sourceAsOfMonth && detectedLatestPeriod !== sourceAsOfMonth,
+    !isGob360Snapshot && detectedLatestPeriod && sourceAsOfMonth && detectedLatestPeriod !== sourceAsOfMonth,
   );
 
   useEffect(() => {
@@ -334,6 +338,7 @@ export function UploadForm({ options }: UploadFormProps) {
 
   function handleFileChange(file: File | null) {
     setSelectedFile(file);
+    setValidatedThroughMonth('');
     setSheetOptions([]);
     setSelectedSheetName('');
     setDetectedPeriodMonths([]);
@@ -371,6 +376,11 @@ export function UploadForm({ options }: UploadFormProps) {
       setResultMessage(
         `Periodo incorrecto: el archivo contiene datos hasta ${formatMonthYear(detectedLatestPeriod)}, pero este módulo espera ${formatMonthYear(sourceAsOfMonth)}.`,
       );
+      setUiStage('error');
+      return;
+    }
+    if (isGob360Snapshot && !validatedThroughMonth) {
+      setResultMessage('Selecciona el último mes validado del archivo.');
       setUiStage('error');
       return;
     }
@@ -492,7 +502,7 @@ export function UploadForm({ options }: UploadFormProps) {
             <p className="font-bold">{hasDetectedPeriodMismatch ? 'El periodo del archivo no coincide' : 'Periodos detectados en el archivo'}</p>
             <p className="mt-1 text-xs leading-5">
               {detectedPeriodMonths.map((period) => formatMonthYear(period)).join(', ')}. Último periodo: {formatMonthYear(detectedLatestPeriod)}.
-              {hasDetectedPeriodMismatch ? ` Este módulo espera ${formatMonthYear(sourceAsOfMonth)}.` : ' El periodo coincide con la política del módulo.'}
+              {hasDetectedPeriodMismatch ? ` Este módulo espera ${formatMonthYear(sourceAsOfMonth)}.` : isGob360Snapshot ? ' Selecciona el último mes validado; se ignorarán las columnas posteriores.' : ' El periodo coincide con la política del módulo.'}
             </p>
           </div>
         ) : null}
@@ -521,6 +531,7 @@ export function UploadForm({ options }: UploadFormProps) {
             onChange={(e) => {
               const next = e.target.value;
               setModuleCode(next);
+              setValidatedThroughMonth('');
               if (
                 next === 'business_excellence_budget_sell_out' ||
                 next === 'business_excellence_sell_out' ||
@@ -591,10 +602,22 @@ export function UploadForm({ options }: UploadFormProps) {
         </label>
 
         <div className="flex flex-col gap-2">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Data As Of</span>
-          <div className="rounded-[18px] border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700">
-            {formatMonthYear(sourceAsOfMonth)} · regla {sourcePeriodPolicyLabel(sourcePeriodOffsetMonths)}
-          </div>
+          <label htmlFor="admin-source-as-of-month" className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            {isGob360Snapshot ? 'Último mes validado' : 'Data As Of'}
+          </label>
+          {isGob360Snapshot ? (
+            <>
+              <input id="admin-source-as-of-month" type="month" value={validatedThroughMonth}
+                max={periodMonth.slice(0, 7)} required disabled={isBusy}
+                onChange={(event) => setValidatedThroughMonth(event.target.value)}
+                className="rounded-[18px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-950" />
+              <p className="text-xs text-slate-600">Solo se cargarán los meses hasta este corte, aunque el Excel contenga columnas posteriores.</p>
+            </>
+          ) : (
+            <div id="admin-source-as-of-month" className="rounded-[18px] border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700">
+              {formatMonthYear(sourceAsOfMonth)} · regla {sourcePeriodPolicyLabel(sourcePeriodOffsetMonths)}
+            </div>
+          )}
           <input type="hidden" name="sourceAsOfMonth" value={sourceAsOfMonth} />
         </div>
 
@@ -725,7 +748,7 @@ export function UploadForm({ options }: UploadFormProps) {
         <div className="lg:col-span-2 flex items-center gap-3">
           <button
             type="submit"
-            disabled={isBusy || hasWorkbookSheetErrors || hasDetectedPeriodMismatch}
+            disabled={isBusy || hasWorkbookSheetErrors || hasDetectedPeriodMismatch || (isGob360Snapshot && !validatedThroughMonth)}
             className="rounded-full bg-slate-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
           >
             {isCompleting ? (

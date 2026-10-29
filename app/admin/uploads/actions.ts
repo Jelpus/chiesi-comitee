@@ -14,6 +14,8 @@ import { normalizeUpload } from '@/lib/uploads/normalize-upload';
 import { publishUploadToMart } from '@/lib/uploads/publish-upload';
 import { assertWorkbookSheets, getWorkbookPolicy, inspectWorkbookSheets } from '@/lib/uploads/workbook-policy';
 import { expectedSourceAsOfMonth, normalizeSourcePeriodOffset, sourcePeriodPolicyLabel } from '@/lib/uploads/source-period-policy';
+import { isGob360SnapshotModule } from '@/lib/uploads/gob360-snapshot-parser';
+import { inspectGob360SnapshotUpload } from '@/lib/uploads/gob360-snapshot-store';
 
 type UploadRowParam = {
     rowNumber: number;
@@ -37,6 +39,12 @@ function isXlsxPath(fileName: string) {
 }
 
 async function assertUploadSourcePeriodPolicy(moduleCode: string, periodMonth: string, sourceAsOfMonth: string) {
+    if (isGob360SnapshotModule(moduleCode)) {
+        if (!/^\d{4}-(0[1-9]|1[0-2])-01$/.test(sourceAsOfMonth) || sourceAsOfMonth > periodMonth) {
+            throw new Error('Selecciona un ultimo mes validado no posterior al periodo del reporte.');
+        }
+        return;
+    }
     const client = getBigQueryClient();
     const [rows] = await client.query({
         query: `
@@ -2296,7 +2304,7 @@ export async function createUploadRecord(formData: FormData) {
   const moduleCode = String(formData.get('moduleCode') ?? '');
   const reportingVersionId = String(formData.get('reportingVersionId') ?? '');
   const periodMonth = String(formData.get('periodMonth') ?? '');
-  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? periodMonth);
+  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? (isGob360SnapshotModule(moduleCode) ? '' : periodMonth));
   const dddSource = String(formData.get('dddSource') ?? '');
   const opexJanPreviousCol = parseOptionalPositiveInt(formData.get('opexJanPreviousCol'));
   const opexJanBudgetCol = parseOptionalPositiveInt(formData.get('opexJanBudgetCol'));
@@ -2324,12 +2332,15 @@ export async function createUploadRecord(formData: FormData) {
     if (!(file instanceof File) || file.size === 0) {
         throw new Error('You must select a source file (.xlsx, .xls, .csv).');
     }
+    if (isGob360SnapshotModule(moduleCode) && !isXlsxPath(file.name)) {
+        throw new Error('Los snapshots GOB360 requieren el archivo Excel original (.xlsx).');
+    }
 
     if (!moduleCode || !reportingVersionId || !periodMonth) {
         throw new Error('Missing required form fields.');
     }
     await assertReportingVersionOpen(reportingVersionId, periodMonth);
-    await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth || periodMonth);
+    await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth);
     assertDddFileNamePeriod(moduleCode, file.name, sourceAsOfMonth || periodMonth);
 
     const uploadId = randomUUID();
@@ -2433,7 +2444,7 @@ export async function createUploadRecordFromStorage(formData: FormData) {
   const moduleCode = String(formData.get('moduleCode') ?? '');
   const reportingVersionId = String(formData.get('reportingVersionId') ?? '');
   const periodMonth = String(formData.get('periodMonth') ?? '');
-  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? periodMonth);
+  const sourceAsOfMonth = String(formData.get('sourceAsOfMonth') ?? (isGob360SnapshotModule(moduleCode) ? '' : periodMonth));
   const dddSource = String(formData.get('dddSource') ?? '');
   const opexJanPreviousCol = parseOptionalPositiveInt(formData.get('opexJanPreviousCol'));
   const opexJanBudgetCol = parseOptionalPositiveInt(formData.get('opexJanBudgetCol'));
@@ -2453,7 +2464,10 @@ export async function createUploadRecordFromStorage(formData: FormData) {
     throw new Error('Missing required form fields.');
   }
   await assertReportingVersionOpen(reportingVersionId, periodMonth);
-  await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth || periodMonth);
+  await assertUploadSourcePeriodPolicy(moduleCode, periodMonth, sourceAsOfMonth);
+  if (isGob360SnapshotModule(moduleCode) && !isXlsxPath(sourceFileName)) {
+    throw new Error('Los snapshots GOB360 requieren el archivo Excel original (.xlsx).');
+  }
   assertDddFileNamePeriod(moduleCode, sourceFileName, sourceAsOfMonth || periodMonth);
 
   const bucketName = getUploadsBucketName();
@@ -2665,6 +2679,21 @@ export async function processUpload(uploadId: string) {
     try {
         // Phase 1: load RAW only.
         await setUploadStatus(uploadId, 'parsing');
+
+        if (isGob360SnapshotModule(moduleCode)) {
+            const inspection = await inspectGob360SnapshotUpload(uploadId);
+            await updateUploadCounters(uploadId, inspection.sourceRows);
+            revalidatePath('/admin/uploads');
+            revalidatePath('/admin/uploads/logs');
+            return {
+                ok: true as const,
+                phase: 'raw_loaded' as const,
+                sampleRowsChecked: inspection.sourceRows,
+                normalizedRows: 0,
+                rowsValid: 0,
+                rowsError: 0,
+            };
+        }
 
         if (context.selectedSheetName.toUpperCase() === 'CSV') {
             if (getWorkbookPolicy(moduleCode).mode !== 'single_user_selected') {
