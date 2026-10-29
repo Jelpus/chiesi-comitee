@@ -9,6 +9,10 @@
     {
       "path": "/api/cron/committee-planning",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/gob360-mirror",
+      "schedule": "17 3 * * *"
     }
   ]
 }

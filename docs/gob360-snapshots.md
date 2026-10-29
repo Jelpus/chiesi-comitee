@@ -11,26 +11,24 @@ El snapshot activo sigue aplicando a los meses incluidos cuando avanzan los repo
 ## Preparación y activación
 
 1. Ejecutar `sql/admin/011_gob360_snapshots_us.sql` como job **US** en `chiesi-committee`.
-2. Ejecutar las dos vistas `sql/views/vw_gob360_pc_sales_effective.sql` y `sql/views/vw_gob360_sc_sales_effective.sql` como jobs **US**, con un principal que pueda leer las tablas fuente y crear vistas en el dataset nuevo.
+2. Ejecutar `node scripts/setup-gob360-mirror.mjs --apply`. Crea `gob360_mirror` en US con acceso restringido, copia las tablas PC/SC usando la cuenta de servicio GOB360, autoriza las dos vistas existentes sobre ese dataset y cambia las vistas para leer la copia. Sin `--apply` solo inspecciona el estado.
 3. Ejecutar `sql/admin/011_gob360_snapshots.sql` como job **EU**, después de la migración existente de `dim_module`.
-4. Dar al service account de `GOB360_CLIENT_EMAIL` permiso de lectura sobre `chiesi-committee.gob360_snapshots`; verificar una consulta a ambas vistas desde ese principal. La cuenta de la aplicación necesita permiso de escritura en el dataset US.
+4. Dar al service account de `GOB360_CLIENT_EMAIL` permiso de lectura sobre `chiesi-committee.gob360_snapshots`; verificar una consulta a ambas vistas desde ese principal. La cuenta de la aplicación necesita permiso de escritura en el dataset US. El setup concede a la cuenta GOB360 escritura solo sobre `gob360_mirror`.
 5. Registrar y publicar los Excel desde Prepare o Admin, escogiendo el corte validado manualmente. Revisar las sumas, filas y meses excluidos. Para los archivos de referencia: Air hasta **2026-08**, Care hasta **2026-07**.
 6. Solo después de validar las vistas y la reconciliación, configurar `GOB360_SNAPSHOT_ENABLED=true` en el entorno de la aplicación. Sin esa variable, las consultas siguen leyendo las tablas originales de GOB360. Una publicación Air con la bandera activa refresca el serving público de la versión seleccionada; una repetición de Publish reintenta ese refresco.
 
-Las tablas `manifest` y `pieces` están en US para permitir consultas junto con las tablas `gob360.CHIESI_EXTERNAL`. Los metadatos de uploads y el serving del Comité siguen en EU; no hacer joins entre ambas regiones.
+Las tablas `manifest`, `pieces` y la copia de GOB360 están en US. Los metadatos de uploads y el serving del Comité siguen en EU; no hacer joins entre ambas regiones. La copia de GOB360 se refresca cada día a las 03:17 UTC mediante `/api/cron/gob360-mirror` y conserva la última versión completa si falla un refresco. Las nuevas cargas del Excel aplican a las vistas en cuanto se activan; los cambios de la fuente GOB360 aparecen tras el siguiente refresco de la copia.
 
 ## Consultar las vistas desde BigQuery con una cuenta personal
 
-La aplicación usa la cuenta de servicio GOB360, que ya puede leer las tablas de origen. Una cuenta personal que consulta las vistas necesita acceso a la vista y, mientras la vista no esté autorizada en el dataset de origen, BigQuery también exige acceso a la tabla original. Esto explica el error `bigquery.tables.getData` sobre `gob360.CHIESI_EXTERNAL.CHIESI_PC_VENTAS_EXTERNAL`.
-
-Para permitir la consulta sin conceder acceso directo al dataset de origen, un administrador con `bigquery.datasets.update` sobre **`gob360.CHIESI_EXTERNAL`** debe abrir ese dataset en BigQuery y usar **Sharing → Authorize views** para añadir exactamente:
+Las vistas conservan sus nombres y columnas:
 
 - `chiesi-committee.gob360_snapshots.vw_pc_sales_effective`
 - `chiesi-committee.gob360_snapshots.vw_sc_sales_effective`
 
-Las dos vistas y la fuente están en US. Autorizar estas dos vistas concretas limita el cambio a ellas; autorizar el dataset entero también incluiría vistas futuras. La persona que las consulta requiere permiso de lectura sobre las vistas y `bigquery.jobs.create` en el proyecto donde ejecuta la consulta. Las vistas exponen las columnas originales de ventas además de `PIEZAS` corregidas, por lo que el administrador debe revisar quién puede leerlas.
+Ahora leen `gob360_mirror.pc_sales_source` y `gob360_mirror.sc_sales_source`, respectivamente, en lugar de consultar directamente el proyecto `gob360`. El dataset espejo permite leer sus tablas a **esas dos vistas autorizadas**, sin conceder a los lectores acceso directo a las copias. La persona que consulta necesita lectura sobre `gob360_snapshots` y `bigquery.jobs.create` en su proyecto de ejecución. Las vistas exponen las columnas originales de ventas además de `PIEZAS` corregidas.
 
-La cuenta de servicio GOB360 disponible para esta aplicación tiene rol `READER` en `CHIESI_EXTERNAL` y no puede hacer esa autorización. Hasta que un administrador la aplique, las consultas directas de usuarios sin acceso a la fuente seguirán fallando; el reporte de la aplicación continúa funcionando con su cuenta de servicio.
+La vista sigue aplicando el control `(CLAVE, CLUE, mes)` del snapshot activo en cada consulta. Si no hay control, usa las piezas de la copia GOB360. Si GOB360 cambia después del último refresco, la vista mostrará la versión copiada hasta el siguiente ciclo. Se puede ejecutar de nuevo `node scripts/setup-gob360-mirror.mjs --apply` para forzar un refresco y comprobar filas y fecha sin esperar al cron.
 
 ## Verificaciones antes de habilitar
 

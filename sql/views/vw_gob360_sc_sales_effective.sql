@@ -24,7 +24,7 @@ WITH active AS (
         UPPER(TRIM(CAST(s.CLUE AS STRING))), DATE_TRUNC(s.FECHA, MONTH)
       ORDER BY s.RUTA, s.DB
     ) AS row_rank
-  FROM `gob360.CHIESI_EXTERNAL.CHIESI_SC_VENTAS_EXTERNAL` s
+  FROM `chiesi-committee.gob360_mirror.sc_sales_source` s
 ), effective_base AS (
   SELECT b.DB, b.CLUE, b.CLAVE, b.FECHA, b.RUTA, b.REFERENCIA,
     b.PRIORIDAD,
