@@ -58,6 +58,9 @@ const stagingByModule = {
   business_excellence_brick_assignment: 'stg_business_excellence_brick_assignment',
   business_excellence_budget_sell_out: 'stg_business_excellence_budget_sell_out',
   business_excellence_ddd: 'stg_business_excellence_pmm',
+  business_excellence_salesforce_fichero_medico: 'stg_business_excellence_salesforce_medical_file',
+  business_excellence_fichero_medico: 'stg_business_excellence_salesforce_medical_file',
+  fichero_medico: 'stg_business_excellence_salesforce_medical_file',
 };
 
 async function getUpload(id) {
@@ -108,7 +111,7 @@ async function recover(id) {
       result = await normalizeExistingUpload(id);
       state = await inspect(id);
       if (result.phase !== 'normalizing') break;
-      if (state.upload.status !== 'normalizing' || state.staging < 1) throw new Error(`${id}: checkpoint verification failed`);
+      if (state.upload.status !== 'normalizing' || state.staging !== result.normalizedRows) throw new Error(`${id}: checkpoint verification failed`);
       console.log(JSON.stringify({ id, phase: 'normalizing', staging: state.staging }));
     }
     if (!result) throw new Error(`${id}: normalization did not start`);

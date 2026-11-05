@@ -1,5 +1,6 @@
 import 'server-only';
 import { getBigQueryClient } from '@/lib/bigquery/client';
+import { normalizeMedicalFileInPages } from './medical-file-normalization';
 import { ensureBusinessExcellenceTftEffectiveView } from '@/lib/serving/refresh-business-excellence-field-force';
 import { isGob360SnapshotModule } from './gob360-snapshot-parser';
 import { normalizeGob360SnapshotUpload } from './gob360-snapshot-store';
@@ -4478,10 +4479,7 @@ function normalizeBusinessExcellenceSalesforceMedicalFile(rows: RawUploadRow[]) 
   return { validations, normalizedRows };
 }
 
-async function loadBusinessExcellenceSalesforceMedicalFileStaging(
-  uploadId: string,
-  rows: BusinessExcellenceSalesforceMedicalFileNormalizedRow[],
-) {
+async function ensureMedicalFileStagingSchema() {
   const client = getBigQueryClient();
 
   await client.query({
@@ -4534,108 +4532,6 @@ async function loadBusinessExcellenceSalesforceMedicalFileStaging(
     `,
   });
 
-  await client.query({
-    query: `
-      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
-      WHERE upload_id IN (
-        WITH current_upload AS (
-          SELECT reporting_version_id, period_month
-          FROM \`chiesi-committee.chiesi_committee_raw.uploads\`
-          WHERE upload_id = @uploadId
-          LIMIT 1
-        )
-        SELECT u.upload_id
-        FROM \`chiesi-committee.chiesi_committee_raw.uploads\` u
-        JOIN current_upload c
-          ON u.reporting_version_id = c.reporting_version_id
-         AND u.period_month = c.period_month
-        WHERE LOWER(TRIM(u.module_code)) IN (
-          'business_excellence_salesforce_fichero_medico',
-          'business_excellence_fichero_medico',
-          'fichero_medico'
-        )
-          AND u.upload_id != @uploadId
-      )
-    `,
-    params: { uploadId },
-  });
-
-  await client.query({
-    query: `
-      DELETE FROM \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
-      WHERE upload_id = @uploadId
-    `,
-    params: { uploadId },
-  });
-
-  if (rows.length === 0) return;
-
-  const query = `
-    INSERT INTO \`chiesi-committee.chiesi_committee_stg.stg_business_excellence_salesforce_medical_file\`
-    (
-      upload_id,
-      row_number,
-      onekey_id,
-      territory,
-      territory_normalized,
-      bu,
-      district,
-      ims_id,
-      full_name,
-      specialty_consolidated,
-      period_month,
-      objetivo,
-      potencial,
-      source_payload_json,
-      normalized_at
-    )
-    SELECT
-      @uploadId,
-      row.row_number,
-      row.onekey_id,
-      row.territory,
-      NULLIF(row.territory_normalized, ''),
-      NULLIF(row.bu, ''),
-      NULLIF(row.district, ''),
-      NULLIF(row.ims_id, ''),
-      NULLIF(row.full_name, ''),
-      NULLIF(row.specialty_consolidated, ''),
-      DATE(row.period_month),
-      SAFE_CAST(row.objetivo AS NUMERIC),
-      NULLIF(row.potencial, ''),
-      SAFE.PARSE_JSON(row.source_payload_json, wide_number_mode => 'round'),
-      CURRENT_TIMESTAMP()
-    FROM UNNEST(@rows) AS row
-  `;
-
-  const chunks = chunkItems(rows, 1500);
-  await runChunksInParallel(
-    chunks,
-    async (chunk) => {
-      await client.query({
-        query,
-        params: {
-          uploadId,
-          rows: chunk.map((row) => ({
-            row_number: row.rowNumber,
-            onekey_id: row.onekeyId,
-            territory: row.territory,
-            territory_normalized: row.territoryNormalized,
-            bu: row.bu ?? '',
-            district: row.district ?? '',
-            ims_id: row.imsId ?? '',
-            full_name: row.fullName ?? '',
-            specialty_consolidated: row.specialtyConsolidated ?? '',
-            period_month: row.periodMonth,
-            objetivo: row.objetivo == null ? '' : String(row.objetivo),
-            potencial: row.potencial ?? '',
-            source_payload_json: JSON.stringify(row.payload),
-          })),
-        },
-      });
-    },
-    NORMALIZATION_QUERY_CONCURRENCY,
-  );
 }
 
 function normalizeBusinessExcellenceSalesforceTft(rows: RawUploadRow[]) {
@@ -8792,7 +8688,9 @@ async function loadOpexMovementsStaging(
   );
 }
 
-export async function normalizeUpload(uploadId: string, moduleCode: string): Promise<NormalizeUploadResult> {
+export async function normalizeUpload(
+  uploadId: string, moduleCode: string, options: { resume?: boolean } = {},
+): Promise<NormalizeUploadResult> {
   if (isGob360SnapshotModule(moduleCode)) return normalizeGob360SnapshotUpload(uploadId);
   if (moduleCode === 'business_excellence_ddd' || moduleCode === 'business_excellence_pmm' || moduleCode === 'pmm' || moduleCode === 'ddd') {
     const asOfMonth = await getUploadAsOfMonth(uploadId);
@@ -8811,6 +8709,17 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
   ) {
     const result = await normalizeCompactWeeklyInBigQuery(uploadId, await getUploadAsOfMonth(uploadId));
     if (result) return result;
+  }
+
+  if (
+    moduleCode === 'business_excellence_salesforce_fichero_medico' ||
+    moduleCode === 'business_excellence_fichero_medico' || moduleCode === 'fichero_medico'
+  ) {
+    return normalizeMedicalFileInPages(uploadId, options.resume ?? false, {
+      readPage: getRawRowsPage,
+      normalize: normalizeBusinessExcellenceSalesforceMedicalFile,
+      ensureSchema: ensureMedicalFileStagingSchema,
+    });
   }
 
   const rows = await getRawRows(uploadId);
@@ -8875,17 +8784,6 @@ export async function normalizeUpload(uploadId: string, moduleCode: string): Pro
     );
     await updateRawValidationStatus(uploadId, validations);
     await loadWeeklyTrackingStaging(uploadId, normalizedRows);
-    return buildNormalizeUploadResult(validations, normalizedRows.length);
-  }
-
-  if (
-    moduleCode === 'business_excellence_salesforce_fichero_medico' ||
-    moduleCode === 'business_excellence_fichero_medico' ||
-    moduleCode === 'fichero_medico'
-  ) {
-    const { validations, normalizedRows } = normalizeBusinessExcellenceSalesforceMedicalFile(rows);
-    await updateRawValidationStatus(uploadId, validations);
-    await loadBusinessExcellenceSalesforceMedicalFileStaging(uploadId, normalizedRows);
     return buildNormalizeUploadResult(validations, normalizedRows.length);
   }
 

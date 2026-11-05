@@ -2084,7 +2084,7 @@ async function markUploadAsError(uploadId: string) {
     );
 }
 
-async function setUploadError(uploadId: string, message: string, fallbackStatus: 'error' | 'raw_loaded' = 'error') {
+async function setUploadError(uploadId: string, message: string, fallbackStatus: 'error' | 'raw_loaded' | 'normalizing' = 'error') {
     await ensureUploadsErrorColumn();
     const client = getBigQueryClient();
     await runWithTableUpdateRetry(() =>
@@ -2886,7 +2886,7 @@ export async function normalizeExistingUpload(uploadId: string) {
 
     try {
         await setUploadStatus(uploadId, 'normalizing');
-        const result = await normalizeUpload(uploadId, moduleCode);
+        const result = await normalizeUpload(uploadId, moduleCode, { resume: status === 'normalizing' });
 
         if (result.incomplete) {
             console.info('[normalizeExistingUpload] checkpoint', {
@@ -2942,7 +2942,12 @@ export async function normalizeExistingUpload(uploadId: string) {
             durationMs: Date.now() - startedAt,
             error: message,
         });
-        await setUploadError(uploadId, message, 'raw_loaded');
+        const medicalFileModule = [
+            'business_excellence_salesforce_fichero_medico',
+            'business_excellence_fichero_medico',
+            'fichero_medico',
+        ].includes(moduleCode);
+        await setUploadError(uploadId, message, medicalFileModule ? 'normalizing' : 'raw_loaded');
         revalidatePath('/admin/uploads');
         revalidatePath('/admin/uploads/logs');
         throw error;
